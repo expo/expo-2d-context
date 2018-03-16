@@ -237,7 +237,7 @@ export default class Expo2DContext {
       return {
         width: sw,
         height: sh,
-        data: new Uint8Array(sw * sh),
+        data: new Uint8Array(sw * sh * 4),
       };
     } else {
       throw new SyntaxError('Bad function signature');
@@ -245,24 +245,38 @@ export default class Expo2DContext {
   }
 
   getImageData(sx, sy, sw, sh) {
+    let gl = this.gl;
+
     var imageDataObj = {
       width: sw,
       height: sh,
-      data: new Uint8Array(),
+      data: new Uint8Array(sw * sh * 4),
     };
+    console.log(gl.getError())
+    
     gl.readPixels(
       sx,
       sy,
       sw,
       sh,
-      gl.RGBA_INTEGER,
+      gl.RGBA,
       gl.UNSIGNED_BYTE,
       imageDataObj.data
     );
+
+    //..............why?
+    console.log(gl.getError())
+    console.log(gl.INVALID_OPERATION)
+    //...................
+
+    //console.log(sw, sh)
+    //console.log(imageDataObj.data)
     return imageDataObj;
   }
 
   putImageData(imagedata, dx, dy, dirtyX, dirtyY, dirtyWidth, dirtyHeight) {
+    let gl = this.gl;
+
     if (!dirtyX) {
       dirtyX = 0;
     }
@@ -1468,6 +1482,7 @@ export default class Expo2DContext {
 
     gl.disableVertexAttribArray(this.activeShaderProgram.attributes["aTextPageCoord"]);
     gl.uniform1i(this.activeShaderProgram.uniforms["uTextEnabled"], 0);
+    gl.uniform1i(this.activeShaderProgram.uniforms["uTextPages"], 1);
   }
 
   createLinearGradient(x0, y0, x1, y1) {
