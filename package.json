@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "description": "None",
   "author": "",
-  "main": "expo_2d_context.js",
+  "main": "Expo2DContext.js",
   "dependencies": {
     "gl-matrix": "^2.3.2",
     "css-font-parser": "0.2.3",

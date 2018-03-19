@@ -252,7 +252,6 @@ export default class Expo2DContext {
       height: sh,
       data: new Uint8Array(sw * sh * 4),
     };
-    console.log(gl.getError())
     
     gl.readPixels(
       sx,
@@ -264,13 +263,6 @@ export default class Expo2DContext {
       imageDataObj.data
     );
 
-    //..............why?
-    console.log(gl.getError())
-    console.log(gl.INVALID_OPERATION)
-    //...................
-
-    //console.log(sw, sh)
-    //console.log(imageDataObj.data)
     return imageDataObj;
   }
 
@@ -1555,6 +1547,105 @@ export default class Expo2DContext {
     }
   }
 
+
+  drawFbForScience() {
+    let gl = this.gl;
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    this._setShaderProgram(this.patternShaderProgram);
+    gl.enableVertexAttribArray(this.activeShaderProgram.attributes["aTexCoord"]);
+
+    gl.uniform2f(
+      this.activeShaderProgram.uniforms['uTextureSize'],
+      gl.drawingBufferWidth,
+      gl.drawingBufferHeight
+    );
+    gl.uniform1i(this.activeShaderProgram.uniforms['uTexture'], 0);
+    gl.uniform1i(this.activeShaderProgram.uniforms['uRepeatMode'], 4);
+
+    gl.uniform1f(this.activeShaderProgram.uniforms['uGlobalAlpha'], 1);
+
+    gl.disableVertexAttribArray(this.activeShaderProgram.attributes["aTextPageCoord"]);
+    gl.uniform1i(this.activeShaderProgram.uniforms["uTextEnabled"], 0);
+    gl.uniform1i(this.activeShaderProgram.uniforms["uTextPages"], 1);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.framebufferTextureForScience);
+
+    var vertices = [
+      0,0, 0,1,
+      0,gl.drawingBufferHeight, 0,0,
+      gl.drawingBufferWidth,0, 1,1,
+      gl.drawingBufferWidth,gl.drawingBufferHeight, 1,0,
+    ];
+
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+    gl.vertexAttribPointer(
+      this.activeShaderProgram.attributes['aVertexPosition'],
+      2,
+      gl.FLOAT,
+      false,
+      4 * 2 * 2,
+      0
+    );
+    gl.vertexAttribPointer(
+      this.activeShaderProgram.attributes['aTexCoord'],
+      2,
+      gl.FLOAT,
+      false,
+      4 * 2 * 2,
+      4 * 2
+    );
+
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.disableVertexAttribArray(this.activeShaderProgram.attributes["aTexCoord"]);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebufferForScience);
+  }
+
+  initFbForScience() {
+    // TODO: this is to work around gl.readPixels not working on the ios default
+    // framebuffer - remove once that's fixed
+    let gl = this.gl;
+    this.framebufferForScience = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebufferForScience);
+    this.framebufferForScience.width = gl.drawingBufferWidth;
+    this.framebufferForScience.height = gl.drawingBufferHeight;
+
+    this.framebufferTextureForScience = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.framebufferTextureForScience);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    // let initPic = new Uint8Array(gl.drawingBufferWidth*gl.drawingBufferHeight*4);
+    // for (i=0; i<gl.drawingBufferWidth*gl.drawingBufferHeight*4; i+=8){
+    //   initPic[i] = 255;
+    //   initPic[i+3] = 255;
+    // }
+
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA,
+                  this.framebufferForScience.width, this.framebufferForScience.height,
+                  0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+
+    var renderbuffer = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, renderbuffer);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16,
+                           this.framebufferForScience.width, this.framebufferForScience.height);
+
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.framebufferTextureForScience, 0);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderbuffer);
+
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+    
+    //gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
   /**************************************************
    * Main
    **************************************************/
@@ -1615,6 +1706,8 @@ export default class Expo2DContext {
     this.initDrawingState();
     this._setShaderProgram(this.flatShaderProgram);
 
+    this.initFbForScience();
+
     this.vertexBuffer = gl.createBuffer();
 
     gl.enable(gl.BLEND);
@@ -1628,8 +1721,8 @@ export default class Expo2DContext {
       this.pMatrix,
       0,
       gl.drawingBufferWidth,
-      gl.drawingBufferHeight,
       0,
+      gl.drawingBufferHeight, // TODO: top and bottom are swapped while drawFbForScience() is in use - change this back once its taken out
       -1,
       1
     );
@@ -1645,6 +1738,7 @@ export default class Expo2DContext {
   }
 
   flush() {
+    this.drawFbForScience();
     this.gl.endFrameEXP();
   }
 }

@@ -22,7 +22,6 @@ const textFragShaderTxt = `
 
   in mediump vec3 vTextPageCoord;
 
-
   mediump float runTextFragShader() {
     if (uTextEnabled) {
       mediump float textMask = texture(uTextPages, vTextPageCoord).a;
@@ -270,13 +269,13 @@ export const patternShaderRepeatValues = {
   'no-repeat': 0,
   'repeat-x': 1,
   'repeat-y': 2,
-  repeat: 3,
+  'repeat': 3,
   'src-rect': 4, // Only used for drawImage()
 };
 
 export const patternShaderTxt = {
-  vert: stringFormat(
-    textVertShaderTxt + `
+  vert: 
+    textVertShaderTxt + stringFormat(`
       precision mediump float;
       precision lowp int;
 
@@ -312,8 +311,8 @@ export const patternShaderTxt = {
     `,
     patternShaderRepeatValues
   ),
-  frag: stringFormat(
-    textFragShaderTxt + `
+  frag:
+    textFragShaderTxt + stringFormat(`
       precision mediump float;
       precision lowp int;
 
