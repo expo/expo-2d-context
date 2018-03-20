@@ -1553,6 +1553,10 @@ export default class Expo2DContext {
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
+    if (this.stencilsEnabled == true) {
+      gl.disable(gl.STENCIL_TEST);
+    }
+
     this._setShaderProgram(this.patternShaderProgram);
     gl.enableVertexAttribArray(this.activeShaderProgram.attributes["aTexCoord"]);
 
@@ -1604,6 +1608,10 @@ export default class Expo2DContext {
     gl.disableVertexAttribArray(this.activeShaderProgram.attributes["aTexCoord"]);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebufferForScience);
+
+    if (this.stencilsEnabled == true) {
+      gl.enable(gl.STENCIL_TEST);
+    }
   }
 
   initFbForScience() {
@@ -1611,6 +1619,7 @@ export default class Expo2DContext {
     // framebuffer - remove once that's fixed
     let gl = this.gl;
     this.framebufferForScience = gl.createFramebuffer();
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebufferForScience);
     this.framebufferForScience.width = gl.drawingBufferWidth;
     this.framebufferForScience.height = gl.drawingBufferHeight;
@@ -1622,28 +1631,20 @@ export default class Expo2DContext {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-    // let initPic = new Uint8Array(gl.drawingBufferWidth*gl.drawingBufferHeight*4);
-    // for (i=0; i<gl.drawingBufferWidth*gl.drawingBufferHeight*4; i+=8){
-    //   initPic[i] = 255;
-    //   initPic[i+3] = 255;
-    // }
-
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA,
                   this.framebufferForScience.width, this.framebufferForScience.height,
                   0, gl.RGBA, gl.UNSIGNED_BYTE, null);
 
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.framebufferTextureForScience, 0);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    
     var renderbuffer = gl.createRenderbuffer();
     gl.bindRenderbuffer(gl.RENDERBUFFER, renderbuffer);
-    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16,
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH24_STENCIL8,
                            this.framebufferForScience.width, this.framebufferForScience.height);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, renderbuffer);
 
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.framebufferTextureForScience, 0);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderbuffer);
-
-    gl.bindTexture(gl.TEXTURE_2D, null);
     gl.bindRenderbuffer(gl.RENDERBUFFER, null);
-    
-    //gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
   /**************************************************
@@ -1703,10 +1704,10 @@ export default class Expo2DContext {
       patternShaderTxt['frag']
     );
 
+    this.initFbForScience();
+
     this.initDrawingState();
     this._setShaderProgram(this.flatShaderProgram);
-
-    this.initFbForScience();
 
     this.vertexBuffer = gl.createBuffer();
 
@@ -1734,6 +1735,10 @@ export default class Expo2DContext {
       this.gl.DEPTH_BUFFER_BIT |
       this.gl.STENCIL_BUFFER_BIT
     );
+
+    if (!(gl.getParameter(gl.STENCIL_BITS)>=2)) {
+      console.log("WARNING: Was given " + gl.getParameter(gl.STENCIL_BITS) + " stencil bits - clipping will be broken");
+    }
 
   }
 
