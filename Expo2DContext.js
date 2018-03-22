@@ -1472,6 +1472,7 @@ export default class Expo2DContext {
       throw new SyntaxError('Bad color value');
     }
 
+    gl.enableVertexAttribArray(this.activeShaderProgram.attributes["aVertexPosition"]);
     gl.disableVertexAttribArray(this.activeShaderProgram.attributes["aTextPageCoord"]);
     gl.uniform1i(this.activeShaderProgram.uniforms["uTextEnabled"], 0);
     gl.uniform1i(this.activeShaderProgram.uniforms["uTextPages"], 1);
@@ -1673,6 +1674,11 @@ export default class Expo2DContext {
     this.gl = gl;
     this.activeShaderProgram = null;
 
+    this.vertexArray = gl.createVertexArray();
+    gl.bindVertexArray(this.vertexArray);
+
+    this.vertexBuffer = gl.createBuffer();
+
     // TODO: Put these into a generator function in shaders.js and
     // put all shader params (right now, just gradient stops) as function
     // arguments
@@ -1708,8 +1714,6 @@ export default class Expo2DContext {
 
     this.initDrawingState();
     this._setShaderProgram(this.flatShaderProgram);
-
-    this.vertexBuffer = gl.createBuffer();
 
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
