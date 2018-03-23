@@ -6,6 +6,7 @@
   "main": "Expo2DContext.js",
   "dependencies": {
     "gl-matrix": "^2.3.2",
+    "domexception": "1.0.1",
     "css-font-parser": "0.2.3",
     "color-parser": "0.1.0",
     "string-format": "0.5.0",

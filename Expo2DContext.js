@@ -11,6 +11,8 @@ import { calibri } from './calibri';
 import { timesnewroman } from './timesnewroman';
 import { couriernew } from './couriernew';
 
+const DOMException = require("domexception");
+
 var stringFormat = require('string-format');
 
 var parseColor = require('color-parser');
@@ -355,6 +357,13 @@ export default class Expo2DContext {
 
     var asset = arguments[0];
 
+    if (typeof asset !== 'object' ||
+        asset === null ||
+        !("localUri" in asset && "width" in asset && "height" in asset))
+    {
+      throw new TypeError('Bad asset')
+    }
+
     var sx = 0;
     var sy = 0;
     var sw = 1;
@@ -383,7 +392,9 @@ export default class Expo2DContext {
     }
 
     if (sw == 0 || sh == 0) {
-      return;
+      // TODO: this is to conform to test 2d.drawImage.zerosource.image
+      //       but, is it ok if the user specifies a 0-sized source rect?
+      throw new DOMException('Bad source rectangle', 'IndexSizeError');
     }
 
     // TODO: the shader clipping method for source rectangles that are
@@ -1480,7 +1491,7 @@ export default class Expo2DContext {
 
   createRadialGradient(x0, y0, r0, x1, y1, r1) {
     if (r0 < 0 || r1 < 0) {
-      throw new IndexSizeError('Bad radius');
+      throw new DOMException('Bad radius', 'IndexSizeError');
     }
     var gradObj = this._createGradient('radial');
     gradObj.p0 = [x0, y0];
@@ -1500,7 +1511,7 @@ export default class Expo2DContext {
           throw new SyntaxError('Bad color value');
         }
         if (offset < 0 || offset > 1) {
-          throw new IndexSizeError('Bad offset');
+          throw new DOMException('Bad stop offset', 'IndexSizeError');
         }
         this.stops.push([cssToGlColor(color), offset]);
       },
