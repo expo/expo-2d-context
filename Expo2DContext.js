@@ -391,28 +391,21 @@ export default class Expo2DContext {
     //  if we can't rely on that, we'll have to clip beforehand by messing
     //  with rectangle dimensions
 
-    dxmin = Math.min(dx, dx + dw);
-    dxmax = Math.max(dx, dx + dw);
-    dymin = Math.min(dy, dy + dh);
-    dymax = Math.max(dy, dy + dh);
+    var dxmin = Math.min(dx, dx + dw);
+    var dxmax = Math.max(dx, dx + dw);
+    var dymin = Math.min(dy, dy + dh);
+    var dymax = Math.max(dy, dy + dh);
+
+    var sxmin = Math.min(sx, sx + sw);
+    var sxmax = Math.max(sx, sx + sw);
+    var symin = Math.min(sy, sy + sh);
+    var symax = Math.max(sy, sy + sh);
 
     var vertices = [
-      dxmin,
-      dymin,
-      sx,
-      sy,
-      dxmin,
-      dymax,
-      sx,
-      sy + sh,
-      dxmax,
-      dymin,
-      sx + sw,
-      sy,
-      dxmax,
-      dymax,
-      sx + sw,
-      sy + sh,
+      dxmin,dymin, sxmin,symin,
+      dxmin,dymax, sxmin,symax,
+      dxmax,dymin, sxmax,symin,
+      dxmax,dymax, sxmax,symax,
     ];
 
     var pattern = this.createPattern(asset, 'src-rect');
