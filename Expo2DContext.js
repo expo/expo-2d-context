@@ -58,6 +58,7 @@ function circleMod(rad) {
   return rad;
 }
 
+
 export default class Expo2DContext {
   /**************************************************
      * Utility methods
@@ -364,6 +365,11 @@ export default class Expo2DContext {
       throw new TypeError('Bad asset')
     }
 
+    if (asset.width == 0 || asset.height == 0) {
+      // Zero-sized asset image causes DOMException
+      throw new DOMException('Bad source rectangle', 'IndexSizeError');
+    }
+
     var sx = 0;
     var sy = 0;
     var sw = 1;
@@ -391,10 +397,17 @@ export default class Expo2DContext {
       throw new SyntaxError('Bad function signature');
     }
 
+    if (!isFinite(dx) || !isFinite(dy) ||
+        !isFinite(dw) || !isFinite(dh) ||
+        !isFinite(sx) || !isFinite(sy) ||
+        !isFinite(sw) || !isFinite(sh))
+    {
+      return
+    }
+
     if (sw == 0 || sh == 0) {
-      // TODO: this is to conform to test 2d.drawImage.zerosource.image
-      //       but, is it ok if the user specifies a 0-sized source rect?
-      throw new DOMException('Bad source rectangle', 'IndexSizeError');
+      // Zero-sized source rect specified by the programmer is A-OK :P
+      return
     }
 
     // TODO: the shader clipping method for source rectangles that are
@@ -1579,6 +1592,8 @@ export default class Expo2DContext {
     gl.uniform1i(this.activeShaderProgram.uniforms["uTextEnabled"], 0);
     gl.uniform1i(this.activeShaderProgram.uniforms["uTextPages"], 1);
 
+    gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
+
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.framebufferTextureForScience);
 
@@ -1613,6 +1628,8 @@ export default class Expo2DContext {
     gl.disableVertexAttribArray(this.activeShaderProgram.attributes["aTexCoord"]);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebufferForScience);
+
+    gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], false);
 
     if (this.stencilsEnabled == true) {
       gl.enable(gl.STENCIL_TEST);
