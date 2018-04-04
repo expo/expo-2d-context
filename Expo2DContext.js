@@ -3,6 +3,7 @@ import * as glm from 'gl-matrix';
 import { ShaderProgram,
   patternShaderTxt, patternShaderRepeatValues,
   radialGradShaderTxt,
+  disjointRadialGradShaderTxt,
   linearGradShaderTxt,
   flatShaderTxt } from './shaders';
 
@@ -56,6 +57,36 @@ function circleMod(rad) {
   }
   rad %= 2 * Math.PI;
   return rad;
+}
+
+function outerTangent(p0, r0, p1, r1) {
+  let d = Math.sqrt(
+    Math.pow(p1[0]-p0[0], 2) +
+    Math.pow(p1[1]-p0[1], 2)
+  );
+  let gamma = - Math.atan2(p1[1]-p0[1], p1[0]-p0[0]);
+  let beta = Math.asin((r1-r0)/d);
+  let alpha = gamma - beta;
+  let angle = (Math.PI/2) - alpha;
+  let tanpt1 = [
+    p0[0] + r0*Math.cos(angle),
+    p0[1] + r0*Math.sin(angle),
+  ];
+  let tanpt2 = [
+    p1[0] + r1*Math.cos(angle),
+    p1[1] + r1*Math.sin(angle),
+  ];
+  //let tanm = (c2[1] - c1[1] + Math.sin(angle)*(c2[2] - c1[2])) / (c2[0] - c1[0] + Math.cos(angle)*(c2[2] - c1[2]));
+  let tanm = (tanpt2[1]-tanpt1[1])/(tanpt2[0]-tanpt1[0])
+  let tanb = tanpt1[1] - tanm*tanpt1[0];
+  
+  let centerm = (p1[1]-p0[1])/(p1[0]-p0[0])
+  let centerb = p0[1] - centerm*p0[0];
+
+  let o = [0,0]
+  o[0] = (centerb - tanb) / (tanm - centerm);
+  o[1] = o[0] * tanm + tanb;
+  return o;
 }
 
 
@@ -1407,28 +1438,70 @@ export default class Expo2DContext {
         throw new RangeError('Too many gradient stops');
       }
 
+      let p0 = val.p0;
+      let p1 = val.p1;
+      let r0 = val.r0;
+      let r1 = val.r1;
+      let reverse_stops = false;
+
       if (val.gradient === 'linear') {
         this._setShaderProgram(this.linearGradShaderProgram);
       } else if (val.gradient === 'radial') {
-        this._setShaderProgram(this.radialGradShaderProgram);
+        let d = Math.sqrt(
+          Math.pow(p1[0]-p0[0], 2) +
+          Math.pow(p1[1]-p0[1], 2)
+        );
 
-        gl.uniform1f(this.activeShaderProgram.uniforms['r0'], val.r0);
-        gl.uniform1f(this.activeShaderProgram.uniforms['r1'], val.r1);
+        // Make sure circle 1 is always the smaller of the two
+        if (r0 > r1) {
+          let temp = r0;
+          r0 = r1;
+          r1 = temp;
+          temp = p0;
+          p0 = p1;
+          p1 = temp;
+          reverse_stops = true;
+        }
+
+        if (r1 >= d + r0) {
+          // One circle circumscribes the other; use normal radial shader 
+          this._setShaderProgram(this.radialGradShaderProgram);
+
+          gl.uniform1f(this.activeShaderProgram.uniforms['r0'], r0);
+          gl.uniform1f(this.activeShaderProgram.uniforms['r1'], r1);
+        } else {
+          // Circles are not compact; use disjoint shader
+          this._setShaderProgram(this.disjointRadialGradShaderProgram);
+
+          // TODO: don't reverse stops, directionality matters here
+          p0 = outerTangent(p0, r0, p1, r1);
+          gl.uniform1f(this.activeShaderProgram.uniforms['r'], r1);
+        }
       } else {
         throw new SyntaxError('Bad color value');
       }
 
-      gl.uniform2fv(this.activeShaderProgram.uniforms['p0'], val.p0);
-      gl.uniform2fv(this.activeShaderProgram.uniforms['p1'], val.p1);
+      gl.uniform2fv(this.activeShaderProgram.uniforms['p0'], p0);
+      gl.uniform2fv(this.activeShaderProgram.uniforms['p1'], p1);
       let color_arr = [];
       let offset_arr = [];
       let sortedStops = val.stops.slice();
-      sortedStops.sort(function(a, b) {
-        return a[1] - b[1];
-      });
+      if (reverse_stops) {
+        sortedStops.sort(function(a, b) {
+          return b[1] - a[1];
+        });
+      } else {
+        sortedStops.sort(function(a, b) {
+          return a[1] - b[1];
+        });
+      }
       for (i = 0; i < sortedStops.length; i++) {
         color_arr = color_arr.concat(sortedStops[i][0]);
-        offset_arr.push(sortedStops[i][1]);
+        if (reverse_stops) {
+          offset_arr.push(1-sortedStops[i][1]);
+        } else {
+          offset_arr.push(sortedStops[i][1]);
+        }
       }
       offset_arr.push(-1.0);
 
@@ -1678,7 +1751,6 @@ export default class Expo2DContext {
     // TODO: how do we make these parameters more parameterizable?
     this.maxGradStops = 10;
 
-    console.log("GL: "+gl.getParameter(gl.VERSION))
     // TODO: find fonts?
     this.builtinFonts = {
       "cursive" : null, 
@@ -1721,6 +1793,14 @@ export default class Expo2DContext {
       gl,
       radialGradShaderTxt['vert'],
       stringFormat(radialGradShaderTxt['frag'], {
+        maxGradStops: this.maxGradStops,
+      })
+    );
+
+    this.disjointRadialGradShaderProgram = new ShaderProgram(
+      gl,
+      disjointRadialGradShaderTxt['vert'],
+      stringFormat(disjointRadialGradShaderTxt['frag'], {
         maxGradStops: this.maxGradStops,
       })
     );

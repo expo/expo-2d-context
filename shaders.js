@@ -1,7 +1,13 @@
 var stringFormat = require('string-format');
 
-const textVertShaderTxt = `
+const shaderHeaderTxt = `
   #version 300 es
+  precision lowp int;
+  precision mediump float;
+  precision mediump sampler2DArray;
+`;
+
+const textVertShaderTxt = `
   in vec3 aTextPageCoord;
   uniform bool uTextEnabled;
   out vec3 vTextPageCoord;
@@ -14,17 +20,16 @@ const textVertShaderTxt = `
 `;
 
 const textFragShaderTxt = `
-  #version 300 es
-  uniform mediump sampler2DArray uTextPages;
+  uniform sampler2DArray uTextPages;
   uniform bool uTextEnabled;
-  uniform mediump float uTextDistanceFieldThreshold;
-  uniform mediump float uTextStrokeWidth;
+  uniform float uTextDistanceFieldThreshold;
+  uniform float uTextStrokeWidth;
 
-  in mediump vec3 vTextPageCoord;
+  in vec3 vTextPageCoord;
 
-  mediump float runTextFragShader() {
+  float runTextFragShader() {
     if (uTextEnabled) {
-      mediump float textMask = texture(uTextPages, vTextPageCoord).a;
+      float textMask = texture(uTextPages, vTextPageCoord).a;
       if (uTextStrokeWidth < 0.0) {
         if (textMask < uTextDistanceFieldThreshold) {
           textMask = 0.0;
@@ -32,8 +37,8 @@ const textFragShaderTxt = `
           textMask = 1.0;
         }
       } else {
-        mediump float lowerThreshold = max(0.0001, uTextDistanceFieldThreshold - uTextStrokeWidth);
-        mediump float upperThreshold = min(0.9999, uTextDistanceFieldThreshold + uTextStrokeWidth);
+        float lowerThreshold = max(0.0001, uTextDistanceFieldThreshold - uTextStrokeWidth);
+        float upperThreshold = min(0.9999, uTextDistanceFieldThreshold + uTextStrokeWidth);
         if (textMask < lowerThreshold || textMask > upperThreshold) {
           textMask = 0.0;
         } else {
@@ -48,7 +53,9 @@ const textFragShaderTxt = `
 `;
 
 export const flatShaderTxt = {
-  vert: textVertShaderTxt + `
+  vert:
+      shaderHeaderTxt +
+      textVertShaderTxt + `
       in vec2 aVertexPosition;
 
       uniform bool uSkipMVTransform;
@@ -65,8 +72,9 @@ export const flatShaderTxt = {
         runTextVertShader();
       }
     `,
-  frag: textFragShaderTxt + `
-      precision mediump float;
+  frag:
+      shaderHeaderTxt +
+      textFragShaderTxt + `
 
       uniform vec4 uColor;
       uniform float uGlobalAlpha;
@@ -80,9 +88,35 @@ export const flatShaderTxt = {
     `,
 };
 
+const gradMapperFragShaderTxt = `
+  const int MAX_STOPS = {maxGradStops};
+  uniform vec4 colors[MAX_STOPS];
+  uniform float offsets[MAX_STOPS];
+
+  vec4 mapToGradStop(float t) {
+    vec4 stopColor = colors[0];
+    for(int i = 0; i < MAX_STOPS; i ++) {
+      if (offsets[i+1] == -1.0) {
+        stopColor = colors[i];
+        break;
+      }
+      if (t >= offsets[i] && t < offsets[i+1] ) {
+        float stopOffset = t-offsets[i];
+        stopOffset /= offsets[i+1] - offsets[i];
+        stopColor = mix(colors[i], colors[i+1], stopOffset);
+        break;
+      }
+    }
+    return stopColor;
+  }
+
+
+`;
+
 export const linearGradShaderTxt = {
-  vert: textVertShaderTxt + `
-      precision mediump float;
+  vert:
+      shaderHeaderTxt +
+      textVertShaderTxt + `
 
       in vec2 aVertexPosition;
 
@@ -106,11 +140,11 @@ export const linearGradShaderTxt = {
         runTextVertShader();
       }
     `,
-  frag: textFragShaderTxt + `
-    precision mediump float;
+  frag:
+    shaderHeaderTxt +
+    textFragShaderTxt +
+    gradMapperFragShaderTxt + `
     
-    const int MAX_STOPS = {maxGradStops};
-
     uniform vec2 p0;
     uniform vec2 p1;
 
@@ -118,8 +152,6 @@ export const linearGradShaderTxt = {
 
     out vec4 fragColor;
 
-    uniform vec4 colors[MAX_STOPS];
-    uniform float offsets[MAX_STOPS];
     uniform float uGlobalAlpha;
 
     void main() {
@@ -133,20 +165,7 @@ export const linearGradShaderTxt = {
 
       // Map to color
 
-      fragColor = colors[0];
-      for(int i = 0; i < MAX_STOPS; i ++) {
-        if (offsets[i+1] == -1.0) {
-          fragColor = colors[i];
-          break;
-        }
-        if (t >= offsets[i] && t < offsets[i+1] ) {
-          float stopOffset = t-offsets[i];
-          stopOffset /= offsets[i+1] - offsets[i];
-          fragColor = mix(colors[i], colors[i+1], stopOffset);
-          break;
-        }
-      }
-
+      fragColor = mapToGradStop(t);
       fragColor *= vec4(1, 1, 1, uGlobalAlpha);
       fragColor.a *= runTextFragShader();
     }
@@ -154,111 +173,210 @@ export const linearGradShaderTxt = {
 };
 
 export const radialGradShaderTxt = {
-  vert: textVertShaderTxt + `
-      precision mediump float;
+  vert:
+    shaderHeaderTxt +
+    textVertShaderTxt + `
 
-      in vec2 aVertexPosition;
+    in vec2 aVertexPosition;
 
-      out vec2 vP2;
+    out vec2 vP2;
 
-      uniform bool uSkipMVTransform;
+    uniform bool uSkipMVTransform;
 
-      uniform mat4 uMVMatrix;
-      uniform mat4 uPMatrix;
+    uniform mat4 uMVMatrix;
+    uniform mat4 uPMatrix;
 
-      uniform mat4 uiMVMatrix;
+    uniform mat4 uiMVMatrix;
 
-      void main(void) {
-        if (uSkipMVTransform) {
-          gl_Position = uPMatrix * vec4(aVertexPosition, 0.0, 1.0);
-          vP2 = (uiMVMatrix * vec4(aVertexPosition, 0.0, 1.0)).xy;
-        } else {
-          gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 0.0, 1.0);
-          vP2 = aVertexPosition.xy;
-        }
-        runTextVertShader();
+    void main(void) {
+      if (uSkipMVTransform) {
+        gl_Position = uPMatrix * vec4(aVertexPosition, 0.0, 1.0);
+        vP2 = (uiMVMatrix * vec4(aVertexPosition, 0.0, 1.0)).xy;
+      } else {
+        gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 0.0, 1.0);
+        vP2 = aVertexPosition.xy;
       }
-    `,
-  frag: textFragShaderTxt + `
-      precision mediump float;
+      runTextVertShader();
+    }
+  `,
+  frag:
+    shaderHeaderTxt +
+    textFragShaderTxt +
+    gradMapperFragShaderTxt + `
 
-      const int MAX_STOPS = {maxGradStops};
+    uniform vec2 p0;
+    uniform float r0;
+
+    uniform vec2 p1;
+    uniform float r1;
+
+    in vec2 vP2;
+
+    out vec4 fragColor;
+
+    uniform float uGlobalAlpha;
+
+    void main() {
+
+      // Project coordinate onto gradient spectrum
+
+      float t;
+      if (distance(vP2, p0) < r0) {
+        t = 0.0;
+      } else if (distance(vP2, p1) > r1) {
+        t = 1.0;
+      } else {
+        vec2 p2p0 = vP2 - p0;
+        float c0theta = atan(p2p0.y, p2p0.x);
+        vec2 radialP0 = vec2(r0*cos(c0theta), r0*sin(c0theta)) + p0;
+
+        //vec2 radialP1 = vec2(r1*cos(c0theta), r1*sin(c0theta)) + p0;
+
+        vec2 e = normalize(radialP0 - vP2);
+        vec2 h = p1 - radialP0;
+        float lf = dot(e,h);
+        float s = r1*r1-dot(h,h)+lf*lf;
+
+        // TODO: if s < 0, no intersection pts, what to do?
+        s = sqrt(s);
+
+        vec2 radialP1;
+        if (lf < s) {
+          if (lf + s >= 0.0) {
+            s = -s;
+            // TODO: tangent pt. wtf.
+          }
+          // TODO: else no intersection? wtf?
+        } else {
+          radialP1 = e*(lf-s) + radialP0;
+        }
+
+        vec2 rp1p0 = radialP1 - radialP0;
+        vec2 rp2p0 = vP2 - radialP0;
+        t = dot(rp2p0, rp1p0) / dot(rp1p0, rp1p0);
+      }
+
+      t = clamp(t, 0.0, 1.0);
+
+      // Map to color
+
+      fragColor = mapToGradStop(t);
+      fragColor.a *= uGlobalAlpha;
+      fragColor.a *= runTextFragShader();
+    }
+  `,
+};
+
+export const disjointRadialGradShaderTxt = {
+  vert:
+    shaderHeaderTxt +
+    textVertShaderTxt + `
+
+    in vec2 aVertexPosition;
+
+    out vec2 vP2;
+
+    uniform bool uSkipMVTransform;
+
+    uniform mat4 uMVMatrix;
+    uniform mat4 uPMatrix;
+
+    uniform mat4 uiMVMatrix;
+
+    void main(void) {
+      if (uSkipMVTransform) {
+        gl_Position = uPMatrix * vec4(aVertexPosition, 0.0, 1.0);
+        vP2 = (uiMVMatrix * vec4(aVertexPosition, 0.0, 1.0)).xy;
+      } else {
+        gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 0.0, 1.0);
+        vP2 = aVertexPosition.xy;
+      }
+      runTextVertShader();
+    }
+  `,
+  frag:
+    shaderHeaderTxt +
+    textFragShaderTxt +
+    gradMapperFragShaderTxt + `
 
       uniform vec2 p0;
-      uniform float r0;
-
       uniform vec2 p1;
-      uniform float r1;
+      uniform float r;
 
       in vec2 vP2;
 
       out vec4 fragColor;
 
-      uniform vec4 colors[MAX_STOPS];
-      uniform float offsets[MAX_STOPS];
       uniform float uGlobalAlpha;
+
+      void circleIntersection(in vec2 testPt, in vec2 pinchPt, in vec2 circlePt, in float circleRad, out vec2 intersection, out bool valid){
+        // TODO: this routine seems to be numerically unstable
+        //  on some platforms when floats are mediump/lowp - quantify
+        //  exactly where this becomes a problem
+
+        valid = true;
+        intersection = vec2(0,0);
+
+        vec2 p2p1 = testPt - circlePt;
+        vec2 p0p1 = pinchPt - circlePt;
+
+        float dx = p2p1.x - p0p1.x;
+        float dy = p2p1.y - p0p1.y;
+        highp float dr = sqrt(dx*dx + dy*dy);
+        float D = (p0p1.x*p2p1.y) - (p2p1.x*p0p1.y);
+
+        float discriminant = pow(circleRad*dr,2.0)-pow(D,2.0);
+
+        if (discriminant <= 0.0) {
+          valid = false;
+          return;
+        }
+
+        float dysgn = (dy < 0.0) ? -1.0 : 1.0;
+
+        intersection = vec2(
+          ( D*dy + dysgn*dx*sqrt(discriminant)) / pow(dr,2.0),
+          (-D*dx + abs(dy)   *sqrt(discriminant)) / pow(dr,2.0)
+        );
+        valid = true;
+
+        return;
+      }
 
       void main() {
 
         // Project coordinate onto gradient spectrum
+        // TODO: describe the geometry here
 
-        // TODO: deal with edge cases where r0 > r1, inner circle
-        // lies outside of outter circle, etc
+        float t = 0.0;
 
-        float t;
-        if (distance(vP2, p0) < r0) {
-          t = 0.0;
-        } else if (distance(vP2, p1) > r1) {
-          t = 1.0;
-        } else {
-          vec2 p2p0 = vP2 - p0;
-          float c0theta = atan(p2p0.y, p2p0.x);
-          vec2 radialP0 = vec2(r0*cos(c0theta), r0*sin(c0theta)) + p0;
+        vec2 p2p1 = vP2 - p1;
+        vec2 p0p1 = p0 - p1;
 
-          //vec2 radialP1 = vec2(r1*cos(c0theta), r1*sin(c0theta)) + p0;
+        vec2 intersection;
+        bool valid;
+        circleIntersection(
+          vP2,                  // test point
+          p0,                   // "pinch" point
+          p1, r,                // circle center/radius
+          intersection, valid   // outputs
+        );
 
-          vec2 e = normalize(radialP0 - vP2);
-          vec2 h = p1 - radialP0;
-          float lf = dot(e,h);
-          float s = r1*r1-dot(h,h)+lf*lf;
-
-          // TODO: if s < 0, no intersection pts, what to do?
-          s = sqrt(s);
-
-          vec2 radialP1;
-          if (lf < s) {
-            if (lf + s >= 0.0) {
-              s = -s;
-              // TODO: tangent pt. wtf.
-            }
-            // TODO: else no intersection? wtf?
-          } else {
-            radialP1 = e*(lf-s) + radialP0;
-          }
-
-          vec2 rp1p0 = radialP1 - radialP0;
-          vec2 rp2p0 = vP2 - radialP0;
-          t = dot(rp2p0, rp1p0) / dot(rp1p0, rp1p0);
+        if (!valid) {
+          fragColor = vec4(1,1,1,0);
+          return;
         }
+
+        float distMax = length(intersection - p0p1);
+        float distFrag = length(p2p1 - p0p1);
+
+        t = distFrag/distMax;
 
         t = clamp(t, 0.0, 1.0);
 
         // Map to color
 
-        fragColor = colors[0];
-        for(int i = 0; i < MAX_STOPS; i ++) {
-          if (offsets[i+1] == -1.0) {
-            fragColor = colors[i];
-            break;
-          }
-          if (t >= offsets[i] && t < offsets[i+1] ) {
-            float stopOffset = t-offsets[i];
-            stopOffset /= offsets[i+1] - offsets[i];
-            fragColor = mix(colors[i], colors[i+1], stopOffset);
-            break;
-          }
-        }
-
+        fragColor = mapToGradStop(t);
         fragColor.a *= uGlobalAlpha;
         fragColor.a *= runTextFragShader();
       }
@@ -275,9 +393,9 @@ export const patternShaderRepeatValues = {
 
 export const patternShaderTxt = {
   vert: 
-    textVertShaderTxt + stringFormat(`
-      precision mediump float;
-      precision lowp int;
+    shaderHeaderTxt +
+    textVertShaderTxt +
+    stringFormat(`
 
       in vec2 aVertexPosition;
       in vec2 aTexCoord;
@@ -312,9 +430,9 @@ export const patternShaderTxt = {
     patternShaderRepeatValues
   ),
   frag:
-    textFragShaderTxt + stringFormat(`
-      precision mediump float;
-      precision lowp int;
+    shaderHeaderTxt + 
+    textFragShaderTxt +
+    stringFormat(`
 
       uniform int uRepeatMode;
       uniform sampler2D uTexture;
