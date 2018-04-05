@@ -2,6 +2,7 @@ var stringFormat = require('string-format');
 
 const shaderHeaderTxt = `
   #version 300 es
+  #define M_PI 3.1415926535897932384626433832795
   precision lowp int;
   precision mediump float;
   precision mediump sampler2DArray;
@@ -308,24 +309,30 @@ export const disjointRadialGradShaderTxt = {
       out vec4 fragColor;
 
       uniform float uGlobalAlpha;
+      uniform float uStopDirection;
 
       void circleIntersection(in vec2 testPt, in vec2 pinchPt, in vec2 circlePt, in float circleRad, out vec2 intersection, out bool valid){
         // TODO: this routine seems to be numerically unstable
         //  on some platforms when floats are mediump/lowp - quantify
         //  exactly where this becomes a problem
 
-        valid = true;
-        intersection = vec2(0,0);
+        vec2 p2p0 = testPt - pinchPt;
+        vec2 p1p0 = circlePt - pinchPt;
+        float proj_t = dot(p2p0,p1p0) / pow(length(p2p0),2.0);
+        if (proj_t < 0.0) {
+          valid = false;
+          return;
+        }
 
-        vec2 p2p1 = testPt - circlePt;
-        vec2 p0p1 = pinchPt - circlePt;
+        highp vec2 p2p1 = testPt - circlePt;
+        highp vec2 p0p1 = pinchPt - circlePt;
 
-        float dx = p2p1.x - p0p1.x;
-        float dy = p2p1.y - p0p1.y;
+        highp float dx = p2p1.x - p0p1.x;
+        highp float dy = p2p1.y - p0p1.y;
         highp float dr = sqrt(dx*dx + dy*dy);
-        float D = (p0p1.x*p2p1.y) - (p2p1.x*p0p1.y);
+        highp float D = (p0p1.x*p2p1.y) - (p2p1.x*p0p1.y);
 
-        float discriminant = pow(circleRad*dr,2.0)-pow(D,2.0);
+        highp float discriminant = pow(circleRad*dr,2.0)-pow(D,2.0);
 
         if (discriminant <= 0.0) {
           valid = false;
@@ -335,8 +342,8 @@ export const disjointRadialGradShaderTxt = {
         float dysgn = (dy < 0.0) ? -1.0 : 1.0;
 
         intersection = vec2(
-          ( D*dy + dysgn*dx*sqrt(discriminant)) / pow(dr,2.0),
-          (-D*dx + abs(dy)   *sqrt(discriminant)) / pow(dr,2.0)
+          ( D*dy + uStopDirection*dysgn*dx*sqrt(discriminant)) / pow(dr,2.0),
+          (-D*dx + uStopDirection*abs(dy) *sqrt(discriminant)) / pow(dr,2.0)
         );
         valid = true;
 

@@ -79,13 +79,23 @@ function outerTangent(p0, r0, p1, r1) {
   //let tanm = (c2[1] - c1[1] + Math.sin(angle)*(c2[2] - c1[2])) / (c2[0] - c1[0] + Math.cos(angle)*(c2[2] - c1[2]));
   let tanm = (tanpt2[1]-tanpt1[1])/(tanpt2[0]-tanpt1[0])
   let tanb = tanpt1[1] - tanm*tanpt1[0];
-  
+
   let centerm = (p1[1]-p0[1])/(p1[0]-p0[0])
   let centerb = p0[1] - centerm*p0[0];
 
   let o = [0,0]
-  o[0] = (centerb - tanb) / (tanm - centerm);
-  o[1] = o[0] * tanm + tanb;
+
+  if (!isFinite(tanm)) {
+    o[0] = tanpt1[0];
+    o[1] = o[0] * centerm + centerb;
+  } else if (!isFinite(centerm)) {
+    o[0] = p1[0];
+    o[1] = o[0] * tanm + tanb;
+  } else {
+    o[0] = (centerb - tanb) / (tanm - centerm);
+    o[1] = o[0] * tanm + tanb;
+  }
+
   return o;
 }
 
@@ -1469,13 +1479,15 @@ export default class Expo2DContext {
 
           gl.uniform1f(this.activeShaderProgram.uniforms['r0'], r0);
           gl.uniform1f(this.activeShaderProgram.uniforms['r1'], r1);
+
+
         } else {
           // Circles are not compact; use disjoint shader
           this._setShaderProgram(this.disjointRadialGradShaderProgram);
 
-          // TODO: don't reverse stops, directionality matters here
           p0 = outerTangent(p0, r0, p1, r1);
           gl.uniform1f(this.activeShaderProgram.uniforms['r'], r1);
+          gl.uniform1f(this.activeShaderProgram.uniforms['uStopDirection'], reverse_stops ? 1 : -1);
         }
       } else {
         throw new SyntaxError('Bad color value');
