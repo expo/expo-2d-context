@@ -1207,7 +1207,12 @@ export default class Expo2DContext {
     // TODO: is this the right mult order?
     glm.mat4.multiply(
       this.drawingState.mvMatrix,
-      glm.mat4.fromValues(a, b, 0, c, d, 0, e, f, 1)
+      this.drawingState.mvMatrix,
+      glm.mat4.fromValues(
+        a, b, 0, 0,
+        c, d, 0, 0,
+        0, 0, 1, 0,
+        e, f, 0, 1),
     );
     this._updateMatrixUniforms(); // TODO: batch this somehow
   }
