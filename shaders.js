@@ -302,16 +302,20 @@ export const disjointRadialGradShaderTxt = {
 
       uniform vec2 p0;
       uniform vec2 p1;
-      uniform float r;
+      uniform float r0;
+      uniform float r1;
+
+      uniform vec2 uPinchPt;
+
 
       in vec2 vP2;
 
       out vec4 fragColor;
 
       uniform float uGlobalAlpha;
-      uniform float uStopDirection;
+      uniform bool uStopDirection;
 
-      void circleIntersection(in vec2 testPt, in vec2 pinchPt, in vec2 circlePt, in float circleRad, out vec2 intersection, out bool valid){
+      void circleIntersection(in vec2 testPt, in vec2 pinchPt, in vec2 circlePt, in float circleRad, in bool stopDirection, out vec2 intersection, out bool valid){
         // TODO: this routine seems to be numerically unstable
         //  on some platforms when floats are mediump/lowp - quantify
         //  exactly where this becomes a problem
@@ -342,9 +346,10 @@ export const disjointRadialGradShaderTxt = {
         float dysgn = (dy < 0.0) ? -1.0 : 1.0;
 
         intersection = vec2(
-          ( D*dy + uStopDirection*dysgn*dx*sqrt(discriminant)) / pow(dr,2.0),
-          (-D*dx + uStopDirection*abs(dy) *sqrt(discriminant)) / pow(dr,2.0)
+          ( D*dy + (stopDirection ? -1.0:1.0)*dysgn*dx*sqrt(discriminant)) / pow(dr,2.0),
+          (-D*dx + (stopDirection ? -1.0:1.0)*abs(dy) *sqrt(discriminant)) / pow(dr,2.0)
         );
+        intersection += circlePt;
         valid = true;
 
         return;
@@ -357,29 +362,75 @@ export const disjointRadialGradShaderTxt = {
 
         float t = 0.0;
 
-        vec2 p2p1 = vP2 - p1;
-        vec2 p0p1 = p0 - p1;
+        vec2 pinchPt;
+        bool stopDirection;
+        bool skipGradCalc = false;
 
-        vec2 intersection;
-        bool valid;
-        circleIntersection(
-          vP2,                  // test point
-          p0,                   // "pinch" point
-          p1, r,                // circle center/radius
-          intersection, valid   // outputs
-        );
-
-        if (!valid) {
-          fragColor = vec4(1,1,1,0);
-          return;
+        if (r0 == r1) {
+          vec2 gradDirection = normalize(p1-p0);
+          float vP2projection = dot(vP2-p0, gradDirection);
+          if (vP2projection < -r0) {
+            t = 0.0;
+            skipGradCalc = true;
+            vec2 vP2projectionPt = p0 + vP2projection*gradDirection;
+            if (length(vP2projectionPt-vP2) > r0) {
+              fragColor = vec4(1,1,1,0);
+              return;
+            }
+          } else if (vP2projection > length(p1-p0)+r0) {
+            t = 1.0;
+            vec2 vP2projectionPt = p0 + vP2projection*gradDirection;
+            if (length(vP2projectionPt-vP2) > r0) {
+              fragColor = vec4(1,1,1,0);
+              return;
+            }
+            skipGradCalc = true;
+          } else {
+            pinchPt = vP2 - gradDirection*max(length(vP2-p0),r0)*2.0;
+          }
+          stopDirection = !uStopDirection;
+        } else {
+          pinchPt = uPinchPt;
+          stopDirection = uStopDirection;
         }
 
-        float distMax = length(intersection - p0p1);
-        float distFrag = length(p2p1 - p0p1);
+        if (!skipGradCalc) {
+          vec2 intersection0;
+          vec2 intersection1;
+          bool valid0;
+          bool valid1;
 
-        t = distFrag/distMax;
+          circleIntersection(
+            vP2,                   // test point
+            pinchPt,               // "pinch" point
+            p0, r0,                // circle center/radius
+            stopDirection,        // solution selection
+            intersection0, valid0  // outputs
+          );
 
-        t = clamp(t, 0.0, 1.0);
+          circleIntersection(
+            vP2,                   // test point
+            pinchPt,               // "pinch" point
+            p1, r1,                // circle center/radius
+            stopDirection,        // solution selection
+            intersection1, valid1  // outputs
+          );
+
+          if (!valid0 || !valid1) {
+            fragColor = vec4(1,1,1,0);
+            return;
+          }
+
+          vec2 gradLine = normalize(vP2 - pinchPt);
+
+          float minPt = dot(intersection0-pinchPt, gradLine);
+          float maxPt = dot(intersection1-pinchPt, gradLine) - minPt;
+          float fragPt = dot(vP2-pinchPt, gradLine) - minPt;
+
+          fragPt = clamp(fragPt, 0.0, maxPt);
+          t = fragPt / maxPt;
+        }
+
 
         // Map to color
 

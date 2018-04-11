@@ -1204,7 +1204,6 @@ export default class Expo2DContext {
   }
 
   transform(a, b, c, d, e, f) {
-    // TODO: is this the right mult order?
     glm.mat4.multiply(
       this.drawingState.mvMatrix,
       this.drawingState.mvMatrix,
@@ -1481,23 +1480,23 @@ export default class Expo2DContext {
         if (r1 >= d + r0) {
           // One circle circumscribes the other; use normal radial shader 
           this._setShaderProgram(this.radialGradShaderProgram);
-
-          gl.uniform1f(this.activeShaderProgram.uniforms['r0'], r0);
-          gl.uniform1f(this.activeShaderProgram.uniforms['r1'], r1);
-
-
         } else {
           // Circles are not compact; use disjoint shader
           this._setShaderProgram(this.disjointRadialGradShaderProgram);
 
-          p0 = outerTangent(p0, r0, p1, r1);
-          gl.uniform1f(this.activeShaderProgram.uniforms['r'], r1);
-          gl.uniform1f(this.activeShaderProgram.uniforms['uStopDirection'], reverse_stops ? 1 : -1);
+          let pinchPt = [0,0];
+          if (r0 !== r1) {
+            pinchPt = outerTangent(p0, r0, p1, r1);
+          }
+          gl.uniform2fv(this.activeShaderProgram.uniforms['uPinchPt'], pinchPt);
+          gl.uniform1i(this.activeShaderProgram.uniforms['uStopDirection'], reverse_stops);
         }
       } else {
         throw new SyntaxError('Bad color value');
       }
 
+      gl.uniform1f(this.activeShaderProgram.uniforms['r0'], r0);
+      gl.uniform1f(this.activeShaderProgram.uniforms['r1'], r1);
       gl.uniform2fv(this.activeShaderProgram.uniforms['p0'], p0);
       gl.uniform2fv(this.activeShaderProgram.uniforms['p1'], p1);
       let color_arr = [];
