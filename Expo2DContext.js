@@ -1477,9 +1477,10 @@ export default class Expo2DContext {
           reverse_stops = true;
         }
 
-        if (r1 >= d + r0) {
+        if (r1 > d + r0) {
           // One circle circumscribes the other; use normal radial shader 
           this._setShaderProgram(this.radialGradShaderProgram);
+          console.log("hi")
         } else {
           // Circles are not compact; use disjoint shader
           this._setShaderProgram(this.disjointRadialGradShaderProgram);
