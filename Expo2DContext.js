@@ -1480,11 +1480,14 @@ export default class Expo2DContext {
         if (r1 > d + r0) {
           // One circle circumscribes the other; use normal radial shader 
           this._setShaderProgram(this.radialGradShaderProgram);
-          console.log("hi")
+          gl.uniform1i(this.activeShaderProgram.uniforms['uCirclesTouching'], 0);
+        } else if (r1 == d + r0) {
+          // Total bullshit edgecase
+          this._setShaderProgram(this.radialGradShaderProgram);
+          gl.uniform1i(this.activeShaderProgram.uniforms['uCirclesTouching'], 1);
         } else {
           // Circles are not compact; use disjoint shader
           this._setShaderProgram(this.disjointRadialGradShaderProgram);
-
           let pinchPt = [0,0];
           if (r0 !== r1) {
             pinchPt = outerTangent(p0, r0, p1, r1);

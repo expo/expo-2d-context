@@ -1,5 +1,7 @@
 var stringFormat = require('string-format');
 
+// TODO: move fragColor into header?
+
 const shaderHeaderTxt = `
   #version 300 es
   #define M_PI 3.1415926535897932384626433832795
@@ -211,6 +213,8 @@ export const radialGradShaderTxt = {
     uniform vec2 p1;
     uniform float r1;
 
+    uniform bool uCirclesTouching;
+
     in vec2 vP2;
 
     out vec4 fragColor;
@@ -219,8 +223,16 @@ export const radialGradShaderTxt = {
 
     void main() {
 
-      // Project coordinate onto gradient spectrum
+      if (uCirclesTouching) {
+        vec2 gradLine = normalize(p1-p0);
+        vec2 touchPt = p0 - gradLine*r0;
+        if (dot(vP2-touchPt, gradLine) < 0.0) {
+          fragColor = vec4(1,1,1,0);
+          return;          
+        }
+      }
 
+      // Project coordinate onto gradient spectrum
       float t;
       if (distance(vP2, p0) < r0) {
         t = 0.0;
@@ -338,6 +350,11 @@ export const disjointRadialGradShaderTxt = {
 
         highp float discriminant = pow(circleRad*dr,2.0)-pow(D,2.0);
 
+        if (dr == 0.0) {
+          valid = false;
+          return;
+        }
+
         if (discriminant <= 0.0) {
           valid = false;
           return;
@@ -365,6 +382,9 @@ export const disjointRadialGradShaderTxt = {
         vec2 pinchPt;
         bool stopDirection;
         bool skipGradCalc = false;
+
+        // TODO: decompose main into mainEqualRadii() and mainUnequalRadii()
+        // TODO: solution selection is inconsistent with ''var g = ctx.createRadialGradient(230, 25, 50, 100, 25, 20);''
 
         if (r0 == r1) {
           vec2 gradDirection = normalize(p1-p0);
