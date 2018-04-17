@@ -344,7 +344,7 @@ export const disjointRadialGradShaderTxt = {
         highp vec2 p0p1 = pinchPt - circlePt;
 
         highp float dx = p2p1.x - p0p1.x;
-        highp float dy = p2p1.y - p0p1.y;
+        highp float dy = p2p1.y - p0p1.y; // ABSing this fixes bad solution detection? is that the right thing to do?
         highp float dr = sqrt(dx*dx + dy*dy);
         highp float D = (p0p1.x*p2p1.y) - (p2p1.x*p0p1.y);
 
@@ -361,10 +361,11 @@ export const disjointRadialGradShaderTxt = {
         }
 
         float dysgn = (dy < 0.0) ? -1.0 : 1.0;
-
+        float stopDirectionSgn = (stopDirection) ? -dysgn:dysgn;
+    
         intersection = vec2(
-          ( D*dy + (stopDirection ? -1.0:1.0)*dysgn*dx*sqrt(discriminant)) / pow(dr,2.0),
-          (-D*dx + (stopDirection ? -1.0:1.0)*abs(dy) *sqrt(discriminant)) / pow(dr,2.0)
+            ( D*dy + stopDirectionSgn*dysgn*dx*sqrt(discriminant)) / pow(dr,2.0),
+            (-D*dx + stopDirectionSgn*abs(dy) *sqrt(discriminant)) / pow(dr,2.0)
         );
         intersection += circlePt;
         valid = true;
