@@ -165,8 +165,14 @@ export const linearGradShaderTxt = {
     in vec2 vP2;
 
     void main() {
-      // Project coordinate onto gradient spectrum
+      // Do nothing for zero-sized gradients
+      if (length(p1-p0) == 0.0) {
+        fragColor = vec4(0,0,0,0);
+        fragShaderPostprocess();
+        return;        
+      }
 
+      // Project coordinate onto gradient spectrum
       vec2 p1p0 = p1 - p0;
       vec2 p2p0 = vP2 - p0;
       float t = dot(p2p0, p1p0) / dot(p1p0, p1p0);
