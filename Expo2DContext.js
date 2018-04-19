@@ -307,6 +307,16 @@ export default class Expo2DContext {
       imageDataObj.data
     );
 
+    // Undo premultiplied alpha
+    // (TODO: is there any way to do this with the GPU?)
+    // (TODO: does this work on systems where the bg color is black?)
+    for (i=0; i<imageDataObj.data.length; i+=4) {
+      let alpha = imageDataObj.data[i+3] / 255.0;
+      imageDataObj.data[i+0] /= alpha; 
+      imageDataObj.data[i+1] /= alpha; 
+      imageDataObj.data[i+2] /= alpha; 
+    }
+
     return imageDataObj;
   }
 
@@ -1657,7 +1667,8 @@ export default class Expo2DContext {
     //       later
     let gl = this.gl;
     gl.enable(gl.BLEND);
-    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    // gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
   }
 
   drawFbForScience() {
@@ -1770,7 +1781,7 @@ export default class Expo2DContext {
   constructor(gl) {
     // Paramters
     // TODO: how do we make these parameters more parameterizable?
-    this.maxGradStops = 10;
+    this.maxGradStops = 31;
 
     // TODO: find fonts?
     this.builtinFonts = {

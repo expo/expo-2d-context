@@ -17,9 +17,6 @@ const shaderFragHeaderTxt = `
   void fragShaderPostprocess(void) {
     fragColor *= vec4(1, 1, 1, uGlobalAlpha);
     fragColor.a *= runTextFragShader();
-
-    // Premultiply alpha
-    fragColor.rgb *= fragColor.a;
   }
 `;
 
