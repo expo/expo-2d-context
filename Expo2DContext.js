@@ -1589,6 +1589,9 @@ export default class Expo2DContext {
   }
 
   createLinearGradient(x0, y0, x1, y1) {
+    if (!isFinite(x0) || !isFinite(y0) || !isFinite(x1) || !isFinite(y1)) {
+      throw new TypeError("One or more nonfinite linear gradient parameters");
+    }
     var gradObj = this._createGradient('linear');
     gradObj.p0 = [x0, y0];
     gradObj.p1 = [x1, y1];
@@ -1596,6 +1599,11 @@ export default class Expo2DContext {
   }
 
   createRadialGradient(x0, y0, r0, x1, y1, r1) {
+    if (!isFinite(x0) || !isFinite(y0) || !isFinite(r0)||
+        !isFinite(x1) || !isFinite(y1) || !isFinite(r1))
+    {
+      throw new TypeError("One or more nonfinite linear gradient parameters");
+    }
     if (r0 < 0 || r1 < 0) {
       throw new DOMException('Bad radius', 'IndexSizeError');
     }
@@ -1614,7 +1622,7 @@ export default class Expo2DContext {
       addColorStop: function(offset, color) {
         parsedColor = parseColor(color);
         if (!parsedColor) {
-          throw new SyntaxError('Bad color value');
+          throw new DOMException('Bad color value', 'SyntaxError');
         }
         if (offset < 0 || offset > 1) {
           throw new DOMException('Bad stop offset', 'IndexSizeError');
@@ -1837,7 +1845,7 @@ export default class Expo2DContext {
     this._setShaderProgram(this.flatShaderProgram);
 
     gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
     gl.clearColor(0, 0, 0, 0.0);
     gl.clearStencil(1);

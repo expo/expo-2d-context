@@ -2,12 +2,25 @@ var stringFormat = require('string-format');
 
 // TODO: move fragColor into header?
 
-const shaderHeaderTxt = `
+const shaderCommonHeaderTxt = `
   #version 300 es
   #define M_PI 3.1415926535897932384626433832795
   precision lowp int;
   precision mediump float;
   precision mediump sampler2DArray;
+`;
+
+const shaderFragHeaderTxt = `
+  out vec4 fragColor;
+  uniform float uGlobalAlpha;
+
+  void fragShaderPostprocess(void) {
+    fragColor *= vec4(1, 1, 1, uGlobalAlpha);
+    fragColor.a *= runTextFragShader();
+
+    // Premultiply alpha
+    fragColor.rgb *= fragColor.a;
+  }
 `;
 
 const textVertShaderTxt = `
@@ -57,7 +70,7 @@ const textFragShaderTxt = `
 
 export const flatShaderTxt = {
   vert:
-      shaderHeaderTxt +
+      shaderCommonHeaderTxt +
       textVertShaderTxt + `
       in vec2 aVertexPosition;
 
@@ -76,17 +89,16 @@ export const flatShaderTxt = {
       }
     `,
   frag:
-      shaderHeaderTxt +
-      textFragShaderTxt + `
+      shaderCommonHeaderTxt +
+      textFragShaderTxt + 
+      shaderFragHeaderTxt + 
+      `
 
       uniform vec4 uColor;
-      uniform float uGlobalAlpha;
-
-      out vec4 fragColor;
 
       void main(void) {
-        fragColor = uColor * vec4(1, 1, 1, uGlobalAlpha);
-        fragColor.a *= runTextFragShader();
+        fragColor = uColor;
+        fragShaderPostprocess();
       }
     `,
 };
@@ -118,7 +130,7 @@ const gradMapperFragShaderTxt = `
 
 export const linearGradShaderTxt = {
   vert:
-      shaderHeaderTxt +
+      shaderCommonHeaderTxt +
       textVertShaderTxt + `
 
       in vec2 aVertexPosition;
@@ -144,18 +156,16 @@ export const linearGradShaderTxt = {
       }
     `,
   frag:
-    shaderHeaderTxt +
+    shaderCommonHeaderTxt +
     textFragShaderTxt +
-    gradMapperFragShaderTxt + `
+    shaderFragHeaderTxt + 
+    gradMapperFragShaderTxt +
+    `
     
     uniform vec2 p0;
     uniform vec2 p1;
 
     in vec2 vP2;
-
-    out vec4 fragColor;
-
-    uniform float uGlobalAlpha;
 
     void main() {
       // Project coordinate onto gradient spectrum
@@ -169,15 +179,15 @@ export const linearGradShaderTxt = {
       // Map to color
 
       fragColor = mapToGradStop(t);
-      fragColor *= vec4(1, 1, 1, uGlobalAlpha);
-      fragColor.a *= runTextFragShader();
+
+      fragShaderPostprocess();
     }
   `,
 };
 
 export const radialGradShaderTxt = {
   vert:
-    shaderHeaderTxt +
+    shaderCommonHeaderTxt +
     textVertShaderTxt + `
 
     in vec2 aVertexPosition;
@@ -203,9 +213,11 @@ export const radialGradShaderTxt = {
     }
   `,
   frag:
-    shaderHeaderTxt +
+    shaderCommonHeaderTxt +
     textFragShaderTxt +
-    gradMapperFragShaderTxt + `
+    shaderFragHeaderTxt + 
+    gradMapperFragShaderTxt +
+    `
 
     uniform vec2 p0;
     uniform float r0;
@@ -216,10 +228,6 @@ export const radialGradShaderTxt = {
     uniform bool uCirclesTouching;
 
     in vec2 vP2;
-
-    out vec4 fragColor;
-
-    uniform float uGlobalAlpha;
 
     void main() {
 
@@ -272,17 +280,16 @@ export const radialGradShaderTxt = {
       t = clamp(t, 0.0, 1.0);
 
       // Map to color
-
       fragColor = mapToGradStop(t);
-      fragColor.a *= uGlobalAlpha;
-      fragColor.a *= runTextFragShader();
+      
+      fragShaderPostprocess();
     }
   `,
 };
 
 export const disjointRadialGradShaderTxt = {
   vert:
-    shaderHeaderTxt +
+    shaderCommonHeaderTxt +
     textVertShaderTxt + `
 
     in vec2 aVertexPosition;
@@ -308,9 +315,11 @@ export const disjointRadialGradShaderTxt = {
     }
   `,
   frag:
-    shaderHeaderTxt +
+    shaderCommonHeaderTxt +
     textFragShaderTxt +
-    gradMapperFragShaderTxt + `
+    shaderFragHeaderTxt + 
+    gradMapperFragShaderTxt +
+    `
 
       uniform vec2 p0;
       uniform vec2 p1;
@@ -319,15 +328,11 @@ export const disjointRadialGradShaderTxt = {
 
       uniform vec2 uPinchPt;
 
-
       in vec2 vP2;
 
-      out vec4 fragColor;
-
-      uniform float uGlobalAlpha;
       uniform bool uStopDirection;
 
-      void circleIntersection(in vec2 testPt, in vec2 pinchPt, in vec2 circlePt, in float circleRad, in bool stopDirection, out vec2 intersection, out bool valid){
+      void circleIntersection(in vec2 testPt, in vec2 pinchPt, in vec2 circlePt, in float circleRad, in bool stopDirection, out highp vec2 intersection, out bool valid){
         // TODO: this routine seems to be numerically unstable
         //  on some platforms when floats are mediump/lowp - quantify
         //  exactly where this becomes a problem
@@ -361,7 +366,7 @@ export const disjointRadialGradShaderTxt = {
         }
 
         float dysgn = (dy < 0.0) ? -1.0 : 1.0;
-        float stopDirectionSgn = (stopDirection) ? -dysgn:dysgn;
+        float stopDirectionSgn = (stopDirection) ? dysgn:-dysgn;
     
         intersection = vec2(
             ( D*dy + stopDirectionSgn*dysgn*dx*sqrt(discriminant)) / pow(dr,2.0),
@@ -416,8 +421,8 @@ export const disjointRadialGradShaderTxt = {
         }
 
         if (!skipGradCalc) {
-          vec2 intersection0;
-          vec2 intersection1;
+          highp vec2 intersection0;
+          highp vec2 intersection1;
           bool valid0;
           bool valid1;
 
@@ -454,10 +459,9 @@ export const disjointRadialGradShaderTxt = {
 
 
         // Map to color
-
         fragColor = mapToGradStop(t);
-        fragColor.a *= uGlobalAlpha;
-        fragColor.a *= runTextFragShader();
+
+        fragShaderPostprocess();
       }
     `,
 };
@@ -472,7 +476,7 @@ export const patternShaderRepeatValues = {
 
 export const patternShaderTxt = {
   vert: 
-    shaderHeaderTxt +
+    shaderCommonHeaderTxt +
     textVertShaderTxt +
     stringFormat(`
 
@@ -509,16 +513,14 @@ export const patternShaderTxt = {
     patternShaderRepeatValues
   ),
   frag:
-    shaderHeaderTxt + 
+    shaderCommonHeaderTxt +
     textFragShaderTxt +
+    shaderFragHeaderTxt +  
     stringFormat(`
 
       uniform int uRepeatMode;
       uniform sampler2D uTexture;
       in vec2 vTexCoord;
-      uniform float uGlobalAlpha;
-
-      out vec4 fragColor;
 
       void main(void) {
         if ((uRepeatMode == {no-repeat} || uRepeatMode == {src-rect}) && (
@@ -537,10 +539,9 @@ export const patternShaderTxt = {
         } else {
           vec2 wrappedCoord = mod(vTexCoord, 1.0);
           fragColor = texture(uTexture, wrappedCoord).rgba;
-          fragColor.a *= uGlobalAlpha;
         }
 
-        fragColor.a *= runTextFragShader();
+        fragShaderPostprocess();
       }
     `,
     patternShaderRepeatValues
@@ -556,6 +557,7 @@ export class ShaderProgram {
     gl.compileShader(vertShader);
 
     if (!gl.getShaderParameter(vertShader, gl.COMPILE_STATUS)) {
+      console.log(gl.getShaderInfoLog(vertShader))
       throw new SyntaxError(
         'Error compiling vertex shader: \n' + gl.getShaderInfoLog(vertShader)
       );
@@ -566,6 +568,7 @@ export class ShaderProgram {
     gl.compileShader(fragShader);
 
     if (!gl.getShaderParameter(fragShader, gl.COMPILE_STATUS)) {
+      console.log(gl.getShaderInfoLog(fragShader))
       throw new SyntaxError(
         'Error compiling fragment shader: \n' + gl.getShaderInfoLog(fragShader)
       );
@@ -577,6 +580,7 @@ export class ShaderProgram {
     gl.linkProgram(this.programHandle);
 
     if (!gl.getProgramParameter(this.programHandle, gl.LINK_STATUS)) {
+      console.log(gl.getProgramInfoLog(this.programHandle))
       throw new SyntaxError(
         'Error linking shader program: \n' + gl.getProgramInfoLog(this.programHandle)
       );
