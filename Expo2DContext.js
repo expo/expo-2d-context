@@ -773,7 +773,7 @@ export default class Expo2DContext {
       this.fillRect(x, y, w, h);
 
       this.drawingState.fillStyle = old_fill_style;
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      this._applyCompositingState()
     }
   }
 
@@ -1256,30 +1256,16 @@ export default class Expo2DContext {
   // set globalCompositeOperation(val) {
   //   let gl = this.gl;
   //   if (val == 'source-atop') {
-  //     //gl.blendFunc(,);
   //   } else if (val == 'source-in') {
-  //     //gl.blendFunc(,);
   //   } else if (val == 'source-out') {
-  //     //gl.blendFunc(,);
   //   } else if (val == 'source-over') {
-  //     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   //   } else if (val == 'destination-atop') {
-  //     //gl.blendFunc(,);
   //   } else if (val == 'destination-in') {
-  //     //gl.blendFunc(,);
   //   } else if (val == 'destination-out') {
-  //     //gl.blendFunc(,);
   //   } else if (val == 'destination-over') {
-  //     gl.blendFunc(gl.ONE_MINUS_DST_ALPHA, gl.DST_ALPHA);
   //   } else if (val == 'lighter') {
-  //     gl.blendFunc(gl.SRC_ALPHA, gl.DST_ALPHA);
   //   } else if (val == 'copy') {
-  //     // TODO: it seems like the *whole* buffer is
-  //     // supposed to be cleared beforehand with this?
-  //     // weeeeeirrrddd
-  //     gl.blendFunc(gl.ONE, gl.ZERO);
   //   } else if (val == 'xor') {
-  //     //gl.blendFunc(,);
   //   } else {
   //     throw SyntaxError('Bad compositing mode');
   //   }
@@ -1666,6 +1652,13 @@ export default class Expo2DContext {
     }
   }
 
+  _applyCompositingState() {
+    // TODO: actually set things up based on the compositing operation,
+    //       later
+    let gl = this.gl;
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+  }
 
   drawFbForScience() {
     let gl = this.gl;
@@ -1844,8 +1837,7 @@ export default class Expo2DContext {
     this.initDrawingState();
     this._setShaderProgram(this.flatShaderProgram);
 
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    this._applyCompositingState();
 
     gl.clearColor(0, 0, 0, 0.0);
     gl.clearStencil(1);

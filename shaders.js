@@ -236,7 +236,8 @@ export const radialGradShaderTxt = {
         vec2 touchPt = p0 - gradLine*r0;
         if (dot(vP2-touchPt, gradLine) < 0.0) {
           fragColor = vec4(1,1,1,0);
-          return;          
+          fragShaderPostprocess();
+          return;
         }
       }
 
@@ -401,6 +402,7 @@ export const disjointRadialGradShaderTxt = {
             vec2 vP2projectionPt = p0 + vP2projection*gradDirection;
             if (length(vP2projectionPt-vP2) > r0) {
               fragColor = vec4(1,1,1,0);
+              fragShaderPostprocess();
               return;
             }
           } else if (vP2projection > length(p1-p0)+r0) {
@@ -408,6 +410,7 @@ export const disjointRadialGradShaderTxt = {
             vec2 vP2projectionPt = p0 + vP2projection*gradDirection;
             if (length(vP2projectionPt-vP2) > r0) {
               fragColor = vec4(1,1,1,0);
+              fragShaderPostprocess();
               return;
             }
             skipGradCalc = true;
@@ -444,6 +447,7 @@ export const disjointRadialGradShaderTxt = {
 
           if (!valid0 || !valid1) {
             fragColor = vec4(1,1,1,0);
+            fragShaderPostprocess();
             return;
           }
 
