@@ -1620,6 +1620,9 @@ export default class Expo2DContext {
         if (!parsedColor) {
           throw new DOMException('Bad color value', 'SyntaxError');
         }
+        if (!isFinite(offset)) {
+          throw new TypeError('Non-finite gradient stop');
+        }
         if (offset < 0 || offset > 1) {
           throw new DOMException('Bad stop offset', 'IndexSizeError');
         }
