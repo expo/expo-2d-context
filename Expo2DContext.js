@@ -36,7 +36,12 @@ var extrudePolyline = require('extrude-polyline');
 
 function cssToGlColor(cssStr) {
   parsedColor = parseColor(cssStr);
-  if (!parsedColor) {
+  // TODO: clean this crap up:
+  if (!parsedColor ||
+      (!("r" in parsedColor && isFinite(parsedColor.r) &&
+        "g" in parsedColor && isFinite(parsedColor.g) &&
+        "b" in parsedColor && isFinite(parsedColor.b)) &&
+       (!("a" in parsedColor) || isFinite(parsedColor.a)))) {
     throw new SyntaxError('Bad color value');
   }
   if (!('a' in parsedColor)) {
@@ -1784,7 +1789,7 @@ export default class Expo2DContext {
   constructor(gl) {
     // Paramters
     // TODO: how do we make these parameters more parameterizable?
-    this.maxGradStops = 31;
+    this.maxGradStops = 128;
 
     // TODO: find fonts?
     this.builtinFonts = {
