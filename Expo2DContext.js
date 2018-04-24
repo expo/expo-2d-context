@@ -366,43 +366,60 @@ export default class Expo2DContext {
       return;
     }
 
-    // TODO: dirty slicing the data array
-
-    const texture = gl.createTexture();
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texImage2D(
-      gl.TEXTURE_2D,
-      0,
-      gl.RGBA,
-      dirtyWidth,
-      dirtyHeight,
-      0,
-      gl.RGBA,
-      gl.UNSIGNED_BYTE,
-      imagedata.data
-    );
-
-    // TODO: figure out how to set these all correctly
-    gl.uniform2f(
-      this.activeShaderProgram.uniforms['uTextureSize'],
-      dirtyWidth,
-      val.pattern.height
-    );
-    gl.uniform1i(this.activeShaderProgram.uniforms['uTexture'], 0);
-    gl.uniform1i(
-      this.activeShaderProgram.uniforms['uRepeatMode'],
-      patternShaderRepeatValues['src-rect']
-    );
+    var pattern = this.createPattern(
+      {"width": dirtyWidth, "height": dirtyHeight, "data": imagedata.data},
+      'src-rect');
+    this._applyStyle(pattern);
 
     // TODO: set blend mode to replace
     gl.uniform1f(this.activeShaderProgram.uniforms['uGlobalAlpha'], 1.0);
 
-    gl.deleteTexture(texture);
+    var minScreenX = dx;
+    var minScreenY = dy;
+    var maxScreenX = minScreenX + dirtyWidth;
+    var maxScreenY = minScreenY + dirtyHeight;
+
+    var minTexX = dirtyX / imagedata.width;
+    var minTexY = dirtyY / imagedata.height;
+    var maxTexX = minTexX + dirtyWidth / imagedata.width;
+    var maxTexY = minTexY + dirtyHeight / imagedata.height;
+
+    var vertices = [
+      minScreenX, minScreenY, minTexX, minTexY,
+      minScreenX, maxScreenY, minTexX, maxTexY,
+      maxScreenX, minScreenY, maxTexX, minTexY,
+      maxScreenX, maxScreenY, minTexX, maxTexY
+    ];
+
+    gl.enableVertexAttribArray(this.activeShaderProgram.attributes["aTexCoord"]);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+    gl.vertexAttribPointer(
+      this.activeShaderProgram.attributes['aVertexPosition'],
+      2,
+      gl.FLOAT,
+      false,
+      4 * 2 * 2,
+      0
+    );
+    gl.vertexAttribPointer(
+      this.activeShaderProgram.attributes['aTexCoord'],
+      2,
+      gl.FLOAT,
+      false,
+      4 * 2 * 2,
+      4 * 2
+    );
+
+    gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], false);
+    gl.disableVertexAttribArray(this.activeShaderProgram.attributes["aTexCoord"]);
+
+
+
+
   }
 
   /**************************************************
@@ -1564,7 +1581,7 @@ export default class Expo2DContext {
         0,
         gl.RGBA,
         gl.UNSIGNED_BYTE,
-        val.pattern
+        ('data' in val.pattern) ? val.pattern.data : val.pattern // accept both assets and raw data arrays
       );
       gl.uniform2f(
         this.activeShaderProgram.uniforms['uTextureSize'],

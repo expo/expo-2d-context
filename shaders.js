@@ -551,7 +551,6 @@ export const patternShaderTxt = {
           vec2 wrappedCoord = mod(vTexCoord, 1.0);
           fragColor = texture(uTexture, wrappedCoord).rgba;
         }
-
         fragShaderPostprocess();
       }
     `,
