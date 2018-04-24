@@ -1192,6 +1192,8 @@ export default class Expo2DContext {
     this.drawingState.strokeDashes = this.drawingState.strokeDashes.slice();
     this.drawingState.clippingPaths = this.drawingState.clippingPaths.slice();
     this.drawingState.mvMatrix = glm.mat4.clone(this.drawingState.mvMatrix);
+
+    // TODO: this will make gradients/patterns un-live, is that ok?
     this.drawingState.fillStyle = this._cloneStyle(this.drawingState.fillStyle);
     this.drawingState.strokeStyle = this._cloneStyle(this.drawingState.strokeStyle);
   }
@@ -1334,17 +1336,17 @@ export default class Expo2DContext {
   }
 
   set strokeStyle(val) {
-    this.drawingState.strokeStyle = this._cloneStyle(val);
+    this.drawingState.strokeStyle = val;
   }
   get strokeStyle() {
-    return this._cloneStyle(this.drawingState.strokeStyle);
+    return this.drawingState.strokeStyle;
   }
 
   set fillStyle(val) {
-    this.drawingState.fillStyle = this._cloneStyle(val);
+    this.drawingState.fillStyle = val;
   }
   get fillStyle() {
-    return this._cloneStyle(this.drawingState.fillStyle);
+    return this.drawingState.fillStyle;
   }
 
   set font(val) {
