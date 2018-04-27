@@ -1,4 +1,7 @@
-import * as glm from 'gl-matrix';
+//import * as glm from 'gl-matrix';
+var glm = require('gl-matrix');
+import Vector from './vector';
+// var glm2 = require('glm')
 
 import { ShaderProgram,
   patternShaderTxt, patternShaderRepeatValues,
@@ -283,6 +286,8 @@ export default class Expo2DContext {
     } else if (arguments.length == 2) {
       let sw = arguments[0];
       let sh = arguments[1];
+      sw = Math.floor(sw);
+      sh = Math.floor(sh);
       return {
         width: sw,
         height: sh,
@@ -295,6 +300,11 @@ export default class Expo2DContext {
 
   getImageData(sx, sy, sw, sh) {
     let gl = this.gl;
+
+    sx = Math.floor(sx);
+    sy = Math.floor(sy);
+    sw = Math.floor(sw);
+    sh = Math.floor(sh);
 
     var imageDataObj = {
       width: sw,
@@ -366,12 +376,20 @@ export default class Expo2DContext {
       return;
     }
 
+    dx = Math.floor(dx);
+    dy = Math.floor(dy);
+    dirtyX = Math.floor(dirtyX);
+    dirtyY = Math.floor(dirtyY);
+    dirtyWidth = Math.floor(dirtyWidth);
+    dirtyHeight = Math.floor(dirtyHeight);
+
     var pattern = this.createPattern(
       {"width": dirtyWidth, "height": dirtyHeight, "data": imagedata.data},
       'src-rect');
     this._applyStyle(pattern);
 
-    // TODO: set blend mode to replace
+    // TODO: should stencils affect this func?
+
     gl.uniform1f(this.activeShaderProgram.uniforms['uGlobalAlpha'], 1.0);
 
     var minScreenX = dx;
@@ -388,7 +406,7 @@ export default class Expo2DContext {
       minScreenX, minScreenY, minTexX, minTexY,
       minScreenX, maxScreenY, minTexX, maxTexY,
       maxScreenX, minScreenY, maxTexX, minTexY,
-      maxScreenX, maxScreenY, minTexX, maxTexY
+      maxScreenX, maxScreenY, maxTexX, maxTexY
     ];
 
     gl.enableVertexAttribArray(this.activeShaderProgram.attributes["aTexCoord"]);
@@ -412,11 +430,16 @@ export default class Expo2DContext {
       4 * 2
     );
 
+    // gl.blendFunc(gl.ONE, gl.ZERO);
+    // gl.disable(gl.BLEND);
+
     gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], false);
     gl.disableVertexAttribArray(this.activeShaderProgram.attributes["aTexCoord"]);
 
+    // gl.enable(gl.BLEND);
+    // this._applyCompositingState();
 
 
 
@@ -1165,6 +1188,7 @@ export default class Expo2DContext {
 
     let theta = startAngle;
     while (true) {
+      // TODO: !!!!!!!!!!!!! radius needs to get scaled by the mv matrix, doesn't it!!? this is broken!!!
       let arcPt = this._getTransformedPt(
         centerPt[0] + radius * Math.cos(theta),
         centerPt[1] + radius * Math.sin(theta)
@@ -1194,9 +1218,60 @@ export default class Expo2DContext {
   }
 
   arcTo(x1, y1, x2, y2, radius) {
-    // TODO
+    // TODO: finish:
+    // https://math.stackexchange.com/questions/797828/calculate-center-of-circle-tangent-to-two-lines-in-space
     delete this.currentSubpath.triangles;
-    throw new SyntaxError('Method not supported');
+
+    // TODO: is this moveTo check necessary?
+    if (this.currentSubpath.length == 0) {
+      this.moveTo(x1,y1);
+    }
+
+
+    // TODO: clean up the roundtrips through glm and possibly use it elsewhere
+    // TODO: use glm-js if possible
+
+    // var s = glm2.vec2(...this.currentSubpath[this.currentSubpath.length - 1]);
+    // var t0 = glm2.vec2.fromValues(...this._getTransformedPt([x1,y1]));
+    // var t1 = glm2.vec2.fromValues(...this._getTransformedPt([x2,y2]));
+    // var s_t0 = s['-'](t0);
+    // var t1_t0 = t1['-'](t0);
+    // var angle = Math.acos(glm.dot(s_t0, t1_t0) / (glm.length(s_t0)*glm.length(t1_t0)));
+    // // TODO: should be possible to reduce normalizations here?
+    // var bisector = glm.normalize(glm.normalize(s_t0)['+'](glm.normalize(t1_t0))['/'](2));
+    // var center_pt = bisector['*'](radius/Math.sin(angle/2));
+
+
+    var s = new Vector(this.currentSubpath[this.currentSubpath.length - 2], this.currentSubpath[this.currentSubpath.length - 1], 0.0);
+    var t0 = new Vector(...this._getTransformedPt(x1,y1));
+    var t1 = new Vector(...this._getTransformedPt(x2,y2));
+    var s_t0 = s.subtract(t0);
+    var t1_t0 = t1.subtract(t0);
+    var angle = Math.acos(s_t0.dot(t1_t0) / (s_t0.length()*t1_t0.length()));
+    // // TODO: should be possible to reduce normalizations here?
+    var bisector = s_t0.unit().add(t1_t0.unit()).divide(2).unit();
+
+    var center_pt = bisector.multiply(radius/Math.sin(angle/2));
+    // Since the center_pt is a scaled unit vector, we have to
+    // retransform with the modelview matrix to make sure the 'radius' param
+    // gets accurately transformed (possibly anisotropically) as well
+    center_pt = new Vector(...this._getTransformedPt(...center_pt.toArray(2)))
+
+    console.log("~~")
+    console.log(center_pt.add(t0))
+
+    var param = center_pt.add(t0)
+    this.currentSubpath.push(param.x)
+    this.currentSubpath.push(param.y)
+
+
+
+    // var start_angle = // TODO: project center onto s_t0 and measure angle from that to centerpt to t0
+    // var end_angle = // TODO: project center onto t1_t0 and measure angle from that to centerpt to t0
+
+    // TODO: sweep
+
+    //throw new SyntaxError('Method not supported');
   }
 
   /**************************************************
@@ -1257,8 +1332,7 @@ export default class Expo2DContext {
 
   _getTransformedPt(x, y) {
     // TODO: creating a new vec3 every time seems potentially inefficient
-    var tPt = glm.vec3.create();
-    glm.vec3.set(tPt, x, y, 0.0);
+    var tPt = glm.vec3.fromValues(x, y, 0.0);
     glm.vec3.transformMat4(tPt, tPt, this.drawingState.mvMatrix);
     return [tPt[0], tPt[1]];
   }
