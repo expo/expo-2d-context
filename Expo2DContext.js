@@ -116,7 +116,7 @@ export default class Expo2DContext {
   initDrawingState() {
     this.drawingState = {
       "mvMatrix" : glm.mat4.create(),
-      
+
       "fillStyle" : '#000000',
       "strokeStyle" : '#000000',
 
@@ -142,6 +142,8 @@ export default class Expo2DContext {
     };
     this.drawingStateStack = [];
 
+    this._invMvMatrix = null;
+
     this.stencilsEnabled = false;
     this.pMatrix = glm.mat4.create();
 
@@ -164,11 +166,18 @@ export default class Expo2DContext {
     });
   }
 
+  _getInvMvMatrix() {
+    if (this._invMvMatrix == null) {
+      this._invMvMatrix = glm.mat4.create();
+      glm.mat4.invert(this._invMvMatrix, this.drawingState.mvMatrix);
+    }
+    return this._invMvMatrix;
+  }
+
   _updateMatrixUniforms() {
     let gl = this.gl;
 
-    let invMvMatrix = glm.mat4.create();
-    glm.mat4.invert(invMvMatrix, this.drawingState.mvMatrix);
+    this._invMvMatrix = null;
 
     gl.uniformMatrix4fv(
       this.activeShaderProgram.uniforms['uPMatrix'],
@@ -184,7 +193,7 @@ export default class Expo2DContext {
       gl.uniformMatrix4fv(
         this.activeShaderProgram.uniforms['uiMVMatrix'],
         false,
-        invMvMatrix
+        this._getInvMvMatrix()
       );
     }
     gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], false);
@@ -1037,10 +1046,11 @@ export default class Expo2DContext {
       let polyline = [];
       let lastPt = null;
       let pt = null;
+      var epsilon = 0.001;
       for (j = 0; j < subpath.length; j += 2) {
         lastPt = pt;
         pt = [subpath[j], subpath[j + 1]];
-        if (lastPt && lastPt[0] == pt[0] && lastPt[1] == pt[1]) continue;
+        if (lastPt && Math.abs(lastPt[0]-pt[0])<epsilon && Math.abs(lastPt[1]-pt[1])<epsilon) continue;
         polyline.push([subpath[j], subpath[j + 1]]);
       }
       let mesh = this.strokeExtruder.build(polyline);
@@ -1148,7 +1158,7 @@ export default class Expo2DContext {
     centerPt = [x, y];
 
     // TODO: increment shouldn't be constant when arc has been scaled
-    // to be non-circular
+    // anisotropically
     let increment = Math.PI / 2;
     while (true) {
       let pt1 = this._getTransformedPt(radius, 0);
@@ -1188,7 +1198,6 @@ export default class Expo2DContext {
 
     let theta = startAngle;
     while (true) {
-      // TODO: !!!!!!!!!!!!! radius needs to get scaled by the mv matrix, doesn't it!!? this is broken!!!
       let arcPt = this._getTransformedPt(
         centerPt[0] + radius * Math.cos(theta),
         centerPt[1] + radius * Math.sin(theta)
@@ -1218,60 +1227,67 @@ export default class Expo2DContext {
   }
 
   arcTo(x1, y1, x2, y2, radius) {
-    // TODO: finish:
-    // https://math.stackexchange.com/questions/797828/calculate-center-of-circle-tangent-to-two-lines-in-space
     delete this.currentSubpath.triangles;
+   
+    // For further explanation of the geometry here -
+    // https://math.stackexchange.com/questions/797828/calculate-center-of-circle-tangent-to-two-lines-in-space
+   
+    // TODO: for some reason this breaks stroke() - the arcTo data is good.
+    //       look into where the singularity is coming from:
+    // var s = [100,30]
+    // var t0 = [150,1]
+    // var t1 = [150,70]
+    // var e = [120,120]
 
     // TODO: is this moveTo check necessary?
     if (this.currentSubpath.length == 0) {
       this.moveTo(x1,y1);
     }
 
-
-    // TODO: clean up the roundtrips through glm and possibly use it elsewhere
-    // TODO: use glm-js if possible
-
-    // var s = glm2.vec2(...this.currentSubpath[this.currentSubpath.length - 1]);
-    // var t0 = glm2.vec2.fromValues(...this._getTransformedPt([x1,y1]));
-    // var t1 = glm2.vec2.fromValues(...this._getTransformedPt([x2,y2]));
-    // var s_t0 = s['-'](t0);
-    // var t1_t0 = t1['-'](t0);
-    // var angle = Math.acos(glm.dot(s_t0, t1_t0) / (glm.length(s_t0)*glm.length(t1_t0)));
-    // // TODO: should be possible to reduce normalizations here?
-    // var bisector = glm.normalize(glm.normalize(s_t0)['+'](glm.normalize(t1_t0))['/'](2));
-    // var center_pt = bisector['*'](radius/Math.sin(angle/2));
-
-
-    var s = new Vector(this.currentSubpath[this.currentSubpath.length - 2], this.currentSubpath[this.currentSubpath.length - 1], 0.0);
-    var t0 = new Vector(...this._getTransformedPt(x1,y1));
-    var t1 = new Vector(...this._getTransformedPt(x2,y2));
+    var s = new Vector(...this._getUntransformedPt(this.currentSubpath[this.currentSubpath.length - 2], this.currentSubpath[this.currentSubpath.length - 1]));
+    var t0 = new Vector(x1,y1);
+    var t1 = new Vector(x2,y2);
+    
     var s_t0 = s.subtract(t0);
+    var s_t0_hat = s_t0.unit();
+
     var t1_t0 = t1.subtract(t0);
-    var angle = Math.acos(s_t0.dot(t1_t0) / (s_t0.length()*t1_t0.length()));
+    var t1_t0_hat = t1_t0.unit();
+
+    var tangent_inner_angle = Math.acos(s_t0.dot(t1_t0) / (s_t0.length()*t1_t0.length()));
     // // TODO: should be possible to reduce normalizations here?
-    var bisector = s_t0.unit().add(t1_t0.unit()).divide(2).unit();
+    var bisector = s_t0_hat.add(t1_t0_hat).divide(2).unit();
+    var radius_scalar = radius/Math.sin(tangent_inner_angle/2);
+    var center_pt = bisector.multiply(radius_scalar);
 
-    var center_pt = bisector.multiply(radius/Math.sin(angle/2));
-    // Since the center_pt is a scaled unit vector, we have to
-    // retransform with the modelview matrix to make sure the 'radius' param
-    // gets accurately transformed (possibly anisotropically) as well
-    center_pt = new Vector(...this._getTransformedPt(...center_pt.toArray(2)))
+    var start_pt = s_t0_hat.multiply(center_pt.dot(s_t0_hat));
+    var end_pt = t1_t0_hat.multiply(center_pt.dot(t1_t0_hat));
 
-    console.log("~~")
-    console.log(center_pt.add(t0))
+    // Shift center of calculations to center pt
+    center_pt = center_pt.add(t0);
+    start_pt = start_pt.add(t0).subtract(center_pt);
+    end_pt = end_pt.add(t0).subtract(center_pt);
 
-    var param = center_pt.add(t0)
-    this.currentSubpath.push(param.x)
-    this.currentSubpath.push(param.y)
+    var start_angle = Math.atan2(start_pt.y, start_pt.x);
+    var end_angle = Math.atan2(end_pt.y, end_pt.x);;
 
+    // TODO: see if possible to decompose this part with arc()
+    // TODO: be smart about increment value 
+    let increment = 0.001;
+    for (var theta = start_angle; theta <= end_angle; theta+=increment) {
 
+      if (theta + increment > end_angle) {
+        theta = end_angle;
+      }
 
-    // var start_angle = // TODO: project center onto s_t0 and measure angle from that to centerpt to t0
-    // var end_angle = // TODO: project center onto t1_t0 and measure angle from that to centerpt to t0
+      let sweep_pt = this._getTransformedPt(
+        center_pt.x + radius*Math.cos(theta), 
+        center_pt.y + radius*Math.sin(theta), 
+      );
+      this.currentSubpath.push(sweep_pt[0])
+      this.currentSubpath.push(sweep_pt[1])
+    }
 
-    // TODO: sweep
-
-    //throw new SyntaxError('Method not supported');
   }
 
   /**************************************************
@@ -1334,6 +1350,13 @@ export default class Expo2DContext {
     // TODO: creating a new vec3 every time seems potentially inefficient
     var tPt = glm.vec3.fromValues(x, y, 0.0);
     glm.vec3.transformMat4(tPt, tPt, this.drawingState.mvMatrix);
+    return [tPt[0], tPt[1]];
+  }
+
+  _getUntransformedPt(x, y) {
+    // TODO: creating a new vec3 every time seems potentially inefficient
+    var tPt = glm.vec3.fromValues(x, y, 0.0);
+    glm.vec3.transformMat4(tPt, tPt, this._getInvMvMatrix());
     return [tPt[0], tPt[1]];
   }
 
