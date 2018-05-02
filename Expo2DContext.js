@@ -321,24 +321,25 @@ export default class Expo2DContext {
       data: new Uint8Array(sw * sh * 4),
     };
     
+    var rawTexData = new Float32Array(sw * sh * 4);
     gl.readPixels(
       sx,
       sy,
       sw,
       sh,
       gl.RGBA,
-      gl.UNSIGNED_BYTE,
-      imageDataObj.data
+      gl.FLOAT,
+      rawTexData
     );
 
     // Undo premultiplied alpha
     // (TODO: is there any way to do this with the GPU?)
     // (TODO: does this work on systems where the bg color is black?)
     for (i=0; i<imageDataObj.data.length; i+=4) {
-      let alpha = imageDataObj.data[i+3] / 255.0;
-      imageDataObj.data[i+0] /= alpha; 
-      imageDataObj.data[i+1] /= alpha; 
-      imageDataObj.data[i+2] /= alpha; 
+      imageDataObj.data[i+3] = rawTexData[i+3] * 256.0;
+      imageDataObj.data[i+0] = (rawTexData[i+0] / rawTexData[i+3]) * 256.0;; 
+      imageDataObj.data[i+1] = (rawTexData[i+1] / rawTexData[i+3]) * 256.0;; 
+      imageDataObj.data[i+2] = (rawTexData[i+2] / rawTexData[i+3]) * 256.0;; 
     }
 
     return imageDataObj;
@@ -397,10 +398,6 @@ export default class Expo2DContext {
       'src-rect');
     this._applyStyle(pattern);
 
-    // TODO: should stencils affect this func?
-
-    gl.uniform1f(this.activeShaderProgram.uniforms['uGlobalAlpha'], 1.0);
-
     var minScreenX = dx;
     var minScreenY = dy;
     var maxScreenX = minScreenX + dirtyWidth;
@@ -439,16 +436,16 @@ export default class Expo2DContext {
       4 * 2
     );
 
-    // gl.blendFunc(gl.ONE, gl.ZERO);
-    // gl.disable(gl.BLEND);
+    gl.uniform1f(this.activeShaderProgram.uniforms['uGlobalAlpha'], 1.0);
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ZERO, gl.ONE, gl.ZERO); // TODO: aaaaalmost correct
+    //gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ZERO);
 
     gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], false);
     gl.disableVertexAttribArray(this.activeShaderProgram.attributes["aTexCoord"]);
 
-    // gl.enable(gl.BLEND);
-    // this._applyCompositingState();
+    this._applyCompositingState();
 
 
 
@@ -1791,7 +1788,6 @@ export default class Expo2DContext {
     //       later
     let gl = this.gl;
     gl.enable(gl.BLEND);
-    // gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
   }
 
@@ -1882,9 +1878,17 @@ export default class Expo2DContext {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA,
+    // ******* IMPORTANT **********
+    // The framebuffer (whether built-in or to-texture) _has_ to be greater
+    // than 8B/channel precision in order for putImageData(getImageData(...)) 
+    // to work.
+    //
+    // We're using HALF_FLOAT/16F for the moment because of iOS limitations:
+    // https://github.com/pex-gl/pex-glu/issues/3
+    //
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F,
                   this.framebufferForScience.width, this.framebufferForScience.height,
-                  0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+                  0, gl.RGBA, gl.HALF_FLOAT, null);
 
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.framebufferTextureForScience, 0);
     gl.bindTexture(gl.TEXTURE_2D, null);
