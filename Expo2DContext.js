@@ -290,17 +290,20 @@ export default class Expo2DContext {
       return {
         width: oldData.width,
         height: oldData.height,
-        data: new Uint8Array(oldData.data),
+        data: new Uint8ClampedArray(oldData.data),
       };
     } else if (arguments.length == 2) {
       let sw = arguments[0];
       let sh = arguments[1];
-      sw = Math.floor(sw);
-      sh = Math.floor(sh);
+      sw = Math.floor(Math.abs(sw));
+      sh = Math.floor(Math.abs(sh));
+      if (sw == 0 || sh == 0) {
+        throw new DOMException('Bad dimensions', 'IndexSizeError');
+      }
       return {
         width: sw,
         height: sh,
-        data: new Uint8Array(sw * sh * 4),
+        data: new Uint8ClampedArray(sw * sh * 4),
       };
     } else {
       throw new SyntaxError('Bad function signature');
@@ -310,6 +313,16 @@ export default class Expo2DContext {
   getImageData(sx, sy, sw, sh) {
     let gl = this.gl;
 
+    if (sw < 0) {
+      sx += sw;
+      sw = -sw;
+    }
+
+    if (sh < 0) {
+      sy += sh;
+      sh = -sh;
+    }
+
     sx = Math.floor(sx);
     sy = Math.floor(sy);
     sw = Math.floor(sw);
@@ -318,7 +331,7 @@ export default class Expo2DContext {
     var imageDataObj = {
       width: sw,
       height: sh,
-      data: new Uint8Array(sw * sh * 4),
+      data: new Uint8ClampedArray(sw * sh * 4),
     };
     
     var rawTexData = new Float32Array(sw * sh * 4);
@@ -336,12 +349,11 @@ export default class Expo2DContext {
     // (TODO: is there any way to do this with the GPU?)
     // (TODO: does this work on systems where the bg color is black?)
     for (i=0; i<imageDataObj.data.length; i+=4) {
-      imageDataObj.data[i+3] = rawTexData[i+3] * 256.0;
-      imageDataObj.data[i+0] = (rawTexData[i+0] / rawTexData[i+3]) * 256.0;; 
-      imageDataObj.data[i+1] = (rawTexData[i+1] / rawTexData[i+3]) * 256.0;; 
-      imageDataObj.data[i+2] = (rawTexData[i+2] / rawTexData[i+3]) * 256.0;; 
+      imageDataObj.data[i+0] = Math.floor((rawTexData[i+0] / rawTexData[i+3]) * 256.0);
+      imageDataObj.data[i+1] = Math.floor((rawTexData[i+1] / rawTexData[i+3]) * 256.0);
+      imageDataObj.data[i+2] = Math.floor((rawTexData[i+2] / rawTexData[i+3]) * 256.0);
+      imageDataObj.data[i+3] = Math.floor(rawTexData[i+3] * 256.0);
     }
-
     return imageDataObj;
   }
 
@@ -394,7 +406,7 @@ export default class Expo2DContext {
     dirtyHeight = Math.floor(dirtyHeight);
 
     var pattern = this.createPattern(
-      {"width": dirtyWidth, "height": dirtyHeight, "data": imagedata.data},
+      {"width": imagedata.width, "height": imagedata.height, "data": imagedata.data},
       'src-rect');
     this._applyStyle(pattern);
 
@@ -405,8 +417,8 @@ export default class Expo2DContext {
 
     var minTexX = dirtyX / imagedata.width;
     var minTexY = dirtyY / imagedata.height;
-    var maxTexX = minTexX + dirtyWidth / imagedata.width;
-    var maxTexY = minTexY + dirtyHeight / imagedata.height;
+    var maxTexX = minTexX + (dirtyWidth / imagedata.width);
+    var maxTexY = minTexY + (dirtyHeight / imagedata.height);
 
     var vertices = [
       minScreenX, minScreenY, minTexX, minTexY,
@@ -437,8 +449,7 @@ export default class Expo2DContext {
     );
 
     gl.uniform1f(this.activeShaderProgram.uniforms['uGlobalAlpha'], 1.0);
-    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ZERO, gl.ONE, gl.ZERO); // TODO: aaaaalmost correct
-    //gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ZERO);
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ZERO, gl.ONE, gl.ZERO);
 
     gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -743,7 +754,6 @@ export default class Expo2DContext {
 
     this._prepareText(text, x, y, xscale, geometry);
 
-    // TODO: multiple pages:
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D_ARRAY, font.textures);
     gl.uniform1i(this.activeShaderProgram.uniforms["uTextPages"], 1);
@@ -1305,24 +1315,24 @@ export default class Expo2DContext {
 
   restore() {
     this.drawingState = this.drawingStateStack.pop();
-    this._updateMatrixUniforms(); // TODO: batch this somehow
+    this._updateMatrixUniforms();
     this._updateStrokeExtruderState();
     this._updateClippingRegion();
   }
 
   scale(x, y) {
     glm.mat4.scale(this.drawingState.mvMatrix, this.drawingState.mvMatrix, [x, y, 1.0]);
-    this._updateMatrixUniforms(); // TODO: batch this somehow
+    this._updateMatrixUniforms();
   }
 
   rotate(angle) {
     glm.mat4.rotateZ(this.drawingState.mvMatrix, this.drawingState.mvMatrix, angle);
-    this._updateMatrixUniforms(); // TODO: batch this somehow
+    this._updateMatrixUniforms();
   }
 
   translate(x, y) {
     glm.mat4.translate(this.drawingState.mvMatrix, this.drawingState.mvMatrix, [x, y, 0.0]);
-    this._updateMatrixUniforms(); // TODO: batch this somehow
+    this._updateMatrixUniforms();
   }
 
   transform(a, b, c, d, e, f) {
@@ -1335,7 +1345,7 @@ export default class Expo2DContext {
         0, 0, 1, 0,
         e, f, 0, 1),
     );
-    this._updateMatrixUniforms(); // TODO: batch this somehow
+    this._updateMatrixUniforms();
   }
 
   setTransform(a, b, c, d, e, f) {

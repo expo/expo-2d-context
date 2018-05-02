@@ -482,7 +482,7 @@ export const patternShaderRepeatValues = {
   'repeat-x': 1,
   'repeat-y': 2,
   'repeat': 3,
-  'src-rect': 4, // Only used for drawImage()
+  'src-rect': 4, // Only used for drawImage() and putImageData()
 };
 
 export const patternShaderTxt = {
