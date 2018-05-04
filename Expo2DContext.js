@@ -108,6 +108,45 @@ function outerTangent(p0, r0, p1, r1) {
 }
 
 
+export class ImageData {
+    constructor() {
+      if (arguments[0] instanceof Uint8ClampedArray) {
+        var dataArray = arguments[0];
+        var width = arguments[1];
+        var height = arguments[2];
+        if (dataArray.length < 4) {
+          throw new DOMException('Bad data array size', 'InvalidStateError');
+        }
+        if (dataArray.length < width * height * 4) {
+          throw new DOMException('Bad data array size', 'IndexSizeError');
+        }
+      } else if (!isNaN(arguments[0])){
+        var width = arguments[0] || 0;
+        var height = arguments[1] || 0;
+        var dataArray = new Uint8ClampedArray(width * height * 4);
+      } else {
+        throw new TypeError("Bad array type");
+      }
+
+      if (!isFinite(width) || width <= 0 || !isFinite(height) || height <= 0) {
+        throw new DOMException('Bad dimensions', 'IndexSizeError');
+      }
+
+      Object.defineProperty(this, "data", {
+        get: ()=>{return dataArray;},
+        set: (val)=>{} // Must be silently read-only
+      });
+      Object.defineProperty(this, "width", {
+        get: ()=>{return width;},
+        set: (val)=>{} // Must be silently read-only
+      });
+      Object.defineProperty(this, "height", {
+        get: ()=>{return height;},
+        set: (val)=>{} // Must be silently read-only
+      });
+    }
+}
+
 export default class Expo2DContext {
   /**************************************************
      * Utility methods
@@ -286,28 +325,32 @@ export default class Expo2DContext {
 
   createImageData() {
     if (arguments.length == 1) {
-      let oldData = arguments[0];
-      return {
-        width: oldData.width,
-        height: oldData.height,
-        data: new Uint8ClampedArray(oldData.data),
-      };
+      if (!(arguments[0] instanceof ImageData)) {
+        throw new TypeError('Bad imagedata');
+      }
+      var sw = arguments[0].width;
+      var sh = arguments[0].height;
     } else if (arguments.length == 2) {
-      let sw = arguments[0];
-      let sh = arguments[1];
+      var sw = arguments[0];
+      var sh = arguments[1];
       sw = Math.floor(Math.abs(sw));
       sh = Math.floor(Math.abs(sh));
-      if (sw == 0 || sh == 0) {
-        throw new DOMException('Bad dimensions', 'IndexSizeError');
-      }
-      return {
-        width: sw,
-        height: sh,
-        data: new Uint8ClampedArray(sw * sh * 4),
-      };
     } else {
       throw new SyntaxError('Bad function signature');
     }
+
+    if (!isFinite(sw) || !isFinite(sh)) {
+      throw new TypeError('Bad dimensions');
+    }
+
+    if (!(this instanceof Expo2DContext)) {
+      throw new TypeError('Bad object instance')
+    }
+
+    if (sw == 0 || sh == 0) {
+      throw new DOMException('Bad dimensions', 'IndexSizeError');
+    }
+    return new ImageData(sw, sh);
   }
 
   getImageData(sx, sy, sw, sh) {
@@ -323,16 +366,17 @@ export default class Expo2DContext {
       sh = -sh;
     }
 
+    if (!isFinite(sx) || !isFinite(sy) ||
+        !isFinite(sw) || !isFinite(sh)) {
+      throw new TypeError("Bad geometry");
+    }
+
     sx = Math.floor(sx);
     sy = Math.floor(sy);
     sw = Math.floor(sw);
     sh = Math.floor(sh);
 
-    var imageDataObj = {
-      width: sw,
-      height: sh,
-      data: new Uint8ClampedArray(sw * sh * 4),
-    };
+    var imageDataObj = new ImageData(sw, sh);
     
     var rawTexData = new Float32Array(sw * sh * 4);
     gl.readPixels(
@@ -348,36 +392,63 @@ export default class Expo2DContext {
     // Undo premultiplied alpha
     // (TODO: is there any way to do this with the GPU?)
     // (TODO: does this work on systems where the bg color is black?)
-    for (i=0; i<imageDataObj.data.length; i+=4) {
+    for (i = 0; i < imageDataObj.data.length; i += 4) {
       imageDataObj.data[i+0] = Math.floor((rawTexData[i+0] / rawTexData[i+3]) * 256.0);
       imageDataObj.data[i+1] = Math.floor((rawTexData[i+1] / rawTexData[i+3]) * 256.0);
       imageDataObj.data[i+2] = Math.floor((rawTexData[i+2] / rawTexData[i+3]) * 256.0);
       imageDataObj.data[i+3] = Math.floor(rawTexData[i+3] * 256.0);
     }
+
     return imageDataObj;
   }
 
   putImageData(imagedata, dx, dy, dirtyX, dirtyY, dirtyWidth, dirtyHeight) {
     let gl = this.gl;
 
-    if (!dirtyX) {
+    var typeError = "";
+
+    if (!(imagedata instanceof ImageData)) {
+      typeError = "Bad imagedata object";
+    }
+
+    if (!isFinite(dx) || !isFinite(dy)) {
+      typeError = "Bad dx/dy"; 
+    }
+
+    if (!isFinite(dirtyX)) {
+      if (arguments.length >= 4) {
+        typeError = "Bad dirtyX"; 
+      }
       dirtyX = 0;
     }
-    if (!dirtyY) {
+    if (!isFinite(dirtyY)) {
+      if (arguments.length >= 5) {
+        typeError = "Bad dirtyY"; 
+      }
       dirtyY = 0;
     }
-    if (!dirtyWidth) {
+    if (!isFinite(dirtyWidth)) {
+      if (arguments.length >= 6) {
+        typeError = "Bad dirtyWidth"; 
+      }
       dirtyWidth = imagedata.width;
     }
-    if (!dirtyHeight) {
+    if (!isFinite(dirtyHeight)) {
+      if (arguments.length >= 7) {
+        typeError = "Bad dirtyHeight"; 
+      }
       dirtyHeight = imagedata.height;
     }
+    if (typeError != "") {
+      throw new TypeError(typeError);
+    }
+
     if (dirtyWidth < 0) {
-      dx += dirtyWidth;
+      dirtyX += dirtyWidth;
       dirtyWidth = -dirtyWidth;
     }
     if (dirtyHeight < 0) {
-      dx += dirtyHeight;
+      dirtyY += dirtyHeight;
       dirtyHeight = -dirtyHeight;
     }
     if (dirtyX < 0) {
@@ -394,9 +465,6 @@ export default class Expo2DContext {
     if (dirtyY + dirtyHeight > imagedata.height) {
       dirtyHeight = imagedata.height - dirtyY;
     }
-    if (dirtyWidth <= 0 || dirtyHeight <= 0) {
-      return;
-    }
 
     dx = Math.floor(dx);
     dy = Math.floor(dy);
@@ -405,13 +473,17 @@ export default class Expo2DContext {
     dirtyWidth = Math.floor(dirtyWidth);
     dirtyHeight = Math.floor(dirtyHeight);
 
+    if (dirtyWidth <= 0 || dirtyHeight <= 0) {
+      return;
+    }
+
     var pattern = this.createPattern(
       {"width": imagedata.width, "height": imagedata.height, "data": imagedata.data},
       'src-rect');
     this._applyStyle(pattern);
 
-    var minScreenX = dx;
-    var minScreenY = dy;
+    var minScreenX = dx + dirtyX;
+    var minScreenY = dy + dirtyY;
     var maxScreenX = minScreenX + dirtyWidth;
     var maxScreenY = minScreenY + dirtyHeight;
 
@@ -448,6 +520,9 @@ export default class Expo2DContext {
       4 * 2
     );
 
+    if (this.stencilsEnabled == true) {
+      gl.disable(gl.STENCIL_TEST);
+    }
     gl.uniform1f(this.activeShaderProgram.uniforms['uGlobalAlpha'], 1.0);
     gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ZERO, gl.ONE, gl.ZERO);
 
@@ -456,6 +531,10 @@ export default class Expo2DContext {
     gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], false);
     gl.disableVertexAttribArray(this.activeShaderProgram.attributes["aTexCoord"]);
 
+    if (this.stencilsEnabled == true) {
+      gl.enable(gl.STENCIL_TEST);
+    }
+ 
     this._applyCompositingState();
 
 
