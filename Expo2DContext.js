@@ -26,7 +26,8 @@ var earcut = require('earcut');
 var bezierCubicPoints = require('adaptive-bezier-curve');
 var bezierQuadraticPoints = require('adaptive-quadratic-curve');
 
-var extrudePolyline = require('extrude-polyline');
+//var extrudePolyline = require('extrude-polyline');
+import { StrokeExtruder } from './StrokeExtruder'
 
 // TODO: rather than setting vertexattribptr on every draw,
 // create a separate vbo for coords vs pattern coords vs text coords
@@ -186,7 +187,7 @@ export default class Expo2DContext {
     this.stencilsEnabled = false;
     this.pMatrix = glm.mat4.create();
 
-    this.strokeExtruder = extrudePolyline();
+    this.strokeExtruder = new StrokeExtruder();
     this._updateStrokeExtruderState();
     
     this.beginPath();
@@ -1122,34 +1123,47 @@ export default class Expo2DContext {
         continue;
       }
 
-      // TODO: we're going to have to branch the polyline extruder
-      // anyway, so make it natively take our subpath format instead
-      // of having to do this ):
+      // // TODO: we're going to have to branch the polyline extruder
+      // // anyway, so make it natively take our subpath format instead
+      // // of having to do this ):
 
-      // TODO: fix polyline extruder so it doesn't choke when we have
-      // the same vertex twice (probably just consists of moving this
-      // dedup check into the extruder code)
-      let polyline = [];
-      let lastPt = null;
-      let pt = null;
-      var epsilon = 0.001;
-      for (j = 0; j < subpath.length; j += 2) {
-        lastPt = pt;
-        pt = [subpath[j], subpath[j + 1]];
-        if (lastPt && Math.abs(lastPt[0]-pt[0])<epsilon && Math.abs(lastPt[1]-pt[1])<epsilon) continue;
-        polyline.push([subpath[j], subpath[j + 1]]);
-      }
-      let mesh = this.strokeExtruder.build(polyline);
+      // // TODO: fix polyline extruder so it doesn't choke when we have
+      // // the same vertex twice (probably just consists of moving this
+      // // dedup check into the extruder code)
+      // let polyline = [];
+      // let lastPt = null;
+      // let pt = null;
+      // var epsilon = 0.001;
+      // for (j = 0; j < subpath.length; j += 2) {
+      //   lastPt = pt;
+      //   pt = [subpath[j], subpath[j + 1]];
+      //   if (lastPt && Math.abs(lastPt[0]-pt[0])<epsilon && Math.abs(lastPt[1]-pt[1])<epsilon) continue;
+      //   polyline.push([subpath[j], subpath[j + 1]]);
+      // }
+      // let mesh = this.strokeExtruder.build(polyline);
 
-      let vertices = [];
-      for (i = 0; i < mesh.cells.length; i++) {
-        vertices.push(mesh.positions[mesh.cells[i][0]][0]);
-        vertices.push(mesh.positions[mesh.cells[i][0]][1]);
-        vertices.push(mesh.positions[mesh.cells[i][1]][0]);
-        vertices.push(mesh.positions[mesh.cells[i][1]][1]);
-        vertices.push(mesh.positions[mesh.cells[i][2]][0]);
-        vertices.push(mesh.positions[mesh.cells[i][2]][1]);
-      }
+      // let vertices = [];
+      // for (i = 0; i < mesh.cells.length; i++) {
+      //   vertices.push(mesh.positions[mesh.cells[i][0]][0]);
+      //   vertices.push(mesh.positions[mesh.cells[i][0]][1]);
+      //   vertices.push(mesh.positions[mesh.cells[i][1]][0]);
+      //   vertices.push(mesh.positions[mesh.cells[i][1]][1]);
+
+      //   vertices.push(mesh.positions[mesh.cells[i][1]][0]);
+      //   vertices.push(mesh.positions[mesh.cells[i][1]][1]);
+      //   vertices.push(mesh.positions[mesh.cells[i][2]][0]);
+      //   vertices.push(mesh.positions[mesh.cells[i][2]][1]);
+
+
+      //   vertices.push(mesh.positions[mesh.cells[i][2]][0]);
+      //   vertices.push(mesh.positions[mesh.cells[i][2]][1]);
+      //   vertices.push(mesh.positions[mesh.cells[i][0]][0]);
+      //   vertices.push(mesh.positions[mesh.cells[i][0]][1]);
+
+      // }
+
+
+      let vertices = this.strokeExtruder.build(subpath);
 
       gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
       gl.bufferData(
@@ -1340,6 +1354,7 @@ export default class Expo2DContext {
     var t1_t0 = t1.subtract(t0);
     var t1_t0_hat = t1_t0.unit();
 
+    // TODO: use Vector class's angleBetween()
     var tangent_inner_angle = Math.acos(s_t0.dot(t1_t0) / (s_t0.length()*t1_t0.length()));
     // // TODO: should be possible to reduce normalizations here?
     var bisector = s_t0_hat.add(t1_t0_hat).divide(2).unit();

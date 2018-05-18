@@ -27,6 +27,9 @@
 // existing vectors to avoid generating garbage.
 //
 
+
+// TODO(Leo) - Add op_() versions of each method for in-place modification
+
 export default function Vector(x, y, z) {
   this.x = x || 0;
   this.y = y || 0;
