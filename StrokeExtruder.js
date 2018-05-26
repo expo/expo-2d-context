@@ -9,14 +9,17 @@ export class StrokeExtruder {
     this.join = opt.join || 'miter'
     this.cap = opt.cap || 'butt'
     this.closed = opt.closed || false
+    this.mvMatrix = [1,0,0,0,
+                     0,1,0,0,
+                     0,0,1,0,
+                     0,0,0,1];
   }
 
   build(points) {
+    var halfThickness = this.thickness / 2;
+
     // TODO: proper docstring
     // Expects points to be a flat array of the form [x0, y0, x1, y1, ...]
-
-    // TODO: once closing here is implemented, make sure the rest of the code
-    // doesn't do its own closing
 
     if (points.length <= 4) {
       return [];
@@ -27,39 +30,76 @@ export class StrokeExtruder {
 
     triangles = []
 
-    let prevL1 = new Vector(points[0], points[1])
+    let prevL1 = vec(points, 0);
     let prevSeg = null;
 
     if (this.closed) {
-      prevSeg = this._segmentDescriptor(
-        new Vector(points[points.length-4], points[points.length-3]),
-        new Vector(points[points.length-2], points[points.length-1])
+      prevSeg = this._segmentGeometry(triangles, 
+        this._segmentDescriptor(vec(points, -2), vec(points, 0)),
+        this._segmentDescriptor(vec(points, -4), vec(points, -2))
       );
-      prevSeg = this._segmentGeometry(triangles,
-        new Vector(points[points.length-2], points[points.length-1]),
-        new Vector(points[0], points[1]),
-        prevSeg);
+    } else {
+      let firstSeg = this._segmentDescriptor(vec(points, 0), vec(points, 2));
+      if (this.cap == "round") {
+        let startTheta = Math.atan2(firstSeg.normal.y, firstSeg.normal.x);
+        let endTheta = startTheta + Math.PI;
+        this._fanGeometry(triangles, firstSeg.L0, startTheta, endTheta);
+      } else if (this.cap == "square") {
+        prevL1 = prevL1.subtract(firstSeg.direction.multiply(halfThickness))
+      }
     }
 
     // TODO: does global alpha reveal the triangle overlaps here?
 
     for (let i = 2; i < points.length; i+=2) {
-      let L0 = prevL1;
-      let L1 = new Vector(points[i+0], points[i+1]);
-      prevL1 = L1;  
-      prevSeg = this._segmentGeometry(triangles, L0, L1, prevSeg)
+      let seg = this._segmentDescriptor(
+        prevL1,
+        new Vector(points[i+0], points[i+1])
+      );
+      
+      if (!this.closed && i == points.length-2 && this.cap == "square") {
+        seg = this._segmentDescriptor(
+          seg.L0,
+          seg.L1.add(seg.direction.multiply(halfThickness))
+        );
+      }
+
+      prevL1 = seg.L1;  
+      prevSeg = this._segmentGeometry(triangles, seg, prevSeg)
     }
 
-    // TODO: caps
+    if (!this.closed) {
+      if (this.cap == "round") {
+        let startTheta = Math.atan2(prevSeg.normal.y, prevSeg.normal.x) + Math.PI;
+        let endTheta = startTheta + Math.PI;
+        this._fanGeometry(triangles, prevSeg.L1, startTheta, endTheta);
+      }
+    }
 
     return triangles;
+  }
+
+  _fanGeometry(triangles, center, startTheta, endTheta) {
+    var halfThickness = this.thickness / 2;
+
+    let incr = 10/this.thickness;
+    for (let theta = startTheta; theta < endTheta; theta += incr) {
+      if (theta + incr > endTheta) {
+        incr = endTheta - theta;
+      }
+      this._pushPt(triangles, center);
+      this._pushPt(triangles, center.x + halfThickness * Math.cos(theta), center.y + halfThickness * Math.sin(theta));
+      this._pushPt(triangles, center.x + halfThickness * Math.cos(theta + incr), center.y + halfThickness * Math.sin(theta + incr));
+    }
   }
 
   _segmentDescriptor(L0, L1) {
     var halfThickness = this.thickness / 2;
 
     let seg = {}
-    seg.direction = L1.subtract(L0).unit(),
+    seg.L0 = L0;
+    seg.L1 = L1;
+    seg.direction = L1.subtract(L0).unit();
     seg.normal = new Vector(-seg.direction.y, seg.direction.x);
 
     // TODO: convert to a triangle strip with restarts, to more
@@ -74,18 +114,16 @@ export class StrokeExtruder {
     return seg;
   }
 
-  _segmentGeometry (triangles, L0, L1, prevSeg) {
+  _segmentGeometry (triangles, seg, prevSeg) {
       var halfThickness = this.thickness / 2;
 
-      let seg = this._segmentDescriptor(L0, L1)
+      this._pushPt(triangles, seg.points[0]);
+      this._pushPt(triangles, seg.points[1]);
+      this._pushPt(triangles, seg.points[2]);
 
-      triangles.push(seg.points[0].x); triangles.push(seg.points[0].y)
-      triangles.push(seg.points[1].x); triangles.push(seg.points[1].y)
-      triangles.push(seg.points[2].x); triangles.push(seg.points[2].y)
-
-      triangles.push(seg.points[0].x); triangles.push(seg.points[0].y)
-      triangles.push(seg.points[3].x); triangles.push(seg.points[3].y)
-      triangles.push(seg.points[2].x); triangles.push(seg.points[2].y)
+      this._pushPt(triangles, seg.points[0]);
+      this._pushPt(triangles, seg.points[3]);
+      this._pushPt(triangles, seg.points[2]);
 
       if (prevSeg) {
         // TODO: can bendDirection be based on miter angle?
@@ -110,28 +148,23 @@ export class StrokeExtruder {
             endTheta += Math.PI + miterAngle;
           }
 
-          let incr = 10/this.thickness;
-          for (let theta = startTheta; theta < endTheta; theta += incr) {
-            triangles.push(L0.x); triangles.push(L0.y)
-            triangles.push(L0.x + halfThickness * Math.cos(theta)); triangles.push(L0.y + halfThickness * Math.sin(theta))
-            triangles.push(L0.x + halfThickness * Math.cos(theta + incr)); triangles.push(L0.y + halfThickness * Math.sin(theta + incr))
-          }
+          this._fanGeometry(triangles, seg.L0, startTheta, endTheta)
         } else {
           // TODO: seams are a problem with this triangle -
-          triangles.push(L0.x); triangles.push(L0.y)
-          triangles.push(joinP0.x); triangles.push(joinP0.y)
-          triangles.push(joinP1.x); triangles.push(joinP1.y)
+          this._pushPt(triangles, seg.L0);
+          this._pushPt(triangles, joinP0);
+          this._pushPt(triangles, joinP1);
 
           if (this.join == 'miter') {
             let miterLength = halfThickness / Math.cos(miterAngle/2);
 
             if (miterLength/halfThickness <= this.miterLimit) {
               let miterVec = prevSeg.direction.negative().unit().add(seg.direction.unit()).unit().multiply(miterLength) // TODO: factor neg into a subtraction?
-              let miterPt = L0.subtract(miterVec);
+              let miterPt = seg.L0.subtract(miterVec);
 
-              triangles.push(joinP0.x); triangles.push(joinP0.y)
-              triangles.push(joinP1.x); triangles.push(joinP1.y)
-              triangles.push(miterPt.x); triangles.push(miterPt.y)
+              this._pushPt(triangles, joinP0);
+              this._pushPt(triangles, joinP1);
+              this._pushPt(triangles, miterPt);
             }
           }
         }
@@ -141,4 +174,28 @@ export class StrokeExtruder {
       return seg;
   }
 
+  _pushPt (triangles, pt) {
+
+    // TODO: problem!!! path was already transformed, so do we have to "unproject" here?
+    //  ahhhhhh what to do????? it seems like the arc()s already sort of dealt with this issue??
+
+    let original_x = pt.x;
+    let original_y = pt.y;
+    if (arguments.length == 3) {
+      original_x = arguments[1];
+      original_y = arguments[2];
+    }
+    let transformed_x = original_x * this.mvMatrix[0] + original_y * this.mvMatrix[4] + 0*this.mvMatrix[12];
+    let transformed_y = original_x * this.mvMatrix[1] + original_y * this.mvMatrix[5] + 0*this.mvMatrix[13];
+    triangles.push(transformed_x);
+    triangles.push(transformed_y);
+  }
+
+}
+
+function vec(arr, idx) {
+  if (idx < 0) {
+    idx = arr.length + idx;
+  }
+  return new Vector(arr[idx], arr[idx+1]);
 }

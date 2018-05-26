@@ -197,12 +197,12 @@ export default class Expo2DContext {
   _updateStrokeExtruderState() {
     // TODO: joins currently aren't placed at the beginning/end of
     // closed paths
+
     Object.assign(this.strokeExtruder, {
       "thickness" : this.drawingState.lineWidth,
       "cap" : this.drawingState.lineCap,
       "join" : this.drawingState.lineJoin,
       "miterLimit" : this.drawingState.miterLimit,
-      "closed" : true
     });
   }
 
@@ -893,6 +893,7 @@ export default class Expo2DContext {
 
   strokeText(text, x, y, maxWidth) {
     // TODO: how to actually map lineWidth to distance field thresholds??
+    // TODO: scale width with mvmatrix? or does texture scaling already take care of that?
     let shaderStrokeWidth = this.drawingState.lineWidth / 7.0;
     shaderStrokeWidth /= this.drawingState.font_parsed["size-scalar"];
     this._drawText(text, x, y, maxWidth, shaderStrokeWidth);
@@ -954,19 +955,18 @@ export default class Expo2DContext {
 
     this._applyStyle(this.drawingState.strokeStyle);
 
-    var polyline = [[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]];
+    var polyline = [
+      x, y,
+      x + w, y,
+      x + w, y + h,
+      x, y + h
+    ];
 
-    var mesh = this.strokeExtruder.build(polyline);
+    gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
 
-    var vertices = [];
-    for (i = 0; i < mesh.cells.length; i++) {
-      vertices.push(mesh.positions[mesh.cells[i][0]][0]);
-      vertices.push(mesh.positions[mesh.cells[i][0]][1]);
-      vertices.push(mesh.positions[mesh.cells[i][1]][0]);
-      vertices.push(mesh.positions[mesh.cells[i][1]][1]);
-      vertices.push(mesh.positions[mesh.cells[i][2]][0]);
-      vertices.push(mesh.positions[mesh.cells[i][2]][1]);
-    }
+    this.strokeExtruder.closed = true;
+    this.strokeExtruder.mvMatrix = this.drawingState.mvMatrix;
+    var verticies = this.strokeExtruder.build(polyline);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
@@ -980,6 +980,7 @@ export default class Expo2DContext {
     );
 
     gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
+    gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], false);
   }
 
   /**************************************************
@@ -989,14 +990,15 @@ export default class Expo2DContext {
   beginPath() {
     this.subpaths = [[]];
     this.currentSubpath = this.subpaths[0];
+    this.currentSubpath.closed = false;
   }
 
   closePath() {
     if (this.currentSubpath.length > 0) {
-      this.currentSubpath.push(this.currentSubpath[0]);
-      this.currentSubpath.push(this.currentSubpath[1]);
+      this.currentSubpath.closed = true;
       delete this.currentSubpath.triangles;
       this.currentSubpath = [];
+      this.currentSubpath.closed = false;
       this.subpaths.push(this.currentSubpath);
     }
   }
@@ -1123,46 +1125,8 @@ export default class Expo2DContext {
         continue;
       }
 
-      // // TODO: we're going to have to branch the polyline extruder
-      // // anyway, so make it natively take our subpath format instead
-      // // of having to do this ):
-
-      // // TODO: fix polyline extruder so it doesn't choke when we have
-      // // the same vertex twice (probably just consists of moving this
-      // // dedup check into the extruder code)
-      // let polyline = [];
-      // let lastPt = null;
-      // let pt = null;
-      // var epsilon = 0.001;
-      // for (j = 0; j < subpath.length; j += 2) {
-      //   lastPt = pt;
-      //   pt = [subpath[j], subpath[j + 1]];
-      //   if (lastPt && Math.abs(lastPt[0]-pt[0])<epsilon && Math.abs(lastPt[1]-pt[1])<epsilon) continue;
-      //   polyline.push([subpath[j], subpath[j + 1]]);
-      // }
-      // let mesh = this.strokeExtruder.build(polyline);
-
-      // let vertices = [];
-      // for (i = 0; i < mesh.cells.length; i++) {
-      //   vertices.push(mesh.positions[mesh.cells[i][0]][0]);
-      //   vertices.push(mesh.positions[mesh.cells[i][0]][1]);
-      //   vertices.push(mesh.positions[mesh.cells[i][1]][0]);
-      //   vertices.push(mesh.positions[mesh.cells[i][1]][1]);
-
-      //   vertices.push(mesh.positions[mesh.cells[i][1]][0]);
-      //   vertices.push(mesh.positions[mesh.cells[i][1]][1]);
-      //   vertices.push(mesh.positions[mesh.cells[i][2]][0]);
-      //   vertices.push(mesh.positions[mesh.cells[i][2]][1]);
-
-
-      //   vertices.push(mesh.positions[mesh.cells[i][2]][0]);
-      //   vertices.push(mesh.positions[mesh.cells[i][2]][1]);
-      //   vertices.push(mesh.positions[mesh.cells[i][0]][0]);
-      //   vertices.push(mesh.positions[mesh.cells[i][0]][1]);
-
-      // }
-
-
+      this.strokeExtruder.closed = subpath.closed || false;
+      this.strokeExtruder.mvMatrix = this.drawingState.mvMatrix;
       let vertices = this.strokeExtruder.build(subpath);
 
       gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
@@ -1187,6 +1151,7 @@ export default class Expo2DContext {
 
   moveTo(x, y) {
     this.currentSubpath = [];
+    this.currentSubpath.closed = false;
     this.subpaths.push(this.currentSubpath);
     let tPt = this._getTransformedPt(x, y);
     this.currentSubpath.push(tPt[0]);
@@ -1508,7 +1473,7 @@ export default class Expo2DContext {
     this.drawingState.lineWidth = val;
   }
   get lineWidth() {
-    return this.strokeExtruder.thickness;
+    return this.drawingState.lineWidth;
   }
 
   set lineCap(val) {
