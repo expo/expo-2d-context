@@ -28,7 +28,7 @@ export class StrokeExtruder {
       throw new TypeError("Points array length is not a multiple of 2")
     }
 
-    triangles = []
+    let triangles = []
 
     let prevL1 = vec(points, 0);
     let prevSeg = null;

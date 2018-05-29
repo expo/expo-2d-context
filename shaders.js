@@ -1,9 +1,9 @@
 var stringFormat = require('string-format');
 
-// TODO: move fragColor into header?
+const shaderVersion = `#version 300 es
+`;
 
 const shaderCommonHeaderTxt = `
-  #version 300 es
   #define M_PI 3.1415926535897932384626433832795
   precision lowp int;
   precision mediump float;
@@ -67,6 +67,7 @@ const textFragShaderTxt = `
 
 export const flatShaderTxt = {
   vert:
+      shaderVersion +
       shaderCommonHeaderTxt +
       textVertShaderTxt + `
       in vec2 aVertexPosition;
@@ -86,6 +87,7 @@ export const flatShaderTxt = {
       }
     `,
   frag:
+      shaderVersion +
       shaderCommonHeaderTxt +
       textFragShaderTxt + 
       shaderFragHeaderTxt + 
@@ -131,6 +133,7 @@ const gradMapperFragShaderTxt = `
 
 export const linearGradShaderTxt = {
   vert:
+      shaderVersion +
       shaderCommonHeaderTxt +
       textVertShaderTxt + `
 
@@ -157,6 +160,7 @@ export const linearGradShaderTxt = {
       }
     `,
   frag:
+    shaderVersion +
     shaderCommonHeaderTxt +
     textFragShaderTxt +
     shaderFragHeaderTxt + 
@@ -194,6 +198,7 @@ export const linearGradShaderTxt = {
 
 export const radialGradShaderTxt = {
   vert:
+    shaderVersion +
     shaderCommonHeaderTxt +
     textVertShaderTxt + `
 
@@ -220,6 +225,7 @@ export const radialGradShaderTxt = {
     }
   `,
   frag:
+    shaderVersion +
     shaderCommonHeaderTxt +
     textFragShaderTxt +
     shaderFragHeaderTxt + 
@@ -297,6 +303,7 @@ export const radialGradShaderTxt = {
 
 export const disjointRadialGradShaderTxt = {
   vert:
+    shaderVersion +
     shaderCommonHeaderTxt +
     textVertShaderTxt + `
 
@@ -323,6 +330,7 @@ export const disjointRadialGradShaderTxt = {
     }
   `,
   frag:
+    shaderVersion +
     shaderCommonHeaderTxt +
     textFragShaderTxt +
     shaderFragHeaderTxt + 
@@ -487,6 +495,7 @@ export const patternShaderRepeatValues = {
 
 export const patternShaderTxt = {
   vert: 
+    shaderVersion +
     shaderCommonHeaderTxt +
     textVertShaderTxt +
     stringFormat(`
@@ -524,6 +533,7 @@ export const patternShaderTxt = {
     patternShaderRepeatValues
   ),
   frag:
+    shaderVersion +
     shaderCommonHeaderTxt +
     textFragShaderTxt +
     shaderFragHeaderTxt +  
@@ -600,10 +610,10 @@ export class ShaderProgram {
 
 
     this.attributes = {};
-    nAttributes = gl.getProgramParameter(this.programHandle, gl.ACTIVE_ATTRIBUTES);
-    names = [];
-    for (i = 0; i < nAttributes; i++) {
-      attr = gl.getActiveAttrib(this.programHandle, i);
+    let nAttributes = gl.getProgramParameter(this.programHandle, gl.ACTIVE_ATTRIBUTES);
+    let names = [];
+    for (let i = 0; i < nAttributes; i++) {
+      let attr = gl.getActiveAttrib(this.programHandle, i);
       names.push(attr.name);
       this.attributes[attr.name] = gl.getAttribLocation(
         this.programHandle,
@@ -613,19 +623,23 @@ export class ShaderProgram {
     }
 
     this.uniforms = {};
-    nUniforms = gl.getProgramParameter(this.programHandle, gl.ACTIVE_UNIFORMS);
+    let nUniforms = gl.getProgramParameter(this.programHandle, gl.ACTIVE_UNIFORMS);
     names = [];
-    for (i = 0; i < nUniforms; i++) {
-      uniform = gl.getActiveUniform(this.programHandle, i);
+    for (let i = 0; i < nUniforms; i++) {
+      let uniform = gl.getActiveUniform(this.programHandle, i);
       names.push(uniform.name);
       this.uniforms[uniform.name] = gl.getUniformLocation(
         this.programHandle,
         uniform.name
       );
     }
+
+    this.vertexArray = gl.createVertexArray();
   }
 
   bind() {
     this.gl.useProgram(this.programHandle);
+    this.gl.bindVertexArray(this.vertexArray);
+
   }
 }

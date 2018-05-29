@@ -14,6 +14,11 @@ import { ShaderProgram,
 import { calibri } from './calibri';
 import { timesnewroman } from './timesnewroman';
 import { couriernew } from './couriernew';
+// TODO: currently we need to swap the above out with null for
+// web build...fix gulpfile:
+// var calibri = null;
+// var timesnewroman = null;
+// var couriernew = null;
 
 const DOMException = require("domexception");
 
@@ -39,7 +44,7 @@ import { StrokeExtruder } from './StrokeExtruder'
 // TODO: use same tex coord attrib array for drawImage and fillText
 
 function cssToGlColor(cssStr) {
-  parsedColor = parseColor(cssStr);
+  let parsedColor = parseColor(cssStr);
   // TODO: clean this crap up:
   if (!parsedColor ||
       (!("r" in parsedColor && isFinite(parsedColor.r) &&
@@ -391,7 +396,7 @@ export default class Expo2DContext {
     );
 
     // Undo premultiplied alpha
-    // (TODO: is there any way to do this with the GPU?)
+    // (TODO: is there any way to do this with the GPU??)
     // (TODO: does this work on systems where the bg color is black?)
     for (i = 0; i < imageDataObj.data.length; i += 4) {
       imageDataObj.data[i+0] = Math.floor((rawTexData[i+0] / rawTexData[i+3]) * 256.0);
@@ -946,7 +951,6 @@ export default class Expo2DContext {
       0,
       0
     );
-
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
@@ -966,7 +970,7 @@ export default class Expo2DContext {
 
     this.strokeExtruder.closed = true;
     this.strokeExtruder.mvMatrix = this.drawingState.mvMatrix;
-    var verticies = this.strokeExtruder.build(polyline);
+    var vertices = this.strokeExtruder.build(polyline);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
@@ -1884,7 +1888,7 @@ export default class Expo2DContext {
 
     gl.disableVertexAttribArray(this.activeShaderProgram.attributes["aTextPageCoord"]);
     gl.uniform1i(this.activeShaderProgram.uniforms["uTextEnabled"], 0);
-    gl.uniform1i(this.activeShaderProgram.uniforms["uTextPages"], 1);
+    gl.uniform1i(this.activeShaderProgram.uniforms["uTextPages"], 1); // TODO: causing trips in web-land
 
     gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
 
@@ -1955,19 +1959,23 @@ export default class Expo2DContext {
     // We're using HALF_FLOAT/16F for the moment because of iOS limitations:
     // https://github.com/pex-gl/pex-glu/issues/3
     //
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F,
-                  this.framebufferForScience.width, this.framebufferForScience.height,
-                  0, gl.RGBA, gl.HALF_FLOAT, null);
-
+    if (this.environment === "web") {
+      // TODO: up the precision here:
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA,
+                    this.framebufferForScience.width, this.framebufferForScience.height,
+                    0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    } else {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F,
+                    this.framebufferForScience.width, this.framebufferForScience.height,
+                    0, gl.RGBA, gl.HALF_FLOAT, null);
+    }
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.framebufferTextureForScience, 0);
     gl.bindTexture(gl.TEXTURE_2D, null);
-    
     var renderbuffer = gl.createRenderbuffer();
     gl.bindRenderbuffer(gl.RENDERBUFFER, renderbuffer);
     gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH24_STENCIL8,
                            this.framebufferForScience.width, this.framebufferForScience.height);
     gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, renderbuffer);
-
     gl.bindRenderbuffer(gl.RENDERBUFFER, null);
   }
 
@@ -1979,6 +1987,9 @@ export default class Expo2DContext {
     // Paramters
     // TODO: how do we make these parameters more parameterizable?
     this.maxGradStops = 128;
+
+    // TODO: actually be smart about detecting whether we're running in expo or not:
+    this.environment = "expo";
 
     // TODO: find fonts?
     this.builtinFonts = {
@@ -1995,9 +2006,6 @@ export default class Expo2DContext {
     // Initialization
     this.gl = gl;
     this.activeShaderProgram = null;
-
-    this.vertexArray = gl.createVertexArray();
-    gl.bindVertexArray(this.vertexArray);
 
     this.vertexBuffer = gl.createBuffer();
 
@@ -2039,7 +2047,6 @@ export default class Expo2DContext {
       patternShaderTxt['vert'],
       patternShaderTxt['frag']
     );
-
     this.initFbForScience();
 
     this.initDrawingState();
@@ -2077,6 +2084,9 @@ export default class Expo2DContext {
 
   flush() {
     this.drawFbForScience();
-    this.gl.endFrameEXP();
+
+    if (this.environment === "expo") {
+      this.gl.endFrameEXP();
+    }
   }
 }
