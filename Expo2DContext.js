@@ -158,7 +158,7 @@ export default class Expo2DContext {
      * Utility methods
      **************************************************/
 
-  initDrawingState() {
+  _initDrawingState() {
     this.drawingState = {
       "mvMatrix" : glm.mat4.create(),
 
@@ -342,7 +342,7 @@ export default class Expo2DContext {
       sw = Math.floor(Math.abs(sw));
       sh = Math.floor(Math.abs(sh));
     } else {
-      throw new SyntaxError('Bad function signature');
+      throw new TypeError();
     }
 
     if (!isFinite(sw) || !isFinite(sh)) {
@@ -361,6 +361,8 @@ export default class Expo2DContext {
 
   getImageData(sx, sy, sw, sh) {
     let gl = this.gl;
+
+    if (arguments.length != 4) throw new TypeError();
 
     if (sw < 0) {
       sx += sw;
@@ -592,7 +594,7 @@ export default class Expo2DContext {
       var dw = arguments[7];
       var dh = arguments[8];
     } else {
-      throw new SyntaxError('Bad function signature');
+      throw new TypeError();
     }
 
     if (!isFinite(dx) || !isFinite(dy) ||
@@ -787,10 +789,12 @@ export default class Expo2DContext {
   } 
 
   measureText(text) {
+    if (arguments.length != 1) throw new TypeError();
     return {"width": this._prepareText(text, 0, 0, 1)};
   }
 
   async initializeText() {
+    if (arguments.length != 0) throw new TypeError();
     await Promise.all([
       calibri.await_assets(),
       timesnewroman.await_assets(),
@@ -893,10 +897,12 @@ export default class Expo2DContext {
   }
 
   fillText(text, x, y, maxWidth) {
+    if (arguments.length != 3 && arguments.length != 4) throw new TypeError();
     this._drawText(text, x, y, maxWidth, -1);
   }
 
   strokeText(text, x, y, maxWidth) {
+    if (arguments.length != 3 && arguments.length != 4) throw new TypeError();
     // TODO: how to actually map lineWidth to distance field thresholds??
     // TODO: scale width with mvmatrix? or does texture scaling already take care of that?
     let shaderStrokeWidth = this.drawingState.lineWidth / 7.0;
@@ -909,6 +915,8 @@ export default class Expo2DContext {
    **************************************************/
 
   clearRect(x, y, w, h) {
+    if (arguments.length != 4) throw new TypeError();
+
     let gl = this.gl;
 
     if (
@@ -935,6 +943,8 @@ export default class Expo2DContext {
   }
 
   fillRect(x, y, w, h) {
+    if (arguments.length != 4) throw new TypeError();
+
     let gl = this.gl;
 
     this._applyStyle(this.drawingState.fillStyle);
@@ -955,6 +965,8 @@ export default class Expo2DContext {
   }
 
   strokeRect(x, y, w, h) {
+    if (arguments.length != 4) throw new TypeError();
+
     let gl = this.gl;
 
     this._applyStyle(this.drawingState.strokeStyle);
@@ -993,12 +1005,14 @@ export default class Expo2DContext {
      **************************************************/
 
   beginPath() {
+    if (arguments.length != 0) throw new TypeError();
     this.subpaths = [[]];
     this.currentSubpath = this.subpaths[0];
     this.currentSubpath.closed = false;
   }
 
   closePath() {
+    if (arguments.length != 0) throw new TypeError();
     if (this.currentSubpath.length > 0) {
       this.currentSubpath.closed = true;
       delete this.currentSubpath.triangles;
@@ -1023,6 +1037,7 @@ export default class Expo2DContext {
 
   isPointInPath(x, y) {
     // TODO: TEST THIS OUT!!!
+    if (arguments.length != 2) throw new TypeError();
     let gl = this.gl;
 
     let tPt = this._getTransformedPt(x, y);
@@ -1066,6 +1081,8 @@ export default class Expo2DContext {
   }
 
   clip() {
+    if (arguments.length != 0) throw new TypeError();
+
     let newClipPoly = [];
     
     for (i = 0; i < this.subpaths.length; i++) {
@@ -1081,6 +1098,8 @@ export default class Expo2DContext {
   }
 
   fill() {
+    if (arguments.length != 0) throw new TypeError();
+
     let gl = this.gl;
 
     this._applyStyle(this.drawingState.fillStyle);
@@ -1117,6 +1136,8 @@ export default class Expo2DContext {
   }
 
   stroke() {
+    if (arguments.length != 0) throw new TypeError();
+
     let gl = this.gl;
 
     this._applyStyle(this.drawingState.strokeStyle);
@@ -1156,6 +1177,7 @@ export default class Expo2DContext {
   }
 
   moveTo(x, y) {
+    if (arguments.length != 2) throw new TypeError();
     this.currentSubpath = [];
     this.currentSubpath.closed = false;
     this.subpaths.push(this.currentSubpath);
@@ -1165,6 +1187,7 @@ export default class Expo2DContext {
   }
 
   lineTo(x, y) {
+    if (arguments.length != 2) throw new TypeError();
     // TODO: ensure start path?
     let tPt = this._getTransformedPt(x, y);
     this.currentSubpath.push(tPt[0]);
@@ -1173,6 +1196,7 @@ export default class Expo2DContext {
   }
 
   quadraticCurveTo(cpx, cpy, x, y) {
+    if (arguments.length != 4) throw new TypeError();
     // TODO: ensure start path?
     var scale = 1; // TODO: ??
     var vertsLen = this.currentSubpath.length;
@@ -1194,6 +1218,7 @@ export default class Expo2DContext {
   }
 
   bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y) {
+    if (arguments.length != 6) throw new TypeError();
     // TODO: ensure start path?
     var scale = 1; // TODO: ??
     var vertsLen = this.currentSubpath.length;
@@ -1216,6 +1241,7 @@ export default class Expo2DContext {
   }
 
   rect(x, y, w, h) {
+    if (arguments.length != 4) throw new TypeError();
     this.moveTo(x, y);
     this.lineTo(x + w, y);
     this.lineTo(x + w, y + h);
@@ -1224,6 +1250,7 @@ export default class Expo2DContext {
   }
 
   arc(x, y, radius, startAngle, endAngle, counterclockwise) {
+    if (arguments.length != 5 && arguments.length != 6) throw new TypeError();
     // TODO: bounds check for radius?
     counterclockwise = counterclockwise || 0;
     centerPt = [x, y];
@@ -1298,6 +1325,8 @@ export default class Expo2DContext {
   }
 
   arcTo(x1, y1, x2, y2, radius) {
+    if (arguments.length != 5) throw new TypeError();
+
     delete this.currentSubpath.triangles;
    
     // For further explanation of the geometry here -
@@ -1367,6 +1396,7 @@ export default class Expo2DContext {
      **************************************************/
 
   save() {
+    if (arguments.length != 0) throw new TypeError();
     this.drawingStateStack.push(this.drawingState);
     this.drawingState = Object.assign({}, this.drawingState);
     this.drawingState.strokeDashes = this.drawingState.strokeDashes.slice();
@@ -1379,6 +1409,7 @@ export default class Expo2DContext {
   }
 
   restore() {
+    if (arguments.length != 0) throw new TypeError();
     this.drawingState = this.drawingStateStack.pop();
     this._updateMatrixUniforms();
     this._updateStrokeExtruderState();
@@ -1386,21 +1417,25 @@ export default class Expo2DContext {
   }
 
   scale(x, y) {
+    if (arguments.length != 2) throw new TypeError();
     glm.mat4.scale(this.drawingState.mvMatrix, this.drawingState.mvMatrix, [x, y, 1.0]);
     this._updateMatrixUniforms();
   }
 
   rotate(angle) {
+    if (arguments.length != 1) throw new TypeError();
     glm.mat4.rotateZ(this.drawingState.mvMatrix, this.drawingState.mvMatrix, angle);
     this._updateMatrixUniforms();
   }
 
   translate(x, y) {
+    if (arguments.length != 2) throw new TypeError();
     glm.mat4.translate(this.drawingState.mvMatrix, this.drawingState.mvMatrix, [x, y, 0.0]);
     this._updateMatrixUniforms();
   }
 
   transform(a, b, c, d, e, f) {
+    if (arguments.length != 6) throw new TypeError();
     glm.mat4.multiply(
       this.drawingState.mvMatrix,
       this.drawingState.mvMatrix,
@@ -1414,6 +1449,7 @@ export default class Expo2DContext {
   }
 
   setTransform(a, b, c, d, e, f) {
+    if (arguments.length != 6) throw new TypeError();
     glm.mat4.identity(this.drawingState.mvMatrix);
     this.transform(a, b, c, d, e, f);
   }
@@ -1517,10 +1553,12 @@ export default class Expo2DContext {
   }
 
   setLineDash(segments) {
+    if (arguments.length != 1) throw new TypeError();
     // TODO: sanitization
     this.drawingState.strokeDashes = segments.slice();
   }
   getLineDash() {
+    if (arguments.length != 0) throw new TypeError();
     return this.drawingState.strokeDashes.slice();
   }
 
@@ -1788,6 +1826,7 @@ export default class Expo2DContext {
   }
 
   createLinearGradient(x0, y0, x1, y1) {
+    if (arguments.length != 4) throw new TypeError();
     if (!isFinite(x0) || !isFinite(y0) || !isFinite(x1) || !isFinite(y1)) {
       throw new TypeError("One or more nonfinite linear gradient parameters");
     }
@@ -1798,6 +1837,7 @@ export default class Expo2DContext {
   }
 
   createRadialGradient(x0, y0, r0, x1, y1, r1) {
+    if (arguments.length != 6) throw new TypeError();
     if (!isFinite(x0) || !isFinite(y0) || !isFinite(r0)||
         !isFinite(x1) || !isFinite(y1) || !isFinite(r1))
     {
@@ -1846,6 +1886,9 @@ export default class Expo2DContext {
   }
 
   createPattern(asset, repeat) {
+    console.log(arguments.length);
+    console.log("lol well");
+    if (arguments.length != 2) throw new TypeError();
     // TODO: make sure this doesn't pick up asset changes later on
     if (!repeat || repeat === '') {
       repeat = 'repeat';
@@ -2061,7 +2104,7 @@ export default class Expo2DContext {
     );
     this.initFbForScience();
 
-    this.initDrawingState();
+    this._initDrawingState();
     this._setShaderProgram(this.flatShaderProgram);
 
     this._applyCompositingState();
