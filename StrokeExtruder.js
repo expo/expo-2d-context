@@ -16,17 +16,25 @@ export class StrokeExtruder {
     this.invMvMatrix = this.mvMatrix;
   }
 
+  get supportedCaps() {
+    return ["butt", "square", "round"];
+  }
+
+  get supportedJoins() {
+    return ["miter", "bevel", "round"];
+  }
+
   build(points) {
     var halfThickness = this.thickness / 2;
 
     // TODO: proper docstring
     // Expects points to be a flat array of the form [x0, y0, x1, y1, ...]
-
-    if (points.length <= 4) {
-      return [];
-    }
     if (points.length % 2 != 0) {
       throw new TypeError("Points array length is not a multiple of 2")
+    }
+
+    if (points.length < 4) {
+      return [];
     }
 
     let triangles = []
@@ -51,7 +59,6 @@ export class StrokeExtruder {
     }
 
     // TODO: does global alpha reveal the triangle overlaps here?
-
     for (let i = 2; i < points.length; i+=2) {
       let seg = this._segmentDescriptor(
         prevL1,

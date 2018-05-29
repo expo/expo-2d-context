@@ -1475,32 +1475,42 @@ export default class Expo2DContext {
   // }
 
   set lineWidth(val) {
-    this.strokeExtruder.thickness = val;
-    this.drawingState.lineWidth = val;
+    val = Number(val)
+    if (isFinite(val) && val > 0) {
+      this.strokeExtruder.thickness = val;
+      this.drawingState.lineWidth = val;
+    }
   }
   get lineWidth() {
     return this.drawingState.lineWidth;
   }
 
   set lineCap(val) {
-    this.strokeExtruder.cap = val;
-    this.drawingState.lineCap = val;
+    if (this.strokeExtruder.supportedCaps.indexOf(val) >= 0) {
+      this.strokeExtruder.cap = val;
+      this.drawingState.lineCap = val;
+    }
   }
   get lineCap() {
     return this.strokeExtruder.cap;
   }
 
   set lineJoin(val) {
-    this.strokeExtruder.join = val;
-    this.drawingState.lineJoin = val;
+    if (this.strokeExtruder.supportedJoins.indexOf(val) >= 0) {
+      this.strokeExtruder.join = val;
+      this.drawingState.lineJoin = val;
+    }
   }
   get lineJoin() {
     return this.strokeExtruder.join;
   }
 
   set miterLimit(val) {
-    this.strokeExtruder.miterLimit = val;
-    this.drawingState.miterLimit = val;
+    val = Number(val)
+    if (isFinite(val) && val > 0) {
+      this.strokeExtruder.miterLimit = val;
+      this.drawingState.miterLimit = val;
+    }
   }
   get miterLimit() {
     return this.strokeExtruder.miterLimit;
