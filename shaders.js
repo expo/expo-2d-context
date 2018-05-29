@@ -608,6 +608,8 @@ export class ShaderProgram {
 
     gl.useProgram(this.programHandle);
 
+    this.vertexArray = gl.createVertexArray();
+    gl.bindVertexArray(this.vertexArray);
 
     this.attributes = {};
     let nAttributes = gl.getProgramParameter(this.programHandle, gl.ACTIVE_ATTRIBUTES);
@@ -634,7 +636,6 @@ export class ShaderProgram {
       );
     }
 
-    this.vertexArray = gl.createVertexArray();
   }
 
   bind() {
