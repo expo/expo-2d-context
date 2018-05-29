@@ -13,6 +13,7 @@ export class StrokeExtruder {
                      0,1,0,0,
                      0,0,1,0,
                      0,0,0,1];
+    this.invMvMatrix = this.mvMatrix;
   }
 
   build(points) {
@@ -30,16 +31,16 @@ export class StrokeExtruder {
 
     let triangles = []
 
-    let prevL1 = vec(points, 0);
+    let prevL1 = this._vec(points, 0);
     let prevSeg = null;
 
     if (this.closed) {
       prevSeg = this._segmentGeometry(triangles, 
-        this._segmentDescriptor(vec(points, -2), vec(points, 0)),
-        this._segmentDescriptor(vec(points, -4), vec(points, -2))
+        this._segmentDescriptor(this._vec(points, -2), this._vec(points, 0)),
+        this._segmentDescriptor(this._vec(points, -4), this._vec(points, -2))
       );
     } else {
-      let firstSeg = this._segmentDescriptor(vec(points, 0), vec(points, 2));
+      let firstSeg = this._segmentDescriptor(this._vec(points, 0), this._vec(points, 2));
       if (this.cap == "round") {
         let startTheta = Math.atan2(firstSeg.normal.y, firstSeg.normal.x);
         let endTheta = startTheta + Math.PI;
@@ -54,7 +55,7 @@ export class StrokeExtruder {
     for (let i = 2; i < points.length; i+=2) {
       let seg = this._segmentDescriptor(
         prevL1,
-        new Vector(points[i+0], points[i+1])
+        this._vec(points, i)
       );
       
       if (!this.closed && i == points.length-2 && this.cap == "square") {
@@ -185,17 +186,24 @@ export class StrokeExtruder {
       original_x = arguments[1];
       original_y = arguments[2];
     }
-    let transformed_x = original_x * this.mvMatrix[0] + original_y * this.mvMatrix[4] + 0*this.mvMatrix[12];
-    let transformed_y = original_x * this.mvMatrix[1] + original_y * this.mvMatrix[5] + 0*this.mvMatrix[13];
+
+    let transformed_x = original_x * this.mvMatrix[0] + original_y * this.mvMatrix[4] + this.mvMatrix[12];
+    let transformed_y = original_x * this.mvMatrix[1] + original_y * this.mvMatrix[5] + this.mvMatrix[13];
     triangles.push(transformed_x);
     triangles.push(transformed_y);
   }
 
-}
 
-function vec(arr, idx) {
-  if (idx < 0) {
-    idx = arr.length + idx;
+  _vec(arr, idx) {
+    if (idx < 0) {
+      idx = arr.length + idx;
+    }
+    //return new Vector(arr[idx], arr[idx+1]);
+    return new Vector(
+      arr[idx] * this.invMvMatrix[0] + arr[idx+1] * this.invMvMatrix[4] + this.invMvMatrix[12],
+      arr[idx] * this.invMvMatrix[1] + arr[idx+1] * this.invMvMatrix[5] + this.invMvMatrix[13]
+    );
   }
-  return new Vector(arr[idx], arr[idx+1]);
+
+
 }

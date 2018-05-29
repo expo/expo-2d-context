@@ -970,6 +970,7 @@ export default class Expo2DContext {
 
     this.strokeExtruder.closed = true;
     this.strokeExtruder.mvMatrix = this.drawingState.mvMatrix;
+    this.strokeExtruder.invMvMatrix = this._getInvMvMatrix();
     var vertices = this.strokeExtruder.build(polyline);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
@@ -1131,6 +1132,7 @@ export default class Expo2DContext {
 
       this.strokeExtruder.closed = subpath.closed || false;
       this.strokeExtruder.mvMatrix = this.drawingState.mvMatrix;
+      this.strokeExtruder.invMvMatrix = this._getInvMvMatrix();
       let vertices = this.strokeExtruder.build(subpath);
 
       gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
