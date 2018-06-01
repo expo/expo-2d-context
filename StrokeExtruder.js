@@ -64,7 +64,7 @@ export class StrokeExtruder {
         prevL1,
         this._vec(points, i)
       );
-      
+
       if (!this.closed && i == points.length-2 && this.cap == "square") {
         seg = this._segmentDescriptor(
           seg.L0,

@@ -1,7 +1,10 @@
-//import * as glm from 'gl-matrix';
+// import 'core-js/modules/es6.object.set-prototype-of.js';
+// import 'core-js/es6/symbol';
+// import 'core-js/fn/symbol/iterator';
+
+
 var glm = require('gl-matrix');
 import Vector from './vector';
-// var glm2 = require('glm')
 
 import { ShaderProgram,
   patternShaderTxt, patternShaderRepeatValues,
@@ -20,7 +23,14 @@ import { couriernew } from './couriernew';
 // var timesnewroman = null;
 // var couriernew = null;
 
-const DOMException = require("domexception");
+//const DOMException = require("domexception");
+class DOMException {
+  constructor (desc, exctype) {
+    this.desc = desc
+    this.exctype = exctype
+  }
+}
+
 
 var stringFormat = require('string-format');
 
@@ -307,7 +317,7 @@ export default class Expo2DContext {
             0,0, 0,gl.drawingBufferHeight,  gl.drawingBufferWidth, gl.drawingBufferHeight]),
           gl.STATIC_DRAW
         );
-        gl.drawArrays(gl.TRIANGLES, 0, triangles.length/2);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
 
       }
 
@@ -1035,9 +1045,25 @@ export default class Expo2DContext {
       return subpath.triangles;
   }
 
+  _ensureStartPath(x, y) {
+    if (this.currentSubpath.length == 0) {
+      let tPt = this._getTransformedPt(x, y);
+      this.currentSubpath.push(tPt[0]);
+      this.currentSubpath.push(tPt[1]);
+      return false;
+    } else {
+      return true;
+    }
+  }
+
   isPointInPath(x, y) {
     // TODO: TEST THIS OUT!!!
     if (arguments.length != 2) throw new TypeError();
+
+    if (!isFinite(x) || !isFinite(y)) {
+      return;
+    }
+
     let gl = this.gl;
 
     let tPt = this._getTransformedPt(x, y);
@@ -1178,6 +1204,11 @@ export default class Expo2DContext {
 
   moveTo(x, y) {
     if (arguments.length != 2) throw new TypeError();
+    
+    if (!isFinite(x) || !isFinite(y)) {
+      return;
+    }
+
     this.currentSubpath = [];
     this.currentSubpath.closed = false;
     this.subpaths.push(this.currentSubpath);
@@ -1188,7 +1219,20 @@ export default class Expo2DContext {
 
   lineTo(x, y) {
     if (arguments.length != 2) throw new TypeError();
-    // TODO: ensure start path?
+
+    if (!isFinite(x) || !isFinite(y)) {
+      return;
+    }
+
+    if (this._ensureStartPath(x, y) == false) {
+      return;
+    }
+
+    if (x == this.currentSubpath[this.currentSubpath.length-2] &&
+        y == this.currentSubpath[this.currentSubpath.length-1] ) {
+      return;
+    }
+
     let tPt = this._getTransformedPt(x, y);
     this.currentSubpath.push(tPt[0]);
     this.currentSubpath.push(tPt[1]);
@@ -1197,7 +1241,14 @@ export default class Expo2DContext {
 
   quadraticCurveTo(cpx, cpy, x, y) {
     if (arguments.length != 4) throw new TypeError();
-    // TODO: ensure start path?
+
+    if (!isFinite(cpx) || !isFinite(cpy) ||
+        !isFinite(x) || !isFinite(y)) {
+      return;
+    }
+
+    this._ensureStartPath(cpx, cpy);
+
     var scale = 1; // TODO: ??
     var vertsLen = this.currentSubpath.length;
     var startPt = [
@@ -1210,6 +1261,7 @@ export default class Expo2DContext {
       this._getTransformedPt(x, y),
       scale
     );
+    var lastPt = null;
     for (i = 0; i < points.length; i++) {
       this.currentSubpath.push(points[i][0]);
       this.currentSubpath.push(points[i][1]);
@@ -1219,6 +1271,15 @@ export default class Expo2DContext {
 
   bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y) {
     if (arguments.length != 6) throw new TypeError();
+
+    if (!isFinite(cp1x) || !isFinite(cp1y) ||
+        !isFinite(cp2x) || !isFinite(cp2y) ||
+        !isFinite(x) || !isFinite(y)) {
+      return;
+    }
+
+    this._ensureStartPath(cp1x, cp1y);
+
     // TODO: ensure start path?
     var scale = 1; // TODO: ??
     var vertsLen = this.currentSubpath.length;
@@ -1242,18 +1303,34 @@ export default class Expo2DContext {
 
   rect(x, y, w, h) {
     if (arguments.length != 4) throw new TypeError();
+
+    if (!isFinite(x) || !isFinite(y) ||
+        !isFinite(w) || !isFinite(h)) {
+      return;
+    }
+
     this.moveTo(x, y);
     this.lineTo(x + w, y);
     this.lineTo(x + w, y + h);
     this.lineTo(x, y + h);
-    this.closePath();
+    this.lineTo(x, y);
   }
 
   arc(x, y, radius, startAngle, endAngle, counterclockwise) {
     if (arguments.length != 5 && arguments.length != 6) throw new TypeError();
+
+    if (!isFinite(x) || !isFinite(y) ||
+        !isFinite(radius) || !isFinite(startAngle) || !isFinite(endAngle)) {
+      return;
+    }
+
     // TODO: bounds check for radius?
     counterclockwise = counterclockwise || 0;
     centerPt = [x, y];
+
+    if (counterclockwise && startAngle == endAngle) {
+      return;
+    }
 
     // TODO: increment shouldn't be constant when arc has been scaled
     // anisotropically
@@ -1326,6 +1403,14 @@ export default class Expo2DContext {
 
   arcTo(x1, y1, x2, y2, radius) {
     if (arguments.length != 5) throw new TypeError();
+
+    if (!isFinite(x1) || !isFinite(y1) || 
+        !isFinite(x2) || !isFinite(y2) ||
+        !isFinite(radius)) {
+      return;
+    }
+
+    this._ensureStartPath(x1, y1);
 
     delete this.currentSubpath.triangles;
    
