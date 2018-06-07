@@ -959,7 +959,12 @@ export default class Expo2DContext {
 
     this._applyStyle(this.drawingState.fillStyle);
 
-    var vertices = [x, y, x, y + h, x + w, y, x + w, y + h];
+    var vertices = [
+      x, y,
+      x, y + h,
+      x + w, y,
+      x + w, y + h
+    ];
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
@@ -1035,8 +1040,8 @@ export default class Expo2DContext {
   _subpathTriangles(subpath) {
       if (!("triangles" in subpath)) {
         let triangleIndices = earcut(subpath, null);
-        subpath.triangles = [];
 
+        subpath.triangles = [];
         for (j = 0; j < triangleIndices.length; j++) {
           subpath.triangles.push(subpath[triangleIndices[j] * 2]);
           subpath.triangles.push(subpath[triangleIndices[j] * 2 + 1]);
@@ -1228,12 +1233,13 @@ export default class Expo2DContext {
       return;
     }
 
-    if (x == this.currentSubpath[this.currentSubpath.length-2] &&
-        y == this.currentSubpath[this.currentSubpath.length-1] ) {
+    let tPt = this._getTransformedPt(x, y);
+
+    if (tPt[0] == this.currentSubpath[this.currentSubpath.length-2] &&
+        tPt[1] == this.currentSubpath[this.currentSubpath.length-1] ) {
       return;
     }
 
-    let tPt = this._getTransformedPt(x, y);
     this.currentSubpath.push(tPt[0]);
     this.currentSubpath.push(tPt[1]);
     delete this.currentSubpath.triangles;
@@ -1313,7 +1319,8 @@ export default class Expo2DContext {
     this.lineTo(x + w, y);
     this.lineTo(x + w, y + h);
     this.lineTo(x, y + h);
-    this.lineTo(x, y);
+    this.closePath();
+    this.moveTo(x, y);    
   }
 
   arc(x, y, radius, startAngle, endAngle, counterclockwise) {
@@ -1971,8 +1978,6 @@ export default class Expo2DContext {
   }
 
   createPattern(asset, repeat) {
-    console.log(arguments.length);
-    console.log("lol well");
     if (arguments.length != 2) throw new TypeError();
     // TODO: make sure this doesn't pick up asset changes later on
     if (!repeat || repeat === '') {
