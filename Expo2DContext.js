@@ -1045,7 +1045,7 @@ export default class Expo2DContext {
       let triangles = []
 
       // TODO: be smarter about tesselator selection
-      if (this.tesselation == "fast") {
+      if (this.fillTesselation == "fast") {
         for (let i = 0; i < this.subpaths.length; i++) {
           let subpath = this.subpaths[i];
 
@@ -1179,11 +1179,8 @@ export default class Expo2DContext {
 
     let gl = this.gl;
 
-    this._applyStyle(this.drawingState.strokeStyle);
-
-    gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
-
-    for (i = 0; i < this.subpaths.length; i++) {
+    let vertices = [];
+    for (let i = 0; i < this.subpaths.length; i++) {
       let subpath = this.subpaths[i];
 
       if (subpath.length == 0) {
@@ -1193,7 +1190,26 @@ export default class Expo2DContext {
       this.strokeExtruder.closed = subpath.closed || false;
       this.strokeExtruder.mvMatrix = this.drawingState.mvMatrix;
       this.strokeExtruder.invMvMatrix = this._getInvMvMatrix();
-      let vertices = this.strokeExtruder.build(subpath);
+      vertices.push(...this.strokeExtruder.build(subpath));
+    }
+
+    if (this.strokeTesselation == "accurate") {
+      // TODO: test integration with clipping
+      
+      if (this.stencilsEnabled == false) {
+        gl.enable(gl.STENCIL_TEST);
+      }
+
+      gl.stencilMask(0x2); // Use bit 1, as bit 0 stores the clipping bounds
+      gl.colorMask(false, false, false, false);
+      gl.clear(gl.STENCIL_BUFFER_BIT); // Clear everything to 1s
+
+      gl.stencilFunc(gl.ALWAYS, 0, 0xFF);
+
+      gl.stencilOp(gl.ZERO, gl.ZERO, gl.ZERO);
+
+      this._applyStyle("black");
+      gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
 
       gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
       gl.bufferData(
@@ -1210,9 +1226,55 @@ export default class Expo2DContext {
         0
       );
       gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
+
+      gl.stencilMask(0x00);
+      gl.colorMask(true, true, true, true);
+
+      gl.stencilFunc(gl.EQUAL, 3, 0x3);
+      gl.stencilOp(gl.ZERO, gl.ZERO, gl.ZERO);
+
+      this._applyStyle(this.drawingState.strokeStyle);
+
+      // TODO: draw big quad
+
+
+      if (this.stencilsEnabled == false) {
+        gl.disable(gl.STENCIL_TEST);
+      } else {
+        // Set things back to normal for clipping system
+        // TODO: decompose this and the same code at the bottom of _updateClippingRegion()
+        gl.stencilFunc(gl.EQUAL, 1, 1);
+        gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+        
+      }
+
+
+      }
+
+    } else {
+      this._applyStyle(this.drawingState.strokeStyle);
+
+      gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+      gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array(vertices),
+        gl.STATIC_DRAW
+      );
+      gl.vertexAttribPointer(
+        this.activeShaderProgram.attributes['aVertexPosition'],
+        2,
+        gl.FLOAT,
+        false,
+        0,
+        0
+      );
+      gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
+
+      gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], false);
     }
 
-    gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], false);
   }
 
   moveTo(x, y) {
@@ -2144,7 +2206,10 @@ export default class Expo2DContext {
 
     // TODO: actually be smart about detecting whether we're running in expo or not:
     this.environment = "expo";
-    this.tesselation = "accurate";
+
+    // TODO: use enums instead of raw strings
+    this.fillTesselation = "accurate";
+    this.strokeTesselation = "accurate";
 
     // TODO: find fonts?
     this.builtinFonts = {
