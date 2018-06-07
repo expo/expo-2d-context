@@ -38,6 +38,8 @@ var parseColor = require('color-parser');
 var parseCssFont = require('css-font-parser');
 
 var earcut = require('earcut');
+var tess2 = require('tess2');
+
 var bezierCubicPoints = require('adaptive-bezier-curve');
 var bezierQuadraticPoints = require('adaptive-quadratic-curve');
 
@@ -1022,6 +1024,7 @@ export default class Expo2DContext {
   beginPath() {
     if (arguments.length != 0) throw new TypeError();
     this.subpaths = [[]];
+    this.subpathsModified = true;
     this.currentSubpath = this.subpaths[0];
     this.currentSubpath.closed = false;
   }
@@ -1030,24 +1033,54 @@ export default class Expo2DContext {
     if (arguments.length != 0) throw new TypeError();
     if (this.currentSubpath.length > 0) {
       this.currentSubpath.closed = true;
-      delete this.currentSubpath.triangles;
       this.currentSubpath = [];
       this.currentSubpath.closed = false;
       this.subpaths.push(this.currentSubpath);
+      this.subpathsModified = true;
     }
   }
 
-  _subpathTriangles(subpath) {
-      if (!("triangles" in subpath)) {
-        let triangleIndices = earcut(subpath, null);
+  _pathTriangles(path) {
+    if (this.subpathsModified) {
+      let triangles = []
 
-        subpath.triangles = [];
-        for (j = 0; j < triangleIndices.length; j++) {
-          subpath.triangles.push(subpath[triangleIndices[j] * 2]);
-          subpath.triangles.push(subpath[triangleIndices[j] * 2 + 1]);
+      // TODO: be smarter about tesselator selection
+      if (this.tesselation == "fast") {
+        for (let i = 0; i < this.subpaths.length; i++) {
+          let subpath = this.subpaths[i];
+
+          if (subpath.length == 0) {
+            continue;
+          }
+
+          let triangleIndices = earcut(subpath, null);
+
+          for (let i = 0; i < triangleIndices.length; i++) {
+            triangles.push(subpath[triangleIndices[i] * 2]);
+            triangles.push(subpath[triangleIndices[i] * 2 + 1]);
+          }
+        }
+      } else {
+        let result = tess2.tesselate({
+          contours: this.subpaths,
+          windingRule: tess2.WINDING_NONZERO,
+          elementType: tess2.POLYGONS,
+          polySize: 3,
+          vertexSize: 2
+        });
+
+        for (let i = 0; i < result.elements.length; i++) {
+          let vertexBaseIdx = result.elements[i] * 2;
+          triangles.push(result.vertices[vertexBaseIdx])
+          triangles.push(result.vertices[vertexBaseIdx+1])
         }
       }
-      return subpath.triangles;
+
+      this.subpaths.triangles = triangles;
+      this.subpathsModified = false
+    }
+
+    return this.subpaths.triangles
   }
 
   _ensureStartPath(x, y) {
@@ -1073,38 +1106,30 @@ export default class Expo2DContext {
 
     let tPt = this._getTransformedPt(x, y);
 
-    for (i = 0; i < this.subpaths.length; i++) {
-      let subpath = this.subpaths[i];
+    // TODO: is this approach more or less efficient than some
+    // other inclusion test that works on the untesselated polygon?
+    // investigate....
+    let triangles = this._pathTriangles(this.subpaths);
+    for (j = 0; j < triangles.length; j += 6) {
+      // Point-in-triangle test adapted from:
+      // https://koozdra.wordpress.com/2012/06/27/javascript-is-point-in-triangle/
+      let v0 = [triangles[j+4]-triangles[j], triangles[j+5]-triangles[j+1]];
+      let v1 = [triangles[j+2]-triangles[j], triangles[j+3]-triangles[j+1]];
+      let v2 = [tPt[0]-triangles[j], tPt[1]-triangles[j+1]];
 
-      if (subpath.length == 0) {
-        continue;
-      }
+      let dot00 = (v0[0]*v0[0]) + (v0[1]*v0[1]);
+      let dot01 = (v0[0]*v1[0]) + (v0[1]*v1[1]);
+      let dot02 = (v0[0]*v2[0]) + (v0[1]*v2[1]);
+      let dot11 = (v1[0]*v1[0]) + (v1[1]*v1[1]);
+      let dot12 = (v1[0]*v2[0]) + (v1[1]*v2[1]);
 
-      // TODO: is this approach more or less efficient than some
-      // other inclusion test that works on the untesselated polygon?
-      // investigate....
-      let triangles = this._subpathTriangles(subpath);
-      for (j = 0; j < triangles.length; j += 6) {
-        // Point-in-triangle test adapted from:
-        // https://koozdra.wordpress.com/2012/06/27/javascript-is-point-in-triangle/
-        let v0 = [triangles[j+4]-triangles[j], triangles[j+5]-triangles[j+1]];
-        let v1 = [triangles[j+2]-triangles[j], triangles[j+3]-triangles[j+1]];
-        let v2 = [tPt[0]-triangles[j], tPt[1]-triangles[j+1]];
+      let invDenom = 1/ (dot00 * dot11 - dot01 * dot01);
 
-        let dot00 = (v0[0]*v0[0]) + (v0[1]*v0[1]);
-        let dot01 = (v0[0]*v1[0]) + (v0[1]*v1[1]);
-        let dot02 = (v0[0]*v2[0]) + (v0[1]*v2[1]);
-        let dot11 = (v1[0]*v1[0]) + (v1[1]*v1[1]);
-        let dot12 = (v1[0]*v2[0]) + (v1[1]*v2[1]);
+      let u = (dot11 * dot02 - dot01 * dot12) * invDenom;
+      let v = (dot00 * dot12 - dot01 * dot02) * invDenom;
 
-        let invDenom = 1/ (dot00 * dot11 - dot01 * dot01);
-
-        let u = (dot11 * dot02 - dot01 * dot12) * invDenom;
-        let v = (dot00 * dot12 - dot01 * dot02) * invDenom;
-
-        if ((u >= 0) && (v >= 0) && (u + v < 1)) {
-          return true;
-        }
+      if ((u >= 0) && (v >= 0) && (u + v < 1)) {
+        return true;
       }
     }
 
@@ -1114,16 +1139,7 @@ export default class Expo2DContext {
   clip() {
     if (arguments.length != 0) throw new TypeError();
 
-    let newClipPoly = [];
-    
-    for (i = 0; i < this.subpaths.length; i++) {
-      let subpath = this.subpaths[i];
-      if (subpath.length == 0) {
-        continue;
-      }
-      let triangles = this._subpathTriangles(subpath).slice();
-      newClipPoly = newClipPoly.concat(triangles);
-    }
+    let newClipPoly = this._pathTriangles(this.subpaths);
     this.drawingState.clippingPaths.push(newClipPoly);
     this._updateClippingRegion();
   }
@@ -1137,31 +1153,23 @@ export default class Expo2DContext {
 
     gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
 
-    for (i = 0; i < this.subpaths.length; i++) {
-      let subpath = this.subpaths[i];
+    let triangles = this._pathTriangles(this.subpaths);
 
-      if (subpath.length == 0) {
-        continue;
-      }
-
-      let triangles = this._subpathTriangles(subpath);
-
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-      gl.bufferData(
-        gl.ARRAY_BUFFER,
-        new Float32Array(triangles),
-        gl.STATIC_DRAW
-      );
-      gl.vertexAttribPointer(
-        this.activeShaderProgram.attributes['aVertexPosition'],
-        2,
-        gl.FLOAT,
-        false,
-        0,
-        0
-      );
-      gl.drawArrays(gl.TRIANGLES, 0, triangles.length/2);
-    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      new Float32Array(triangles),
+      gl.STATIC_DRAW
+    );
+    gl.vertexAttribPointer(
+      this.activeShaderProgram.attributes['aVertexPosition'],
+      2,
+      gl.FLOAT,
+      false,
+      0,
+      0
+    );
+    gl.drawArrays(gl.TRIANGLES, 0, triangles.length/2);
 
     gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], false);
   }
@@ -1216,6 +1224,7 @@ export default class Expo2DContext {
 
     this.currentSubpath = [];
     this.currentSubpath.closed = false;
+    this.subpathsModified = true;
     this.subpaths.push(this.currentSubpath);
     let tPt = this._getTransformedPt(x, y);
     this.currentSubpath.push(tPt[0]);
@@ -1242,7 +1251,7 @@ export default class Expo2DContext {
 
     this.currentSubpath.push(tPt[0]);
     this.currentSubpath.push(tPt[1]);
-    delete this.currentSubpath.triangles;
+    this.subpathsModified = true;
   }
 
   quadraticCurveTo(cpx, cpy, x, y) {
@@ -1272,7 +1281,7 @@ export default class Expo2DContext {
       this.currentSubpath.push(points[i][0]);
       this.currentSubpath.push(points[i][1]);
     }
-    delete this.currentSubpath.triangles;
+    this.subpathsModified = true;
   }
 
   bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y) {
@@ -1304,7 +1313,7 @@ export default class Expo2DContext {
       this.currentSubpath.push(points[i][0]);
       this.currentSubpath.push(points[i][1]);
     }
-    delete this.currentSubpath.triangles;
+    this.subpathsModified = true;
   }
 
   rect(x, y, w, h) {
@@ -1405,7 +1414,7 @@ export default class Expo2DContext {
     this.currentSubpath.push(arcPt[0]);
     this.currentSubpath.push(arcPt[1]);
 
-    delete this.currentSubpath.triangles;
+    this.subpathsModified = true;
   }
 
   arcTo(x1, y1, x2, y2, radius) {
@@ -1419,7 +1428,7 @@ export default class Expo2DContext {
 
     this._ensureStartPath(x1, y1);
 
-    delete this.currentSubpath.triangles;
+    this.subpathsModified = true;
    
     // For further explanation of the geometry here -
     // https://math.stackexchange.com/questions/797828/calculate-center-of-circle-tangent-to-two-lines-in-space
@@ -2135,6 +2144,7 @@ export default class Expo2DContext {
 
     // TODO: actually be smart about detecting whether we're running in expo or not:
     this.environment = "expo";
+    this.tesselation = "accurate";
 
     // TODO: find fonts?
     this.builtinFonts = {
