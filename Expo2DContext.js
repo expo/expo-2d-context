@@ -1,3 +1,4 @@
+'use strict'
 // import 'core-js/modules/es6.object.set-prototype-of.js';
 // import 'core-js/es6/symbol';
 // import 'core-js/fn/symbol/iterator';
@@ -74,15 +75,6 @@ function cssToGlColor(cssStr) {
     parsedColor['b'] / 255,
     parsedColor['a'],
   ];
-}
-
-function circleMod(rad) {
-  if (rad < 0.0) {
-    // TODO: what if it's, like, *very* negative?
-    rad += 2 * Math.PI;
-  }
-  rad %= 2 * Math.PI;
-  return rad;
 }
 
 function outerTangent(p0, r0, p1, r1) {
@@ -292,7 +284,7 @@ export default class Expo2DContext {
       ///   - finally, set test to EQUAL 1 / KEEP
       /// if this works, i am a gl stencil witch
 
-      for (i = 0; i < this.drawingState.clippingPaths.length; i++) {
+      for (let i = 0; i < this.drawingState.clippingPaths.length; i++) {
 
         gl.stencilMask(0x2);
         gl.clear(gl.STENCIL_BUFFER_BIT); // TODO: Is there any way to be more clever with the algorithm to avoid this clear?
@@ -412,7 +404,7 @@ export default class Expo2DContext {
     // Undo premultiplied alpha
     // (TODO: is there any way to do this with the GPU??)
     // (TODO: does this work on systems where the bg color is black?)
-    for (i = 0; i < imageDataObj.data.length; i += 4) {
+    for (let i = 0; i < imageDataObj.data.length; i += 4) {
       imageDataObj.data[i+0] = Math.floor((rawTexData[i+0] / rawTexData[i+3]) * 256.0);
       imageDataObj.data[i+1] = Math.floor((rawTexData[i+1] / rawTexData[i+3]) * 256.0);
       imageDataObj.data[i+2] = Math.floor((rawTexData[i+2] / rawTexData[i+3]) * 256.0);
@@ -745,7 +737,7 @@ export default class Expo2DContext {
     let pen_x = x;
     let pen_y = y;
 
-    for (i = 0; i < text.length; i++) {
+    for (let i = 0; i < text.length; i++) {
       if (text[i] === " ") {
         pen_x += space_width * xscale;
       }
@@ -1110,7 +1102,7 @@ export default class Expo2DContext {
     // other inclusion test that works on the untesselated polygon?
     // investigate....
     let triangles = this._pathTriangles(this.subpaths);
-    for (j = 0; j < triangles.length; j += 6) {
+    for (let j = 0; j < triangles.length; j += 6) {
       // Point-in-triangle test adapted from:
       // https://koozdra.wordpress.com/2012/06/27/javascript-is-point-in-triangle/
       let v0 = [triangles[j+4]-triangles[j], triangles[j+5]-triangles[j+1]];
@@ -1319,7 +1311,7 @@ export default class Expo2DContext {
       scale
     );
     var lastPt = null;
-    for (i = 0; i < points.length; i++) {
+    for (let i = 0; i < points.length; i++) {
       this.currentSubpath.push(points[i][0]);
       this.currentSubpath.push(points[i][1]);
     }
@@ -1351,7 +1343,7 @@ export default class Expo2DContext {
       this._getTransformedPt(x, y),
       scale
     );
-    for (i = 0; i < points.length; i++) {
+    for (let i = 0; i < points.length; i++) {
       this.currentSubpath.push(points[i][0]);
       this.currentSubpath.push(points[i][1]);
     }
@@ -1382,9 +1374,8 @@ export default class Expo2DContext {
       return;
     }
 
-    // TODO: bounds check for radius?
     counterclockwise = counterclockwise || 0;
-    centerPt = [x, y];
+    let centerPt = [x, y];
 
     if (counterclockwise && startAngle == endAngle) {
       return;
@@ -1419,15 +1410,17 @@ export default class Expo2DContext {
       }
     }
 
-    startAngle = circleMod(startAngle);
-    endAngle = circleMod(endAngle);
 
     if (counterclockwise) {
-      temp = startAngle;
+      let temp = startAngle;
       startAngle = endAngle;
       endAngle = temp;
-
     }
+
+    if (startAngle > endAngle) {
+      endAngle = (endAngle%(2*Math.PI)) + Math.floor(startAngle/(2*Math.PI))*2*Math.PI + 2*Math.PI;
+    }
+
 
     let theta = startAngle;
     while (true) {
@@ -1438,25 +1431,26 @@ export default class Expo2DContext {
       this.currentSubpath.push(arcPt[0]);
       this.currentSubpath.push(arcPt[1]);
 
-      old_theta = theta;
+
+      let old_theta = theta;
       theta += increment;
-      theta = circleMod(theta);
-      if (theta < old_theta) {
-        old_theta -= 2 * Math.PI;
-      }
-      if (old_theta < endAngle && theta >= endAngle) {
+
+      if (theta >= endAngle || theta >= startAngle + 2*Math.PI) {
         break;
       }
+
+
     }
 
     let arcPt = this._getTransformedPt(
-      centerPt[0] + radius * Math.cos(endAngle),
-      centerPt[1] + radius * Math.sin(endAngle)
+      centerPt[0] + radius * Math.cos(theta),
+      centerPt[1] + radius * Math.sin(theta)
     );
     this.currentSubpath.push(arcPt[0]);
     this.currentSubpath.push(arcPt[1]);
 
     this.subpathsModified = true;
+
   }
 
   arcTo(x1, y1, x2, y2, radius) {
@@ -1739,7 +1733,7 @@ export default class Expo2DContext {
     if (!("font-variant" in parsed_font)) parsed_font["font-variant"] = "normal";
 
     font_resources = null;
-    for (i=0; i < parsed_font["font-family"].length; i++) {
+    for (let i=0; i < parsed_font["font-family"].length; i++) {
       if (parsed_font["font-family"][i] in this.builtinFonts) {
         if (this.builtinFonts[parsed_font["font-family"][i]] != null) {
           this.drawingState.font_resources = this.builtinFonts[parsed_font["font-family"][i]].initialize_gl_resources(this.gl);
@@ -1895,7 +1889,7 @@ export default class Expo2DContext {
           return a[1] - b[1];
         });
       }
-      for (i = 0; i < sortedStops.length; i++) {
+      for (let i = 0; i < sortedStops.length; i++) {
         color_arr = color_arr.concat(sortedStops[i][0]);
         if (reverse_stops) {
           offset_arr.push(1-sortedStops[i][1]);
