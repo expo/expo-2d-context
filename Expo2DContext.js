@@ -1193,86 +1193,66 @@ export default class Expo2DContext {
       vertices.push(...this.strokeExtruder.build(subpath));
     }
 
-    if (this.strokeTesselation == "accurate") {
-      // TODO: test integration with clipping
-      
-      if (this.stencilsEnabled == false) {
-        gl.enable(gl.STENCIL_TEST);
-      }
+    // TODO: test integration with clipping
+    
+    if (this.stencilsEnabled == false) {
+      gl.enable(gl.STENCIL_TEST);
+    }
 
-      gl.stencilMask(0x2); // Use bit 1, as bit 0 stores the clipping bounds
-      gl.colorMask(false, false, false, false);
-      gl.clear(gl.STENCIL_BUFFER_BIT); // Clear everything to 1s
+    gl.stencilMask(0x2); // Use bit 1, as bit 0 stores the clipping bounds
+    gl.colorMask(false, false, false, false);
+    gl.clear(gl.STENCIL_BUFFER_BIT); // Clear bit 1 to '0'
 
-      gl.stencilFunc(gl.ALWAYS, 0, 0xFF);
+    gl.stencilFunc(gl.ALWAYS, 0xFF, 0xFF);
 
-      gl.stencilOp(gl.ZERO, gl.ZERO, gl.ZERO);
+    gl.stencilOp(gl.REPLACE, gl.REPLACE, gl.REPLACE);
 
-      this._applyStyle("black");
-      gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
+    this._applyStyle("black");
+    gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
 
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-      gl.bufferData(
-        gl.ARRAY_BUFFER,
-        new Float32Array(vertices),
-        gl.STATIC_DRAW
-      );
-      gl.vertexAttribPointer(
-        this.activeShaderProgram.attributes['aVertexPosition'],
-        2,
-        gl.FLOAT,
-        false,
-        0,
-        0
-      );
-      gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      new Float32Array(vertices),
+      gl.STATIC_DRAW
+    );
+    gl.vertexAttribPointer(
+      this.activeShaderProgram.attributes['aVertexPosition'],
+      2,
+      gl.FLOAT,
+      false,
+      0,
+      0
+    );
+    gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
 
-      gl.stencilMask(0x00);
-      gl.colorMask(true, true, true, true);
+    gl.stencilMask(0x00);
+    gl.colorMask(true, true, true, true);
 
-      gl.stencilFunc(gl.EQUAL, 3, 0x3);
-      gl.stencilOp(gl.ZERO, gl.ZERO, gl.ZERO);
+    gl.stencilFunc(gl.EQUAL, 3, 0xFF);
+    gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
 
-      this._applyStyle(this.drawingState.strokeStyle);
+    this._applyStyle(this.drawingState.strokeStyle);
+    gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
 
-      // TODO: draw big quad
-
-
-      if (this.stencilsEnabled == false) {
-        gl.disable(gl.STENCIL_TEST);
-      } else {
-        // Set things back to normal for clipping system
-        // TODO: decompose this and the same code at the bottom of _updateClippingRegion()
-        gl.stencilFunc(gl.EQUAL, 1, 1);
-        gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
-        
-      }
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      new Float32Array([
+        0,0, gl.drawingBufferWidth,0,  gl.drawingBufferWidth, gl.drawingBufferHeight,
+        0,0, 0,gl.drawingBufferHeight,  gl.drawingBufferWidth, gl.drawingBufferHeight]),
+      gl.STATIC_DRAW
+    );
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
 
 
-      }
-
+    if (this.stencilsEnabled == false) {
+      gl.disable(gl.STENCIL_TEST);
     } else {
-      this._applyStyle(this.drawingState.strokeStyle);
-
-      gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
-
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-      gl.bufferData(
-        gl.ARRAY_BUFFER,
-        new Float32Array(vertices),
-        gl.STATIC_DRAW
-      );
-      gl.vertexAttribPointer(
-        this.activeShaderProgram.attributes['aVertexPosition'],
-        2,
-        gl.FLOAT,
-        false,
-        0,
-        0
-      );
-      gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
-
-      gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], false);
+      // Set things back to normal for clipping system
+      // TODO: decompose this and the same code at the bottom of _updateClippingRegion()
+      gl.stencilFunc(gl.EQUAL, 1, 1);
+      gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+      
     }
 
   }
@@ -2204,12 +2184,10 @@ export default class Expo2DContext {
     // TODO: how do we make these parameters more parameterizable?
     this.maxGradStops = 128;
 
+    // TODO: use enums instead of raw strings
     // TODO: actually be smart about detecting whether we're running in expo or not:
     this.environment = "expo";
-
-    // TODO: use enums instead of raw strings
     this.fillTesselation = "accurate";
-    this.strokeTesselation = "accurate";
 
     // TODO: find fonts?
     this.builtinFonts = {
