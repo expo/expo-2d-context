@@ -1389,7 +1389,7 @@ export default class Expo2DContext {
 
     // TODO: increment shouldn't be constant when arc has been scaled
     // anisotropically
-    let increment = Math.PI / 2;
+    let increment = Math.abs(startAngle - endAngle);
     while (true) {
       let pt1 = this._getTransformedPt(radius, 0);
       let pt2 = this._getTransformedPt(
@@ -1416,7 +1416,6 @@ export default class Expo2DContext {
       }
     }
 
-
     if (counterclockwise) {
       let temp = startAngle;
       startAngle = endAngle;
@@ -1436,7 +1435,7 @@ export default class Expo2DContext {
       this.currentSubpath.push(arcPt[1]);
     }
 
-    var edgePt = (theta, dir) => {
+    var edgePt = (theta, dir, baseIdx) => {
       let arcPt = [
         centerPt[0] + radius * Math.cos(theta),
         centerPt[1] + radius * Math.sin(theta)
@@ -1445,33 +1444,35 @@ export default class Expo2DContext {
       arcPt[0] += radius * increment * Math.cos(theta+dir*Math.PI/2);
       arcPt[1] += radius * increment * Math.sin(theta+dir*Math.PI/2);
       arcPt = this._getTransformedPt(arcPt[0], arcPt[1]);
-      this.currentSubpath.push(arcPt[0]);
-      this.currentSubpath.push(arcPt[1]);
+      this.currentSubpath[baseIdx] = arcPt[0];
+      this.currentSubpath[baseIdx+1] = arcPt[1];
     }
 
+    let arcStartIdx = this.currentSubpath.length;
     let theta = startAngle;
 
-    thetaPt(theta);
-    edgePt(theta, 1);
-    theta += 2*increment;
     while (true) {
       thetaPt(theta);
 
       let old_theta = theta;
       theta += increment;
 
-      if (theta + increment >= endAngle) {
+      if (theta >= endAngle) {
         break;
       }
 
-      if (theta + increment >= startAngle + 2*Math.PI) {
+      if (theta >= startAngle + 2*Math.PI) {
         break;
       }
 
     }
 
-    edgePt(endAngle, -1);
     thetaPt(endAngle);
+
+    // Correct edges of arc such that they're perpendicular to the curve itself
+    edgePt(startAngle, 1, arcStartIdx+2);
+    edgePt(endAngle, -1, this.currentSubpath.length-4);
+
     this.subpathsModified = true;
 
   }
