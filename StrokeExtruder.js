@@ -110,14 +110,14 @@ export class StrokeExtruder {
     seg.direction = L1.subtract(L0).unit();
     seg.normal = new Vector(-seg.direction.y, seg.direction.x);
 
-    // TODO: convert to a triangle strip with restarts, to more
-    // efficiently handle degenerate vs. common cases some day
-    // (lol, some day, sigh)
+    // TODO: make sure that this works properly when everything is scaled
+    epsilon = seg.direction;
+    
     seg.points = [
-      L0.add(seg.normal.multiply(halfThickness)),
-      L0.add(seg.normal.multiply(-halfThickness)),
-      L1.add(seg.normal.multiply(-halfThickness)),
-      L1.add(seg.normal.multiply(halfThickness))
+      L0.add(seg.normal.multiply(halfThickness).subtract(epsilon)),
+      L0.add(seg.normal.multiply(-halfThickness).subtract(epsilon)),
+      L1.add(seg.normal.multiply(-halfThickness).add(epsilon)),
+      L1.add(seg.normal.multiply(halfThickness).add(epsilon))
     ]
     return seg;
   }
@@ -125,6 +125,9 @@ export class StrokeExtruder {
   _segmentGeometry (triangles, seg, prevSeg) {
       var halfThickness = this.thickness / 2;
 
+    // TODO: convert to a triangle strip with restarts, to more
+    // efficiently handle degenerate vs. common cases some day
+    // (lol, some day, sigh)
       this._pushPt(triangles, seg.points[0]);
       this._pushPt(triangles, seg.points[1]);
       this._pushPt(triangles, seg.points[2]);

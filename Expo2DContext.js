@@ -24,13 +24,15 @@ import { couriernew } from './couriernew';
 // var timesnewroman = null;
 // var couriernew = null;
 
-//const DOMException = require("domexception");
-class DOMException {
-  constructor (desc, exctype) {
-    this.desc = desc
-    this.exctype = exctype
-  }
-}
+const DOMException = require("domexception");
+// TODO: currently we need to swap out the above with a stub class on
+// Android...update android JS environment
+// class DOMException {
+//   constructor (desc, exctype) {
+//     this.desc = desc
+//     this.exctype = exctype
+//   }
+// }
 
 
 var stringFormat = require('string-format');
@@ -1374,12 +1376,16 @@ export default class Expo2DContext {
       return;
     }
 
-    counterclockwise = counterclockwise || 0;
-    let centerPt = [x, y];
+    if (radius < 0) {
+      throw new DOMException('Bad radius', 'IndexSizeError');
+    }
 
-    if (counterclockwise && startAngle == endAngle) {
+    if (startAngle == endAngle) {
       return;
     }
+
+    counterclockwise = counterclockwise || 0;
+    let centerPt = [x, y];
 
     // TODO: increment shouldn't be constant when arc has been scaled
     // anisotropically
@@ -1403,7 +1409,7 @@ export default class Expo2DContext {
         Math.pow(actual_midpt[0] - accurate_midpt[0], 2) +
           Math.pow(actual_midpt[1] - accurate_midpt[1], 2)
       );
-      if (error > 0.5) {
+      if (error > 0.5) { // TODO: set back to 0.5 after finished debugging
         increment /= 2;
       } else {
         break;
@@ -1421,34 +1427,51 @@ export default class Expo2DContext {
       endAngle = (endAngle%(2*Math.PI)) + Math.floor(startAngle/(2*Math.PI))*2*Math.PI + 2*Math.PI;
     }
 
-
-    let theta = startAngle;
-    while (true) {
+    var thetaPt = (theta) => {
       let arcPt = this._getTransformedPt(
         centerPt[0] + radius * Math.cos(theta),
         centerPt[1] + radius * Math.sin(theta)
       );
       this.currentSubpath.push(arcPt[0]);
       this.currentSubpath.push(arcPt[1]);
+    }
 
+    var edgePt = (theta, dir) => {
+      let arcPt = [
+        centerPt[0] + radius * Math.cos(theta),
+        centerPt[1] + radius * Math.sin(theta)
+      ];
+      // TODO: increment is an angle, figure out the right _distance_ to use here
+      arcPt[0] += radius * increment * Math.cos(theta+dir*Math.PI/2);
+      arcPt[1] += radius * increment * Math.sin(theta+dir*Math.PI/2);
+      arcPt = this._getTransformedPt(arcPt[0], arcPt[1]);
+      this.currentSubpath.push(arcPt[0]);
+      this.currentSubpath.push(arcPt[1]);
+    }
+
+    let theta = startAngle;
+
+    thetaPt(theta);
+    edgePt(theta, 1);
+    theta += 2*increment;
+    while (true) {
+      thetaPt(theta);
 
       let old_theta = theta;
       theta += increment;
 
-      if (theta >= endAngle || theta >= startAngle + 2*Math.PI) {
+      if (theta + increment >= endAngle) {
         break;
       }
 
+      if (theta + increment >= startAngle + 2*Math.PI) {
+        break;
+      }
 
     }
 
-    let arcPt = this._getTransformedPt(
-      centerPt[0] + radius * Math.cos(theta),
-      centerPt[1] + radius * Math.sin(theta)
-    );
-    this.currentSubpath.push(arcPt[0]);
-    this.currentSubpath.push(arcPt[1]);
-
+    edgePt(endAngle, -1);
+    thetaPt(endAngle);
     this.subpathsModified = true;
 
   }
@@ -1460,6 +1483,10 @@ export default class Expo2DContext {
         !isFinite(x2) || !isFinite(y2) ||
         !isFinite(radius)) {
       return;
+    }
+
+    if (radius < 0) {
+      throw new DOMException('Bad radius', 'IndexSizeError');
     }
 
     this._ensureStartPath(x1, y1);
