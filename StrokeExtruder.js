@@ -140,6 +140,8 @@ export class StrokeExtruder {
         // TODO: can bendDirection be based on miter angle?
         let bendDirection = prevSeg.direction.negative().cross(seg.direction).z > 0
 
+        // TODO: for very tight curves we need joins on both sides :\
+        //       figure out how to detect this
         let joinP0 = seg.points[1]
         let joinP1 = prevSeg.points[2]
         if (bendDirection) {
@@ -161,7 +163,6 @@ export class StrokeExtruder {
 
           this._fanGeometry(triangles, seg.L0, startTheta, endTheta)
         } else {
-          // TODO: seams are a problem with this triangle -
           this._pushPt(triangles, seg.L0);
           this._pushPt(triangles, joinP0);
           this._pushPt(triangles, joinP1);

@@ -1038,17 +1038,20 @@ export default class Expo2DContext {
     if (this.subpathsModified) {
       let triangles = []
 
+      let prunedSubpaths = []
+      for (let i = 0; i < this.subpaths.length; i++) {
+        let subpath = this.subpaths[i];
+        if (subpath.length <= 4) {
+          continue;
+        }
+        prunedSubpaths.push(subpath);
+      }
+
       // TODO: be smarter about tesselator selection
       if (this.fillTesselation == "fast") {
-        for (let i = 0; i < this.subpaths.length; i++) {
-          let subpath = this.subpaths[i];
-
-          if (subpath.length == 0) {
-            continue;
-          }
-
+        for (let i = 0; i < prunedSubpaths.length; i++) {
+          let subpath = prunedSubpaths[i];
           let triangleIndices = earcut(subpath, null);
-
           for (let i = 0; i < triangleIndices.length; i++) {
             triangles.push(subpath[triangleIndices[i] * 2]);
             triangles.push(subpath[triangleIndices[i] * 2 + 1]);
@@ -1056,13 +1059,12 @@ export default class Expo2DContext {
         }
       } else {
         let result = tess2.tesselate({
-          contours: this.subpaths,
+          contours: prunedSubpaths,
           windingRule: tess2.WINDING_NONZERO,
           elementType: tess2.POLYGONS,
           polySize: 3,
           vertexSize: 2
         });
-
         for (let i = 0; i < result.elements.length; i++) {
           let vertexBaseIdx = result.elements[i] * 2;
           triangles.push(result.vertices[vertexBaseIdx])
@@ -1380,41 +1382,17 @@ export default class Expo2DContext {
       throw new DOMException('Bad radius', 'IndexSizeError');
     }
 
+    if (radius == 0) {
+      this.lineTo(x, y);
+      return
+    }
+
     if (startAngle == endAngle) {
       return;
     }
 
     counterclockwise = counterclockwise || 0;
     let centerPt = [x, y];
-
-    // TODO: increment shouldn't be constant when arc has been scaled
-    // anisotropically
-    let increment = Math.abs(startAngle - endAngle);
-    while (true) {
-      let pt1 = this._getTransformedPt(radius, 0);
-      let pt2 = this._getTransformedPt(
-        radius * Math.cos(increment),
-        radius * Math.sin(increment)
-      );
-
-      let accurate_midpt = this._getTransformedPt(
-        radius * Math.cos(increment / 2),
-        radius * Math.sin(increment / 2)
-      );
-      let actual_midpt = [
-        pt1[0] + (pt2[0] - pt1[0]) / 2,
-        pt1[1] + (pt2[1] - pt1[1]) / 2,
-      ];
-      let error = Math.sqrt(
-        Math.pow(actual_midpt[0] - accurate_midpt[0], 2) +
-          Math.pow(actual_midpt[1] - accurate_midpt[1], 2)
-      );
-      if (error > 0.5) { // TODO: set back to 0.5 after finished debugging
-        increment /= 2;
-      } else {
-        break;
-      }
-    }
 
     if (counterclockwise) {
       let temp = startAngle;
@@ -1423,7 +1401,24 @@ export default class Expo2DContext {
     }
 
     if (startAngle > endAngle) {
-      endAngle = (endAngle%(2*Math.PI)) + Math.floor(startAngle/(2*Math.PI))*2*Math.PI + 2*Math.PI;
+      endAngle = (endAngle%(2*Math.PI)) +
+                  Math.trunc(startAngle/(2*Math.PI))*2*Math.PI + 2*Math.PI;
+    }
+
+    if (endAngle > startAngle + 2*Math.PI) {
+      endAngle = startAngle + 2*Math.PI;
+    }
+
+    // TODO: increment shouldn't be constant when arc has been scaled
+    // anisotropically
+
+    let xformedOrigin = this._getTransformedPt(0, 0);
+    let xformedVector = this._getTransformedPt(radius, 0);
+    let actualRadius = Math.sqrt(Math.pow(xformedVector[0]-xformedOrigin[0],2) + Math.pow(xformedVector[1]-xformedOrigin[1],2))
+    let increment = (1/actualRadius) * 5.0;
+    
+    if (increment >= Math.abs(startAngle - endAngle)) {
+      return;
     }
 
     var thetaPt = (theta) => {
@@ -1435,43 +1430,33 @@ export default class Expo2DContext {
       this.currentSubpath.push(arcPt[1]);
     }
 
-    var edgePt = (theta, dir, baseIdx) => {
-      let arcPt = [
-        centerPt[0] + radius * Math.cos(theta),
-        centerPt[1] + radius * Math.sin(theta)
-      ];
-      // TODO: increment is an angle, figure out the right _distance_ to use here
-      arcPt[0] += radius * increment * Math.cos(theta+dir*Math.PI/2);
-      arcPt[1] += radius * increment * Math.sin(theta+dir*Math.PI/2);
-      arcPt = this._getTransformedPt(arcPt[0], arcPt[1]);
-      this.currentSubpath[baseIdx] = arcPt[0];
-      this.currentSubpath[baseIdx+1] = arcPt[1];
+    if (!counterclockwise) {
+      var theta = startAngle;
+    } else {
+      var theta = endAngle;
     }
-
-    let arcStartIdx = this.currentSubpath.length;
-    let theta = startAngle;
 
     while (true) {
       thetaPt(theta);
 
-      let old_theta = theta;
-      theta += increment;
+      let incrementTweak = 0.05 + (1-Math.cos((theta - startAngle)/(endAngle-startAngle)*Math.PI*2))/2;
 
-      if (theta >= endAngle) {
-        break;
+      if (!counterclockwise) {
+        theta += increment * incrementTweak;
+        if (theta >= endAngle) {
+          theta = endAngle;
+          break;
+        }
+      } else {
+        theta -= increment * incrementTweak;
+        if (theta <= startAngle) {
+          theta = startAngle;
+          break;
+        }
       }
-
-      if (theta >= startAngle + 2*Math.PI) {
-        break;
-      }
-
     }
 
-    thetaPt(endAngle);
-
-    // Correct edges of arc such that they're perpendicular to the curve itself
-    edgePt(startAngle, 1, arcStartIdx+2);
-    edgePt(endAngle, -1, this.currentSubpath.length-4);
+    thetaPt(theta);
 
     this.subpathsModified = true;
 
@@ -1496,18 +1481,6 @@ export default class Expo2DContext {
    
     // For further explanation of the geometry here -
     // https://math.stackexchange.com/questions/797828/calculate-center-of-circle-tangent-to-two-lines-in-space
-   
-    // TODO: for some reason this breaks stroke() - the arcTo data is good.
-    //       look into where the singularity is coming from:
-    // var s = [100,30]
-    // var t0 = [150,1]
-    // var t1 = [150,70]
-    // var e = [120,120]
-
-    // TODO: is this moveTo check necessary?
-    if (this.currentSubpath.length == 0) {
-      this.moveTo(x1,y1);
-    }
 
     var s = new Vector(...this._getUntransformedPt(this.currentSubpath[this.currentSubpath.length - 2], this.currentSubpath[this.currentSubpath.length - 1]));
     var t0 = new Vector(x1,y1);
@@ -1535,24 +1508,28 @@ export default class Expo2DContext {
     end_pt = end_pt.add(t0).subtract(center_pt);
 
     var start_angle = Math.atan2(start_pt.y, start_pt.x);
-    var end_angle = Math.atan2(end_pt.y, end_pt.x);;
+    var end_angle = Math.atan2(end_pt.y, end_pt.x);
 
-    // TODO: see if possible to decompose this part with arc()
-    // TODO: be smart about increment value 
-    let increment = 0.001;
-    for (var theta = start_angle; theta <= end_angle; theta+=increment) {
+    console.log(start_angle)
+    console.log(end_angle)
 
-      if (theta + increment > end_angle) {
-        theta = end_angle;
-      }
+    this.arc(center_pt.x, center_pt.y, radius, start_angle, end_angle, true);
+    // // TODO: see if possible to decompose this part with arc()
+    // // TODO: be smart about increment value 
+    // let increment = 0.001;
+    // for (var theta = start_angle; theta <= end_angle; theta+=increment) {
 
-      let sweep_pt = this._getTransformedPt(
-        center_pt.x + radius*Math.cos(theta), 
-        center_pt.y + radius*Math.sin(theta), 
-      );
-      this.currentSubpath.push(sweep_pt[0])
-      this.currentSubpath.push(sweep_pt[1])
-    }
+    //   if (theta + increment > end_angle) {
+    //     theta = end_angle;
+    //   }
+
+    //   let sweep_pt = this._getTransformedPt(
+    //     center_pt.x + radius*Math.cos(theta), 
+    //     center_pt.y + radius*Math.sin(theta), 
+    //   );
+    //   this.currentSubpath.push(sweep_pt[0])
+    //   this.currentSubpath.push(sweep_pt[1])
+    // }
 
   }
 
