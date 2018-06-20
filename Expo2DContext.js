@@ -1091,16 +1091,15 @@ export default class Expo2DContext {
   }
 
   isPointInPath(x, y) {
-    // TODO: TEST THIS OUT!!!
     if (arguments.length != 2) throw new TypeError();
 
     if (!isFinite(x) || !isFinite(y)) {
-      return;
+      return false;
     }
 
     let gl = this.gl;
 
-    let tPt = this._getTransformedPt(x, y);
+    let tPt = [x,y]
 
     // TODO: is this approach more or less efficient than some
     // other inclusion test that works on the untesselated polygon?
@@ -1124,7 +1123,7 @@ export default class Expo2DContext {
       let u = (dot11 * dot02 - dot01 * dot12) * invDenom;
       let v = (dot00 * dot12 - dot01 * dot02) * invDenom;
 
-      if ((u >= 0) && (v >= 0) && (u + v < 1)) {
+      if ((u >= 0) && (v >= 0) && (u + v <= 1)) {
         return true;
       }
     }
