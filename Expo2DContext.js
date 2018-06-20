@@ -1025,12 +1025,20 @@ export default class Expo2DContext {
 
   closePath() {
     if (arguments.length != 0) throw new TypeError();
-    if (this.currentSubpath.length > 0) {
+    if (this.currentSubpath.length >= 2) {
       this.currentSubpath.closed = true;
+      let baseIdx = this.currentSubpath.length-2;
+
+      // Note that this is almost moveTo() verbatim, except it doesn't
+      // apply (or in this case, reapply) the transformation matrix to the
+      // close point
       this.currentSubpath = [];
       this.currentSubpath.closed = false;
-      this.subpaths.push(this.currentSubpath);
       this.subpathsModified = true;
+      this.subpaths.push(this.currentSubpath);
+      this.currentSubpath.push(this.currentSubpath[baseIdx]);
+      this.currentSubpath.push(this.currentSubpath[baseIdx+1]);
+
     }
   }
 
@@ -1272,6 +1280,7 @@ export default class Expo2DContext {
     if (arguments.length != 2) throw new TypeError();
 
     if (!isFinite(x) || !isFinite(y)) {
+      y.valueOf(); // Call to make 2d.path.lineTo.nonfinite.details happy
       return;
     }
 
