@@ -1479,13 +1479,19 @@ export default class Expo2DContext {
 
     this.subpathsModified = true;
    
-    // For further explanation of the geometry here -
-    // https://math.stackexchange.com/questions/797828/calculate-center-of-circle-tangent-to-two-lines-in-space
-
     var s = new Vector(...this._getUntransformedPt(this.currentSubpath[this.currentSubpath.length - 2], this.currentSubpath[this.currentSubpath.length - 1]));
     var t0 = new Vector(x1,y1);
     var t1 = new Vector(x2,y2);
+
+    // Check for colinearity
+    if(s.x*(t0.y-t1.y) + t0.x*(t1.y-s.y) + t1.x*(s.y-t0.y) == 0) {
+      this.lineTo(x1, y1);
+      return;
+    }
     
+    // For further explanation of the geometry here -
+    // https://math.stackexchange.com/questions/797828/calculate-center-of-circle-tangent-to-two-lines-in-space
+
     var s_t0 = s.subtract(t0);
     var s_t0_hat = s_t0.unit();
 
@@ -1514,23 +1520,6 @@ export default class Expo2DContext {
     console.log(end_angle)
 
     this.arc(center_pt.x, center_pt.y, radius, start_angle, end_angle, true);
-    // // TODO: see if possible to decompose this part with arc()
-    // // TODO: be smart about increment value 
-    // let increment = 0.001;
-    // for (var theta = start_angle; theta <= end_angle; theta+=increment) {
-
-    //   if (theta + increment > end_angle) {
-    //     theta = end_angle;
-    //   }
-
-    //   let sweep_pt = this._getTransformedPt(
-    //     center_pt.x + radius*Math.cos(theta), 
-    //     center_pt.y + radius*Math.sin(theta), 
-    //   );
-    //   this.currentSubpath.push(sweep_pt[0])
-    //   this.currentSubpath.push(sweep_pt[1])
-    // }
-
   }
 
   /**************************************************
