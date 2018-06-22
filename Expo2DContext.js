@@ -390,6 +390,11 @@ export default class Expo2DContext {
     sw = Math.floor(sw);
     sh = Math.floor(sh);
 
+    // This flush isn't technically necessary because readPixels should cause
+    // an expo gl flush anyway, but here just in case more operations get added
+    // to Expo2DContext flush in the future:
+    this.flush()
+
     var imageDataObj = new ImageData(sw, sh);
     
     var rawTexData = new Float32Array(sw * sh * 4);
@@ -2032,10 +2037,23 @@ export default class Expo2DContext {
     } else if (!(repeat in patternShaderRepeatValues)) {
       throw new SyntaxError('Bad repeat value');
     }
-    var patternObj = {
-      pattern: asset,
+
+    let patternObj = {
       repeat: repeat,
+      pattern: asset
     };
+
+    if (asset instanceof Expo2DContext) {
+      let assetWidth = asset.gl.drawingBufferWidth;
+      let assetHeight = asset.gl.drawingBufferHeight;
+      let assetImage = asset.getImageData(0, 0, assetWidth, assetHeight)
+      patternObj.pattern = {
+        "width": assetImage.width,
+        "height": assetImage.height,
+        "data": assetImage.data
+      }
+    }
+
     return patternObj;
   }
 
