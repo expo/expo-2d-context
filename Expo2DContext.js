@@ -159,6 +159,13 @@ export class ImageData {
     }
 }
 
+export class CanvasPattern {
+    constructor(pattern, repeat) {
+      this.pattern = pattern;
+      this.repeat = repeat;
+    }
+}
+
 export default class Expo2DContext {
   /**************************************************
      * Utility methods
@@ -983,15 +990,22 @@ export default class Expo2DContext {
   strokeRect(x, y, w, h) {
     if (arguments.length != 4) throw new TypeError();
 
+    if (!isFinite(x) || !isFinite(y) || !isFinite(w) || !isFinite(h)) {
+      return;
+    }
+
     let gl = this.gl;
 
     this._applyStyle(this.drawingState.strokeStyle);
 
+    let topLeft = this._getTransformedPt(x,y);
+    let bottomRight = this._getTransformedPt(x+w,y+h);
+
     var polyline = [
-      x, y,
-      x + w, y,
-      x + w, y + h,
-      x, y + h
+      topLeft[0], topLeft[1],
+      bottomRight[0], topLeft[1],
+      bottomRight[0], bottomRight[1],
+      topLeft[0], bottomRight[1],
     ];
 
     gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
@@ -1554,32 +1568,46 @@ export default class Expo2DContext {
 
   restore() {
     if (arguments.length != 0) throw new TypeError();
-    this.drawingState = this.drawingStateStack.pop();
-    this._updateMatrixUniforms();
-    this._updateStrokeExtruderState();
-    this._updateClippingRegion();
+    if (this.drawingStateStack.length > 0) {
+      this.drawingState = this.drawingStateStack.pop();
+      this._updateMatrixUniforms();
+      this._updateStrokeExtruderState();
+      this._updateClippingRegion();
+    }
   }
 
   scale(x, y) {
     if (arguments.length != 2) throw new TypeError();
+    for (let argIdx = 0; argIdx < arguments.length; argIdx++) {
+      if (!isFinite(arguments[argIdx])) return;
+    }
     glm.mat4.scale(this.drawingState.mvMatrix, this.drawingState.mvMatrix, [x, y, 1.0]);
     this._updateMatrixUniforms();
   }
 
   rotate(angle) {
     if (arguments.length != 1) throw new TypeError();
+    for (let argIdx = 0; argIdx < arguments.length; argIdx++) {
+      if (!isFinite(arguments[argIdx])) return;
+    }
     glm.mat4.rotateZ(this.drawingState.mvMatrix, this.drawingState.mvMatrix, angle);
     this._updateMatrixUniforms();
   }
 
   translate(x, y) {
     if (arguments.length != 2) throw new TypeError();
+    for (let argIdx = 0; argIdx < arguments.length; argIdx++) {
+      if (!isFinite(arguments[argIdx])) return;
+    }
     glm.mat4.translate(this.drawingState.mvMatrix, this.drawingState.mvMatrix, [x, y, 0.0]);
     this._updateMatrixUniforms();
   }
 
   transform(a, b, c, d, e, f) {
     if (arguments.length != 6) throw new TypeError();
+    for (let argIdx = 0; argIdx < arguments.length; argIdx++) {
+      if (!isFinite(arguments[argIdx])) return;
+    }
     glm.mat4.multiply(
       this.drawingState.mvMatrix,
       this.drawingState.mvMatrix,
@@ -1594,6 +1622,9 @@ export default class Expo2DContext {
 
   setTransform(a, b, c, d, e, f) {
     if (arguments.length != 6) throw new TypeError();
+    for (let argIdx = 0; argIdx < arguments.length; argIdx++) {
+      if (!isFinite(arguments[argIdx])) return;
+    }
     glm.mat4.identity(this.drawingState.mvMatrix);
     this.transform(a, b, c, d, e, f);
   }
@@ -1739,7 +1770,7 @@ export default class Expo2DContext {
     if (!("font-style" in parsed_font)) parsed_font["font-style"] = "normal";
     if (!("font-variant" in parsed_font)) parsed_font["font-variant"] = "normal";
 
-    font_resources = null;
+    this.drawingState.font_resources = null;
     for (let i=0; i < parsed_font["font-family"].length; i++) {
       if (parsed_font["font-family"][i] in this.builtinFonts) {
         if (this.builtinFonts[parsed_font["font-family"][i]] != null) {
@@ -1807,7 +1838,7 @@ export default class Expo2DContext {
     } else if (val && typeof val === 'object' && 'gradient' in val) {
       return this._cloneGradient(val);
     } else if (val && typeof val === 'object' && 'pattern' in val) {
-      return Object.assign({}, val);
+      return  Object.assign(Object.create(Object.getPrototypeOf(val)), val)
     } else {
       throw new SyntaxError('Bad color value');
     } 
@@ -1920,7 +1951,7 @@ export default class Expo2DContext {
         this.activeShaderProgram.uniforms['uGlobalAlpha'],
         this.drawingState.globalAlpha
       );
-    } else if (val && typeof val === 'object' && 'pattern' in val) {
+    } else if (val && val instanceof CanvasPattern) {
       this._setShaderProgram(this.patternShaderProgram);
 
       gl.disableVertexAttribArray(this.activeShaderProgram.attributes["aTexCoord"]);
@@ -2032,29 +2063,27 @@ export default class Expo2DContext {
   createPattern(asset, repeat) {
     if (arguments.length != 2) throw new TypeError();
     // TODO: make sure this doesn't pick up asset changes later on
-    if (!repeat || repeat === '') {
+    
+    if (repeat !== undefined && (!repeat || repeat === '')) {
       repeat = 'repeat';
     } else if (!(repeat in patternShaderRepeatValues)) {
-      throw new SyntaxError('Bad repeat value');
+      throw new DOMException('Bad repeat value', 'SyntaxError');
     }
-
-    let patternObj = {
-      repeat: repeat,
-      pattern: asset
-    };
 
     if (asset instanceof Expo2DContext) {
       let assetWidth = asset.gl.drawingBufferWidth;
       let assetHeight = asset.gl.drawingBufferHeight;
       let assetImage = asset.getImageData(0, 0, assetWidth, assetHeight)
-      patternObj.pattern = {
+      asset = {
         "width": assetImage.width,
         "height": assetImage.height,
         "data": assetImage.data
       }
+    } else if (!(asset.hasOwnProperty("width") && asset.hasOwnProperty("height") && asset.hasOwnProperty("localUri"))) {
+      throw new TypeError("Bad image asset");
     }
 
-    return patternObj;
+    return new CanvasPattern(asset, repeat)
   }
 
   _setShaderProgram(shaderProgram) {

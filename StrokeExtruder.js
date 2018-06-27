@@ -43,12 +43,34 @@ export class StrokeExtruder {
     let prevSeg = null;
 
     if (this.closed) {
+      let firstPt = this._vec(points, 0);
+      
+      let lastPtIdx = this._nextNonDupIdx(points, firstPt, -2);
+      if (lastPtIdx < 0) {
+        return [];
+      }
+      let lastPt = this._vec(points, lastPtIdx)
+
+      let secondToLastPtIdx = this._nextNonDupIdx(points, lastPt, lastPtIdx-2);
+      if (secondToLastPtIdx < 0) {
+        return [];
+      }
+      let secondToLastPt = this._vec(points, secondToLastPtIdx)
+
       prevSeg = this._segmentGeometry(triangles, 
-        this._segmentDescriptor(this._vec(points, -2), this._vec(points, 0)),
-        this._segmentDescriptor(this._vec(points, -4), this._vec(points, -2))
+        this._segmentDescriptor(lastPt, firstPt),
+        this._segmentDescriptor(secondToLastPt, lastPt)
       );
     } else {
-      let firstSeg = this._segmentDescriptor(this._vec(points, 0), this._vec(points, 2));
+      let firstPt = this._vec(points, 0);      
+      
+      let secondPtIdx = this._nextNonDupIdx(points, firstPt, 2);
+      if (secondPtIdx < 0) {
+        return [];
+      }
+      let secondPt = this._vec(points, secondPtIdx)
+
+      let firstSeg = this._segmentDescriptor(firstPt, secondPt);
       if (this.cap == "round") {
         let startTheta = Math.atan2(firstSeg.normal.y, firstSeg.normal.x);
         let endTheta = startTheta + Math.PI;
@@ -58,12 +80,15 @@ export class StrokeExtruder {
       }
     }
 
-    // TODO: does global alpha reveal the triangle overlaps here?
     for (let i = 2; i < points.length; i+=2) {
       let seg = this._segmentDescriptor(
         prevL1,
         this._vec(points, i)
       );
+
+      if (seg.direction.x == 0 && seg.direction.y == 0) {
+        continue;
+      }
 
       if (!this.closed && i == points.length-2 && this.cap == "square") {
         seg = this._segmentDescriptor(
@@ -111,7 +136,7 @@ export class StrokeExtruder {
     seg.normal = new Vector(-seg.direction.y, seg.direction.x);
 
     // TODO: make sure that this works properly when everything is scaled
-    epsilon = seg.direction;
+    epsilon = seg.direction; 
     
     seg.points = [
       L0.add(seg.normal.multiply(halfThickness).subtract(epsilon)),
@@ -204,10 +229,9 @@ export class StrokeExtruder {
     triangles.push(transformed_y);
   }
 
-
   _vec(arr, idx) {
     if (idx < 0) {
-      idx = arr.length + idx;
+      idx += arr.length;
     }
     //return new Vector(arr[idx], arr[idx+1]);
     return new Vector(
@@ -216,5 +240,22 @@ export class StrokeExtruder {
     );
   }
 
+  _nextNonDupIdx(arr, ref, startIdx) {
+    if (startIdx < 0) {
+      var endIdx = -2;
+      startIdx += arr.length;
+      var incr = -2;
+    } else {
+      var endIdx = arr.length;
+      var incr = 2;
+    }
+
+    for (let curIdx = startIdx; curIdx != endIdx; curIdx += incr) {
+      if (arr[curIdx]!=ref.x || arr[curIdx+1]!=ref.y) {
+        return curIdx;
+      }
+    }
+    return -1;
+  }
 
 }
