@@ -213,14 +213,13 @@ export default class Expo2DContext {
 
 
   _updateStrokeExtruderState() {
-    // TODO: joins currently aren't placed at the beginning/end of
-    // closed paths
-
     Object.assign(this.strokeExtruder, {
       "thickness" : this.drawingState.lineWidth,
       "cap" : this.drawingState.lineCap,
       "join" : this.drawingState.lineJoin,
       "miterLimit" : this.drawingState.miterLimit,
+      "dashList" : this.drawingState.strokeDashes,
+      "dashOffset" : this.drawingState.strokeDashOffset
     });
   }
 
@@ -827,6 +826,10 @@ export default class Expo2DContext {
 
     if (font===null) {
       throw new ReferenceError("Font system is not initialized (await initializeText())");
+    }
+
+    if (maxWidth !== undefined && !isFinite(maxWidth)) {
+      return;
     }
 
     this._applyStyle(this.drawingState.fillStyle);
@@ -1730,7 +1733,17 @@ export default class Expo2DContext {
   setLineDash(segments) {
     if (arguments.length != 1) throw new TypeError();
     // TODO: sanitization
-    this.drawingState.strokeDashes = segments.slice();
+    for (let i = 0; i < segments.length; i++) {
+      if (!isFinite(segments[i]) || segments[i] < 0) {
+        return;
+      }
+    }
+    if ((segments.length % 2) == 0) {
+      this.drawingState.strokeDashes = segments.slice();
+    } else {
+      this.drawingState.strokeDashes = segments.concat(segments);
+    }
+    this.strokeExtruder.dashList = this.drawingState.strokeDashes;
   }
   getLineDash() {
     if (arguments.length != 0) throw new TypeError();
@@ -1739,6 +1752,7 @@ export default class Expo2DContext {
 
   set lineDashOffset(val) {
     this.drawingState.strokeDashOffset = val;
+    this.strokeExtruder.dashOffset = val;
   }
   get lineDashOffset() {
     return this.drawingState.strokeDashOffset;

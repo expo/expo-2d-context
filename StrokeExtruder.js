@@ -14,6 +14,8 @@ export class StrokeExtruder {
                      0,0,1,0,
                      0,0,0,1];
     this.invMvMatrix = this.mvMatrix;
+    this.dashList = [];
+    this.dashOffset = 0;
   }
 
   get supportedCaps() {
