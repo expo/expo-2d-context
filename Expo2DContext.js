@@ -1546,10 +1546,8 @@ export default class Expo2DContext {
     var start_angle = Math.atan2(start_pt.y, start_pt.x);
     var end_angle = Math.atan2(end_pt.y, end_pt.x);
 
-    console.log(start_angle)
-    console.log(end_angle)
-
-    this.arc(center_pt.x, center_pt.y, radius, start_angle, end_angle, true);
+    // TODO: not sure how to choose cw/ccw here - this might require more thought
+    this.arc(center_pt.x, center_pt.y, radius, start_angle, end_angle, false);
   }
 
   /**************************************************
