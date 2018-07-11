@@ -16,6 +16,11 @@ export class StrokeExtruder {
     this.invMvMatrix = this.mvMatrix;
     this.dashList = [];
     this.dashOffset = 0;
+
+    // Constants (set at build() time)
+    this._halfThickness = undefined;
+    this._dashListLength = undefined;
+
   }
 
   get supportedCaps() {
@@ -27,7 +32,17 @@ export class StrokeExtruder {
   }
 
   build(points) {
-    var halfThickness = this.thickness / 2;
+    // TODO: don't hardcode dash list:
+    this.dashList = [70,70]
+
+    // Set buildtime constants
+    this._halfThickness = this.thickness / 2;
+    this._dashListLength = this.dashList.reduce((x,y)=>{return x+y;}, 0);
+
+    let halfThickness = this._halfThickness;
+    let currentPosition = this.dashOffset;
+    // TODO: determine based on dashOffset:
+    let dashOn = true;
 
     // TODO: proper docstring
     // Expects points to be a flat array of the form [x0, y0, x1, y1, ...]
@@ -44,6 +59,7 @@ export class StrokeExtruder {
     let prevL1 = this._vec(points, 0);
     let prevSeg = null;
 
+
     if (this.closed) {
       let firstPt = this._vec(points, 0);
       
@@ -59,9 +75,13 @@ export class StrokeExtruder {
       }
       let secondToLastPt = this._vec(points, secondToLastPtIdx)
 
-      prevSeg = this._segmentGeometry(triangles, 
-        this._segmentDescriptor(lastPt, firstPt),
-        this._segmentDescriptor(secondToLastPt, lastPt)
+      let endConnectorSeg = this._segmentDescriptor(lastPt, firstPt);
+      prevSeg = endConnectorSeg;
+      dashOn = this._segmentGeometry(triangles, 
+        endConnectorSeg,
+        this._segmentDescriptor(secondToLastPt, lastPt),
+        currentPosition, // TODO: should actually be currentPosition-length_of_closing_segment
+        dashOn // TODO: ditto, this should be based on currentPosition-length_of_closing_segment
       );
     } else {
       let firstPt = this._vec(points, 0);      
@@ -100,7 +120,9 @@ export class StrokeExtruder {
       }
 
       prevL1 = seg.L1;  
-      prevSeg = this._segmentGeometry(triangles, seg, prevSeg)
+      dashOn = this._segmentGeometry(triangles, seg, prevSeg, currentPosition, dashOn);
+      prevSeg = seg;      
+      currentPosition += prevSeg.length;
     }
 
     if (!this.closed) {
@@ -115,7 +137,7 @@ export class StrokeExtruder {
   }
 
   _fanGeometry(triangles, center, startTheta, endTheta) {
-    var halfThickness = this.thickness / 2;
+    var halfThickness = this._halfThickness;
 
     let incr = 10/this.thickness;
     for (let theta = startTheta; theta < endTheta; theta += incr) {
@@ -129,88 +151,125 @@ export class StrokeExtruder {
   }
 
   _segmentDescriptor(L0, L1) {
-    var halfThickness = this.thickness / 2;
+    var halfThickness = this._halfThickness;
 
     let seg = {}
     seg.L0 = L0;
     seg.L1 = L1;
-    seg.direction = L1.subtract(L0).unit();
-    seg.normal = new Vector(-seg.direction.y, seg.direction.x);
 
-    // TODO: make sure that this works properly when everything is scaled
-    epsilon = seg.direction; 
+    let L1_L0 = L1.subtract(L0);
+    seg.length = L1_L0.length();
+    seg.direction = L1_L0.unit();
+    seg.normal = new Vector(-seg.direction.y, seg.direction.x);
     
-    seg.points = [
-      L0.add(seg.normal.multiply(halfThickness).subtract(epsilon)),
-      L0.add(seg.normal.multiply(-halfThickness).subtract(epsilon)),
-      L1.add(seg.normal.multiply(-halfThickness).add(epsilon)),
-      L1.add(seg.normal.multiply(halfThickness).add(epsilon))
-    ]
+    seg.cornerPoints = this._rectCorners(L0, L1, seg);
+
     return seg;
   }
 
-  _segmentGeometry (triangles, seg, prevSeg) {
-      var halfThickness = this.thickness / 2;
+  _rectCorners(startPt, endPt, seg) {
+    var halfThickness = this._halfThickness;
+    // TODO: make sure that this works properly when everything is scaled
+    var epsilon = seg.direction; 
+    return [
+      startPt.add(seg.normal.multiply(halfThickness).subtract(epsilon)),
+      startPt.add(seg.normal.multiply(-halfThickness).subtract(epsilon)),
+      endPt.add(seg.normal.multiply(-halfThickness).add(epsilon)),
+      endPt.add(seg.normal.multiply(halfThickness).add(epsilon))
+    ];
+  }
 
-    // TODO: convert to a triangle strip with restarts, to more
-    // efficiently handle degenerate vs. common cases some day
-    // (lol, some day, sigh)
-      this._pushPt(triangles, seg.points[0]);
-      this._pushPt(triangles, seg.points[1]);
-      this._pushPt(triangles, seg.points[2]);
+  _segmentGeometry (triangles, seg, prevSeg, currentPosition, dashOn) {
+    var halfThickness = this._halfThickness;
 
-      this._pushPt(triangles, seg.points[0]);
-      this._pushPt(triangles, seg.points[3]);
-      this._pushPt(triangles, seg.points[2]);
+    // Add a join to the previous line segment, if there is one and the
+    // dash was on
+    if (prevSeg && dashOn) {
+      // TODO: can bendDirection be based on miter angle?
+      let bendDirection = prevSeg.direction.negative().cross(seg.direction).z > 0
 
-      if (prevSeg) {
-        // TODO: can bendDirection be based on miter angle?
-        let bendDirection = prevSeg.direction.negative().cross(seg.direction).z > 0
-
-        // TODO: for very tight curves we need joins on both sides :\
-        //       figure out how to detect this
-        let joinP0 = seg.points[1]
-        let joinP1 = prevSeg.points[2]
-        if (bendDirection) {
-          joinP0 = seg.points[0]
-          joinP1 = prevSeg.points[3]
-        }
-
-        let miterAngle = Math.PI-prevSeg.direction.negative().angleTo(seg.direction)
-        
-        if (this.join == 'round') {
-          let startTheta = Math.atan2(prevSeg.normal.y, prevSeg.normal.x);
-          let endTheta = startTheta;
-          if (bendDirection) {
-            startTheta -= miterAngle;
-          } else {
-            startTheta += Math.PI;
-            endTheta += Math.PI + miterAngle;
-          }
-
-          this._fanGeometry(triangles, seg.L0, startTheta, endTheta)
-        } else {
-          this._pushPt(triangles, seg.L0);
-          this._pushPt(triangles, joinP0);
-          this._pushPt(triangles, joinP1);
-
-          if (this.join == 'miter') {
-            let miterLength = halfThickness / Math.cos(miterAngle/2);
-
-            if (miterLength/halfThickness <= this.miterLimit) {
-              let miterVec = prevSeg.direction.negative().unit().add(seg.direction.unit()).unit().multiply(miterLength) // TODO: factor neg into a subtraction?
-              let miterPt = seg.L0.subtract(miterVec);
-
-              this._pushPt(triangles, joinP0);
-              this._pushPt(triangles, joinP1);
-              this._pushPt(triangles, miterPt);
-            }
-          }
-        }
-
+      // TODO: for very tight curves we need joins on both sides :\
+      //       figure out how to detect this
+      let joinP0 = seg.cornerPoints[1]
+      let joinP1 = prevSeg.cornerPoints[2]
+      if (bendDirection) {
+        joinP0 = seg.cornerPoints[0]
+        joinP1 = prevSeg.cornerPoints[3]
       }
 
-      return seg;
+      let miterAngle = Math.PI-prevSeg.direction.negative().angleTo(seg.direction)
+
+      if (this.join == 'round') {
+        let startTheta = Math.atan2(prevSeg.normal.y, prevSeg.normal.x);
+        let endTheta = startTheta;
+        if (bendDirection) {
+          startTheta -= miterAngle;
+        } else {
+          startTheta += Math.PI;
+          endTheta += Math.PI + miterAngle;
+        }
+
+        this._fanGeometry(triangles, seg.L0, startTheta, endTheta)
+      } else {
+        this._pushPt(triangles, seg.L0);
+        this._pushPt(triangles, joinP0);
+        this._pushPt(triangles, joinP1);
+
+        if (this.join == 'miter') {
+          let miterLength = halfThickness / Math.cos(miterAngle/2);
+
+          if (miterLength/halfThickness <= this.miterLimit) {
+            let miterVec = prevSeg.direction.negative().unit().add(seg.direction.unit()).unit().multiply(miterLength) // TODO: factor neg into a subtraction?
+            let miterPt = seg.L0.subtract(miterVec);
+
+            this._pushPt(triangles, joinP0);
+            this._pushPt(triangles, joinP1);
+            this._pushPt(triangles, miterPt);
+          }
+        }
+      }
+    }
+
+    // Add dashes for the current line segment
+    var currentSegPosition = 0;
+    while (currentSegPosition < seg.length) {
+      // TODO: disable dashing if dash list is empty:
+      var nextSegPosition = currentSegPosition +
+                              this._remainingDashLength(currentPosition + currentSegPosition);
+      if (!dashOn) {
+        // Transitioning to "dash off"
+        // TODO: End+start joins
+      } else {
+        // Transitioning to "dash on"
+
+        let startPt = seg.L0.add(seg.direction.multiply(currentSegPosition))
+        if (nextSegPosition >= seg.length) {
+          var endPt = seg.L1;
+        } else {
+          var endPt = seg.L0.add(seg.direction.multiply(nextSegPosition));
+        }
+
+        let rectPoints = this._rectCorners(startPt, endPt, seg);
+    
+        // TODO: convert to a triangle strip with restarts, to more
+        // efficiently handle degenerate vs. common cases some day
+        // (lol, some day, sigh)
+        this._pushPt(triangles, rectPoints[0]);
+        this._pushPt(triangles, rectPoints[1]);
+        this._pushPt(triangles, rectPoints[2]);
+
+        this._pushPt(triangles, rectPoints[0]);
+        this._pushPt(triangles, rectPoints[3]);
+        this._pushPt(triangles, rectPoints[2]);
+      }
+
+      if (nextSegPosition < seg.length) {
+        dashOn = !dashOn;
+      }
+      currentSegPosition = nextSegPosition;
+    }
+
+    return dashOn;
   }
 
   _pushPt (triangles, pt) {
@@ -258,6 +317,19 @@ export class StrokeExtruder {
       }
     }
     return -1;
+  }
+
+  _remainingDashLength(dashPosition) {
+    // TODO: negative dashPositions?
+    dashPosition %= this._dashListLength;
+    let scanPosition = 0;
+    for (let i = 0; i < this.dashList.length; i++) {
+      scanPosition += this.dashList[i];
+      if (scanPosition > dashPosition) {
+        return scanPosition - dashPosition;
+      }
+    }
+    return 0;
   }
 
 }
