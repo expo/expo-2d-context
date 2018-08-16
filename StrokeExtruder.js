@@ -32,17 +32,17 @@ export class StrokeExtruder {
   }
 
   build(points) {
-    // TODO: don't hardcode dash list:
-    this.dashList = [70,70]
-
     // Set buildtime constants
     this._halfThickness = this.thickness / 2;
     this._dashListLength = this.dashList.reduce((x,y)=>{return x+y;}, 0);
 
     let halfThickness = this._halfThickness;
     let currentPosition = this.dashOffset;
-    // TODO: determine based on dashOffset:
-    let dashOn = true;
+    if (currentPosition < 0) {
+      currentPosition %= this._dashListLength;
+      currentPosition += this._dashListLength; 
+    }
+    let dashOn = this._dashStatus(currentPosition);
 
     // TODO: proper docstring
     // Expects points to be a flat array of the form [x0, y0, x1, y1, ...]
@@ -77,11 +77,18 @@ export class StrokeExtruder {
 
       let endConnectorSeg = this._segmentDescriptor(lastPt, firstPt);
       prevSeg = endConnectorSeg;
+
+      let endConnectorSegDashPosition = currentPosition - endConnectorSeg.length;
+      if (endConnectorSegDashPosition < 0) {
+        endConnectorSegDashPosition %= this._dashListLength;
+        endConnectorSegDashPosition += this._dashListLength; 
+      }
+
       dashOn = this._segmentGeometry(triangles, 
         endConnectorSeg,
         this._segmentDescriptor(secondToLastPt, lastPt),
-        currentPosition, // TODO: should actually be currentPosition-length_of_closing_segment
-        dashOn // TODO: ditto, this should be based on currentPosition-length_of_closing_segment
+        endConnectorSegDashPosition,
+        this._dashStatus(endConnectorSegDashPosition)
       );
     } else {
       let firstPt = this._vec(points, 0);      
@@ -93,12 +100,14 @@ export class StrokeExtruder {
       let secondPt = this._vec(points, secondPtIdx)
 
       let firstSeg = this._segmentDescriptor(firstPt, secondPt);
-      if (this.cap == "round") {
-        let startTheta = Math.atan2(firstSeg.normal.y, firstSeg.normal.x);
-        let endTheta = startTheta + Math.PI;
-        this._fanGeometry(triangles, firstSeg.L0, startTheta, endTheta);
-      } else if (this.cap == "square") {
-        prevL1 = prevL1.subtract(firstSeg.direction.multiply(halfThickness))
+      if (dashOn) {
+        if (this.cap == "round") {
+          let startTheta = Math.atan2(firstSeg.normal.y, firstSeg.normal.x);
+          let endTheta = startTheta + Math.PI;
+          this._fanGeometry(triangles, firstSeg.L0, startTheta, endTheta);
+        } else if (this.cap == "square") {
+          prevL1 = prevL1.subtract(firstSeg.direction.multiply(halfThickness))
+        }
       }
     }
 
@@ -125,7 +134,7 @@ export class StrokeExtruder {
       currentPosition += prevSeg.length;
     }
 
-    if (!this.closed) {
+    if (!this.closed && dashOn) {
       if (this.cap == "round") {
         let startTheta = Math.atan2(prevSeg.normal.y, prevSeg.normal.x) + Math.PI;
         let endTheta = startTheta + Math.PI;
@@ -182,6 +191,11 @@ export class StrokeExtruder {
   _segmentGeometry (triangles, seg, prevSeg, currentPosition, dashOn) {
     var halfThickness = this._halfThickness;
 
+
+    /////////
+    /// REMAINING DASHY TODOS:
+    //    - make dashes work for closed-connector-segments
+
     // Add a join to the previous line segment, if there is one and the
     // dash was on
     if (prevSeg && dashOn) {
@@ -236,17 +250,31 @@ export class StrokeExtruder {
       // TODO: disable dashing if dash list is empty:
       var nextSegPosition = currentSegPosition +
                               this._remainingDashLength(currentPosition + currentSegPosition);
+
+      var square_cap_adjustment = (this.cap == "square") ? halfThickness : 0;
+
+      if (currentSegPosition > 0) {
+        var startPt = seg.L0.add(seg.direction.multiply(currentSegPosition - square_cap_adjustment))
+      } else {
+        var startPt = seg.L0;
+      }
+
+      if (nextSegPosition >= seg.length) {
+        var endPt = seg.L1;
+      } else {
+        var endPt = seg.L0.add(seg.direction.multiply(nextSegPosition + square_cap_adjustment));
+      }
+
       if (!dashOn) {
         // Transitioning to "dash off"
-        // TODO: End+start joins
       } else {
         // Transitioning to "dash on"
 
-        let startPt = seg.L0.add(seg.direction.multiply(currentSegPosition))
-        if (nextSegPosition >= seg.length) {
-          var endPt = seg.L1;
-        } else {
-          var endPt = seg.L0.add(seg.direction.multiply(nextSegPosition));
+        if (this.cap == "round") {
+          let startTheta = Math.atan2(seg.normal.y, seg.normal.x);
+          let endTheta = startTheta + Math.PI;
+          this._fanGeometry(triangles, startPt, startTheta, endTheta);
+          this._fanGeometry(triangles, endPt, startTheta + Math.PI, endTheta + Math.PI);
         }
 
         let rectPoints = this._rectCorners(startPt, endPt, seg);
@@ -263,7 +291,7 @@ export class StrokeExtruder {
         this._pushPt(triangles, rectPoints[2]);
       }
 
-      if (nextSegPosition < seg.length) {
+      if (nextSegPosition <= seg.length) {
         dashOn = !dashOn;
       }
       currentSegPosition = nextSegPosition;
@@ -320,7 +348,6 @@ export class StrokeExtruder {
   }
 
   _remainingDashLength(dashPosition) {
-    // TODO: negative dashPositions?
     dashPosition %= this._dashListLength;
     let scanPosition = 0;
     for (let i = 0; i < this.dashList.length; i++) {
@@ -330,6 +357,18 @@ export class StrokeExtruder {
       }
     }
     return 0;
+  }
+
+  _dashStatus(dashPosition) {
+    dashPosition %= this._dashListLength;
+    let scanPosition = 0;
+    for (let i = 0; i < this.dashList.length; i++) {
+      scanPosition += this.dashList[i];
+      if (scanPosition > dashPosition) {
+        return (i % 2) == 0;
+      }
+    }
+    return false;
   }
 
 }
