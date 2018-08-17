@@ -193,6 +193,7 @@ export class StrokeExtruder {
 
   _segmentGeometry (triangles, seg, prevSeg, currentPosition, dashOn) {
     var halfThickness = this._halfThickness;
+
     // Add a join to the previous line segment, if there is one and the
     // dash was on
     if (prevSeg && dashOn) {
@@ -345,6 +346,9 @@ export class StrokeExtruder {
   }
 
   _remainingDashLength(dashPosition) {
+    if (this.dashList.length == 0) { 
+      return Infinity;
+    }
     dashPosition %= this._dashListLength;
     let scanPosition = 0;
     for (let i = 0; i < this.dashList.length; i++) {
@@ -357,6 +361,9 @@ export class StrokeExtruder {
   }
 
   _dashStatus(dashPosition) {
+    if (this.dashList.length == 0) { 
+      return true;
+    }
     dashPosition %= this._dashListLength;
     let scanPosition = 0;
     for (let i = 0; i < this.dashList.length; i++) {
