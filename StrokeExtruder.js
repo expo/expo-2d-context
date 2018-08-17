@@ -84,7 +84,7 @@ export class StrokeExtruder {
         endConnectorSegDashPosition += this._dashListLength; 
       }
 
-      dashOn = this._segmentGeometry(triangles, 
+      this._segmentGeometry(triangles, 
         endConnectorSeg,
         this._segmentDescriptor(secondToLastPt, lastPt),
         endConnectorSegDashPosition,
@@ -128,10 +128,13 @@ export class StrokeExtruder {
         );
       }
 
-      prevL1 = seg.L1;  
+      let prevDashOn = dashOn;
+      prevL1 = seg.L1;
       dashOn = this._segmentGeometry(triangles, seg, prevSeg, currentPosition, dashOn);
-      prevSeg = seg;      
-      currentPosition += prevSeg.length;
+      currentPosition += seg.length;
+      // The conditional here prevents line joins when the previous segment
+      // happened to end exactly where a 'dash-off' region ended:
+      prevSeg = prevDashOn ? seg : null;
     }
 
     if (!this.closed && dashOn) {
@@ -190,12 +193,6 @@ export class StrokeExtruder {
 
   _segmentGeometry (triangles, seg, prevSeg, currentPosition, dashOn) {
     var halfThickness = this._halfThickness;
-
-
-    /////////
-    /// REMAINING DASHY TODOS:
-    //    - make dashes work for closed-connector-segments
-
     // Add a join to the previous line segment, if there is one and the
     // dash was on
     if (prevSeg && dashOn) {
