@@ -16,6 +16,8 @@ import { ShaderProgram,
 
 import { getBuiltinFonts } from './builtinFonts';
 
+import { getEnvironment } from './environment';
+
 const DOMException = require("domexception");
 // TODO: currently we need to swap out the above with a stub class on
 // Android...update android JS environment
@@ -2234,8 +2236,7 @@ export default class Expo2DContext {
     this.maxGradStops = 128;
 
     // TODO: use enums instead of raw strings
-    // TODO: actually be smart about detecting whether we're running in expo or not:
-    this.environment = "expo";
+    this.environment = getEnvironment();
     this.fillTesselation = "accurate";
 
     this.builtinFonts = getBuiltinFonts();
