@@ -16,7 +16,6 @@ var gutil = require('gulp-util');
 // handle es6 including imports.
 gulp.task('es6', function() {
     browserify({
-        //entries: './Expo2DContext.js',
         entries: './exports.js',
         expose: 'Expo2DContext',
         debug: true

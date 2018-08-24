@@ -14,15 +14,7 @@ import { ShaderProgram,
   linearGradShaderTxt,
   flatShaderTxt } from './shaders';
 
-// Built-in fonts:
-import { calibri } from './calibri';
-import { timesnewroman } from './timesnewroman';
-import { couriernew } from './couriernew';
-// TODO: currently we need to swap the above out with null for
-// web build...fix gulpfile:
-// var calibri = null;
-// var timesnewroman = null;
-// var couriernew = null;
+import { getBuiltinFonts } from './builtinFonts';
 
 const DOMException = require("domexception");
 // TODO: currently we need to swap out the above with a stub class on
@@ -33,7 +25,6 @@ const DOMException = require("domexception");
 //     this.exctype = exctype
 //   }
 // }
-
 
 var stringFormat = require('string-format');
 
@@ -812,11 +803,14 @@ export default class Expo2DContext {
 
   async initializeText() {
     if (arguments.length != 0) throw new TypeError();
-    await Promise.all([
-      calibri.await_assets(),
-      timesnewroman.await_assets(),
-      couriernew.await_assets()
-    ]);
+    let promises = [];
+    let font_objects = Object.values(this.builtinFonts);
+    for (let i = 0; i < font_objects.length; i++) {
+      if (font_objects[i] != null) {
+        promises.push(font_objects[i].await_assets());
+      }
+    }
+    await Promise.all(promises); 
     this.font = this.font;
   }
 
@@ -2244,17 +2238,7 @@ export default class Expo2DContext {
     this.environment = "expo";
     this.fillTesselation = "accurate";
 
-    // TODO: find fonts?
-    this.builtinFonts = {
-      "cursive" : null, 
-      "fantasy" : null, 
-      "monospace" : couriernew, 
-      "serif" : timesnewroman,
-      "sans-serif" : calibri,
-      "Courier New" : couriernew,
-      "Times New Roman" : timesnewroman,
-      "Calibri" : calibri,
-    }
+    this.builtinFonts = getBuiltinFonts();
 
     // Initialization
     this.gl = gl;
