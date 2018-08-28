@@ -51,6 +51,23 @@ import { StrokeExtruder } from './StrokeExtruder'
 
 // TODO: use same tex coord attrib array for drawImage and fillText
 
+function isValidCanvasImageSource(asset) {
+  var environment = getEnvironment();
+  if (environment === "expo") {
+    if (asset.hasOwnProperty("width") &&
+        asset.hasOwnProperty("height") &&
+        asset.hasOwnProperty("localUri")) {
+      return true;
+    }
+  } else if (environment === "web") {
+    if (asset.nodeName.toLowerCase() === "img" ||
+        asset.nodeName.toLowerCase() === "canvas") {
+      return true;
+    }
+  }
+  return false;
+}
+
 function cssToGlColor(cssStr) {
   let parsedColor = parseColor(cssStr);
   // TODO: clean this crap up:
@@ -426,7 +443,7 @@ export default class Expo2DContext {
     var typeError = "";
 
     if (!(imagedata instanceof ImageData)) {
-      typeError = "Bad imagedata object";
+      typeError = "Bad imagedata";
     }
 
     if (!isFinite(dx) || !isFinite(dy)) {
@@ -555,8 +572,6 @@ export default class Expo2DContext {
  
     this._applyCompositingState();
 
-
-
   }
 
   /**************************************************
@@ -568,9 +583,8 @@ export default class Expo2DContext {
 
     var asset = arguments[0];
 
-    if (typeof asset !== 'object' ||
-        asset === null ||
-        !("localUri" in asset && "width" in asset && "height" in asset))
+    if (typeof asset !== 'object' || asset === null ||
+        !isValidCanvasImageSource(asset))
     {
       throw new TypeError('Bad asset')
     }
@@ -1717,7 +1731,6 @@ export default class Expo2DContext {
 
   setLineDash(segments) {
     if (arguments.length != 1) throw new TypeError();
-    // TODO: sanitization
     for (let i = 0; i < segments.length; i++) {
       if (!isFinite(segments[i]) || segments[i] < 0) {
         return;
@@ -1846,8 +1859,6 @@ export default class Expo2DContext {
   _applyStyle(val) {
     let gl = this.gl;
 
-    // TODO: should style errors be ignored? raised immediately?
-
     if (typeof val === 'string') {
       this._setShaderProgram(this.flatShaderProgram);
       gl.uniform4fv(
@@ -1936,7 +1947,6 @@ export default class Expo2DContext {
       }
       offset_arr.push(-1.0);
 
-      // TODO: can we rely on uniform arrays always ending up with [0] in their retrieved names across all platforms?
       gl.uniform4fv(
         this.activeShaderProgram.uniforms['colors[0]'],
         new Float32Array(color_arr)
@@ -2078,8 +2088,8 @@ export default class Expo2DContext {
         "height": assetImage.height,
         "data": assetImage.data
       }
-    } else if (!(asset.hasOwnProperty("width") && asset.hasOwnProperty("height") && asset.hasOwnProperty("localUri"))) {
-      throw new TypeError("Bad image asset");
+    } else if (!isValidCanvasImageSource(asset)) { 
+      throw new TypeError("Bad asset");
     }
 
     return new CanvasPattern(asset, repeat)
