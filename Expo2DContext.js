@@ -1014,19 +1014,7 @@ export default class Expo2DContext {
     this.strokeExtruder.invMvMatrix = this._getInvMvMatrix();
     var vertices = this.strokeExtruder.build(polyline);
 
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
-    gl.vertexAttribPointer(
-      this.activeShaderProgram.attributes['aVertexPosition'],
-      2,
-      gl.FLOAT,
-      false,
-      0,
-      0
-    );
-
-    gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
-    gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], false);
+    this._drawStenciled(vertices);
   }
 
   /**************************************************
@@ -1195,27 +1183,9 @@ export default class Expo2DContext {
     gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], false);
   }
 
-  stroke() {
-    if (arguments.length != 0) throw new TypeError();
-
+  _drawStenciled(vertices) {
     let gl = this.gl;
 
-    let vertices = [];
-    for (let i = 0; i < this.subpaths.length; i++) {
-      let subpath = this.subpaths[i];
-
-      if (subpath.length == 0) {
-        continue;
-      }
-
-      this.strokeExtruder.closed = subpath.closed || false;
-      this.strokeExtruder.mvMatrix = this.drawingState.mvMatrix;
-      this.strokeExtruder.invMvMatrix = this._getInvMvMatrix();
-      vertices.push(...this.strokeExtruder.build(subpath));
-    }
-
-    // TODO: test integration with clipping
-    
     if (this.stencilsEnabled == false) {
       gl.enable(gl.STENCIL_TEST);
     }
@@ -1276,6 +1246,27 @@ export default class Expo2DContext {
       
     }
 
+  }
+
+  stroke() {
+    if (arguments.length != 0) throw new TypeError();
+
+    let vertices = [];
+    for (let i = 0; i < this.subpaths.length; i++) {
+      let subpath = this.subpaths[i];
+
+      if (subpath.length == 0) {
+        continue;
+      }
+
+      this.strokeExtruder.closed = subpath.closed || false;
+      this.strokeExtruder.mvMatrix = this.drawingState.mvMatrix;
+      this.strokeExtruder.invMvMatrix = this._getInvMvMatrix();
+      vertices.push(...this.strokeExtruder.build(subpath));
+    }
+
+    // TODO: test integration with clipping
+    this._drawStenciled(vertices)
   }
 
   moveTo(x, y) {
@@ -2207,6 +2198,9 @@ export default class Expo2DContext {
     // https://github.com/pex-gl/pex-glu/issues/3
     //
     if (this.environment === "web") {
+      // TODO: maybe instead of choosing texture formats based on environement,
+      //       have an ordered list of good-to-bad ones and try them in a loop,
+      //       falling back as necessary? and log appropriately
       // TODO: up the precision here:
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA,
                     this.framebufferForScience.width, this.framebufferForScience.height,
