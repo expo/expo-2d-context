@@ -3,12 +3,12 @@ import Vector from './vector';
 
 export class StrokeExtruder {
   constructor(opt) {
-    opt = opt||{}
-    this.miterLimit = isFinite(opt.miterLimit) ? opt.miterLimit : 10
-    this.thickness = isFinite(opt.thickness) ? opt.thickness : 1
-    this.join = opt.join || 'miter'
-    this.cap = opt.cap || 'butt'
-    this.closed = opt.closed || false
+    opt = opt || {};
+    this.miterLimit = isFinite(opt.miterLimit) ? opt.miterLimit : 10;
+    this.thickness = isFinite(opt.thickness) ? opt.thickness : 1;
+    this.join = opt.join || 'miter';
+    this.cap = opt.cap || 'butt';
+    this.closed = opt.closed || false;
     this.mvMatrix = [1,0,0,0,
                      0,1,0,0,
                      0,0,1,0,
@@ -299,10 +299,6 @@ export class StrokeExtruder {
   }
 
   _pushPt (triangles, pt) {
-
-    // TODO: problem!!! path was already transformed, so do we have to "unproject" here?
-    //  ahhhhhh what to do????? it seems like the arc()s already sort of dealt with this issue??
-
     let original_x = pt.x;
     let original_y = pt.y;
     if (arguments.length == 3) {
@@ -320,7 +316,6 @@ export class StrokeExtruder {
     if (idx < 0) {
       idx += arr.length;
     }
-    //return new Vector(arr[idx], arr[idx+1]);
     return new Vector(
       arr[idx] * this.invMvMatrix[0] + arr[idx+1] * this.invMvMatrix[4] + this.invMvMatrix[12],
       arr[idx] * this.invMvMatrix[1] + arr[idx+1] * this.invMvMatrix[5] + this.invMvMatrix[13]

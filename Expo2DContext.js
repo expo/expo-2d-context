@@ -1,9 +1,4 @@
 'use strict'
-// import 'core-js/modules/es6.object.set-prototype-of.js';
-// import 'core-js/es6/symbol';
-// import 'core-js/fn/symbol/iterator';
-
-
 var glm = require('gl-matrix');
 import Vector from './vector';
 
@@ -19,14 +14,6 @@ import { getBuiltinFonts } from './builtinFonts';
 import { getEnvironment } from './environment';
 
 const DOMException = require("domexception");
-// TODO: currently we need to swap out the above with a stub class on
-// Android...update android JS environment
-// class DOMException {
-//   constructor (desc, exctype) {
-//     this.desc = desc
-//     this.exctype = exctype
-//   }
-// }
 
 var stringFormat = require('string-format');
 
@@ -39,7 +26,6 @@ var tess2 = require('tess2');
 var bezierCubicPoints = require('adaptive-bezier-curve');
 var bezierQuadraticPoints = require('adaptive-quadratic-curve');
 
-//var extrudePolyline = require('extrude-polyline');
 import { StrokeExtruder } from './StrokeExtruder'
 
 // TODO: rather than setting vertexattribptr on every draw,
@@ -2319,7 +2305,7 @@ export default class Expo2DContext {
     );
 
     if (!(gl.getParameter(gl.STENCIL_BITS)>=2)) {
-      console.log("WARNING: Was given " + gl.getParameter(gl.STENCIL_BITS) + " stencil bits - clipping will be broken");
+      console.log("WARNING: Was given " + gl.getParameter(gl.STENCIL_BITS) + " stencil bits - strokes and clipping will be broken");
     }
 
   }
