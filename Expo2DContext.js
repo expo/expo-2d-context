@@ -387,6 +387,10 @@ export default class Expo2DContext {
       throw new TypeError("Bad geometry");
     }
 
+    if (this.environment=="expo" && this.renderWithOffscreenBuffer==false) {
+      console.log("WARNING: getImageData() may fail when renderWithOffscreenBuffer param is set to false")
+    }
+
     sx = Math.floor(sx);
     sy = Math.floor(sy);
     sw = Math.floor(sw);
@@ -399,6 +403,7 @@ export default class Expo2DContext {
 
     var imageDataObj = new ImageData(sw, sh);
     
+    // TODO: make sure this works regardless of the type of framebuffer we have
     var rawTexData = new Float32Array(sw * sh * 4);
     gl.readPixels(
       sx,
@@ -2098,7 +2103,7 @@ export default class Expo2DContext {
     gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
   }
 
-  drawFbForScience() {
+  _drawOffscreenBuffer() {
     let gl = this.gl;
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -2127,7 +2132,7 @@ export default class Expo2DContext {
     gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
 
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.framebufferTextureForScience);
+    gl.bindTexture(gl.TEXTURE_2D, this.framebufferTexture);
 
     var vertices = [
       0,0, 0,1,
@@ -2159,7 +2164,7 @@ export default class Expo2DContext {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.disableVertexAttribArray(this.activeShaderProgram.attributes["aTexCoord"]);
 
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebufferForScience);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
 
     gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], false);
 
@@ -2168,18 +2173,18 @@ export default class Expo2DContext {
     }
   }
 
-  initFbForScience() {
+  _initOffscreenBuffer() {
     // TODO: this is to work around gl.readPixels not working on the ios default
     // framebuffer - remove once that's fixed
     let gl = this.gl;
-    this.framebufferForScience = gl.createFramebuffer();
+    this.framebuffer = gl.createFramebuffer();
 
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebufferForScience);
-    this.framebufferForScience.width = gl.drawingBufferWidth;
-    this.framebufferForScience.height = gl.drawingBufferHeight;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
+    this.framebuffer.width = gl.drawingBufferWidth;
+    this.framebuffer.height = gl.drawingBufferHeight;
 
-    this.framebufferTextureForScience = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, this.framebufferTextureForScience);
+    this.framebufferTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.framebufferTexture);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -2199,19 +2204,19 @@ export default class Expo2DContext {
       //       falling back as necessary? and log appropriately
       // TODO: up the precision here:
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA,
-                    this.framebufferForScience.width, this.framebufferForScience.height,
+                    this.framebuffer.width, this.framebuffer.height,
                     0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     } else {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F,
-                    this.framebufferForScience.width, this.framebufferForScience.height,
+                    this.framebuffer.width, this.framebuffer.height,
                     0, gl.RGBA, gl.HALF_FLOAT, null);
     }
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.framebufferTextureForScience, 0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.framebufferTexture, 0);
     gl.bindTexture(gl.TEXTURE_2D, null);
     var renderbuffer = gl.createRenderbuffer();
     gl.bindRenderbuffer(gl.RENDERBUFFER, renderbuffer);
     gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH24_STENCIL8,
-                           this.framebufferForScience.width, this.framebufferForScience.height);
+                           this.framebuffer.width, this.framebuffer.height);
     gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, renderbuffer);
     gl.bindRenderbuffer(gl.RENDERBUFFER, null);
   }
@@ -2220,10 +2225,12 @@ export default class Expo2DContext {
    * Main
    **************************************************/
 
-  constructor(gl) {
+  constructor(gl, maxGradStops, renderWithOffscreenBuffer) {
     // Paramters
-    // TODO: how do we make these parameters more parameterizable?
-    this.maxGradStops = 128;
+    // TODO: how do we make these parameters more parameterizable
+    //       (that is, settable at creation fixed afterwards) ?
+    this.maxGradStops = maxGradStops || 128;
+    this.renderWithOffscreenBuffer = renderWithOffscreenBuffer || false;
 
     // TODO: use enums instead of raw strings
     this.environment = getEnvironment();
@@ -2275,9 +2282,27 @@ export default class Expo2DContext {
       patternShaderTxt['vert'],
       patternShaderTxt['frag']
     );
-    this.initFbForScience();
 
     this._initDrawingState();
+
+    if (this.renderWithOffscreenBuffer) {
+      this._initOffscreenBuffer();
+      // top and bottom are swapped while drawOffscreenBuffer() is in use
+      glm.mat4.ortho(
+        this.pMatrix,
+        0, gl.drawingBufferWidth,
+        0, gl.drawingBufferHeight,
+        -1, 1
+      );
+    } else {
+      glm.mat4.ortho(
+        this.pMatrix,
+        0, gl.drawingBufferWidth,
+        gl.drawingBufferHeight, 0,
+        -1, 1
+      );
+    }
+
     this._setShaderProgram(this.flatShaderProgram);
 
     this._applyCompositingState();
@@ -2286,15 +2311,6 @@ export default class Expo2DContext {
     gl.clearStencil(1);
     gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
 
-    glm.mat4.ortho(
-      this.pMatrix,
-      0,
-      gl.drawingBufferWidth,
-      0,
-      gl.drawingBufferHeight, // TODO: top and bottom are swapped while drawFbForScience() is in use - change this back once its taken out
-      -1,
-      1
-    );
     glm.mat4.identity(this.drawingState.mvMatrix);
     this._updateMatrixUniforms();
 
@@ -2311,8 +2327,9 @@ export default class Expo2DContext {
   }
 
   flush() {
-    this.drawFbForScience();
-
+    if (this.renderWithOffscreenBuffer) {
+      this._drawOffscreenBuffer();
+    }
     if (this.environment === "expo") {
       this.gl.endFrameEXP();
     }
