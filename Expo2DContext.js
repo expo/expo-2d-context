@@ -407,39 +407,35 @@ export default class Expo2DContext {
 
     var imageDataObj = new ImageData(sw, sh);
 
-    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    // !!!!!!!!!!!!! HEY!! YO!!! !!!!!!!!!!!!!!!!!!!!!
-    // TODO: make sure this works regardless of the type 
-    //       of framebuffer we have
-    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // TODO: intelligently decide this, not just based
+    //       off of the current environment 
 
-    // var rawTexData = new Float32Array(sw * sh * 4);
-    // var alphaScalar = 256.0;
-    // gl.readPixels(
-    //   sx,
-    //   sy,
-    //   sw,
-    //   sh,
-    //   gl.RGBA,
-    //   gl.FLOAT,
-    //   rawTexData
-    // );
-    var rawTexData = new Uint8Array(sw * sh * 4);
-    var alphaScalar = 1.0;
-    gl.readPixels(
-      sx,
-      sy,
-      sw,
-      sh,
-      gl.RGBA,
-      gl.UNSIGNED_BYTE,
-      rawTexData
-    );
-
+    if (this.environment=="expo") {
+      var rawTexData = new Float32Array(sw * sh * 4);
+      var alphaScalar = 256.0;
+      gl.readPixels(
+        sx,
+        sy,
+        sw,
+        sh,
+        gl.RGBA,
+        gl.FLOAT,
+        rawTexData
+      );
+    } else {
+      var rawTexData = new Uint8Array(sw * sh * 4);
+      var alphaScalar = 1.0;
+      gl.readPixels(
+        sx,
+        sy,
+        sw,
+        sh,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        rawTexData
+      );
+    }
+    
     // Undo premultiplied alpha
     // (TODO: is there any way to do this with the GPU??)
     // (TODO: does this work on systems where the bg color is black?)
@@ -2059,7 +2055,7 @@ export default class Expo2DContext {
       gradient: type,
       stops: [],
       addColorStop: function(offset, color) {
-        parsedColor = parseColor(color);
+        var parsedColor = parseColor(color);
         if (!parsedColor) {
           throw new DOMException('Bad color value', 'SyntaxError');
         }
