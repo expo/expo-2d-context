@@ -391,6 +391,10 @@ export default class Expo2DContext {
       console.log("WARNING: getImageData() may fail when renderWithOffscreenBuffer param is set to false")
     }
 
+    if (this.environment=="web" && !gl.getContextAttributes()["preserveDrawingBuffer"]) {
+      console.log("WARNING: getImageData() may fail when the underlying GL context's preserveDrawingBuffer attribute is not set to true") 
+    }
+
     sx = Math.floor(sx);
     sy = Math.floor(sy);
     sw = Math.floor(sw);
@@ -402,16 +406,37 @@ export default class Expo2DContext {
     this.flush()
 
     var imageDataObj = new ImageData(sw, sh);
-    
-    // TODO: make sure this works regardless of the type of framebuffer we have
-    var rawTexData = new Float32Array(sw * sh * 4);
+
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // !!!!!!!!!!!!! HEY!! YO!!! !!!!!!!!!!!!!!!!!!!!!
+    // TODO: make sure this works regardless of the type 
+    //       of framebuffer we have
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+    // var rawTexData = new Float32Array(sw * sh * 4);
+    // var alphaScalar = 256.0;
+    // gl.readPixels(
+    //   sx,
+    //   sy,
+    //   sw,
+    //   sh,
+    //   gl.RGBA,
+    //   gl.FLOAT,
+    //   rawTexData
+    // );
+    var rawTexData = new Uint8Array(sw * sh * 4);
+    var alphaScalar = 1.0;
     gl.readPixels(
       sx,
       sy,
       sw,
       sh,
       gl.RGBA,
-      gl.FLOAT,
+      gl.UNSIGNED_BYTE,
       rawTexData
     );
 
@@ -422,7 +447,7 @@ export default class Expo2DContext {
       imageDataObj.data[i+0] = Math.floor((rawTexData[i+0] / rawTexData[i+3]) * 256.0);
       imageDataObj.data[i+1] = Math.floor((rawTexData[i+1] / rawTexData[i+3]) * 256.0);
       imageDataObj.data[i+2] = Math.floor((rawTexData[i+2] / rawTexData[i+3]) * 256.0);
-      imageDataObj.data[i+3] = Math.floor(rawTexData[i+3] * 256.0);
+      imageDataObj.data[i+3] = Math.floor(rawTexData[i+3] * alphaScalar);
     }
 
     return imageDataObj;
