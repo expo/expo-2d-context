@@ -410,9 +410,10 @@ export default class Expo2DContext {
     // TODO: intelligently decide this, not just based
     //       off of the current environment 
 
-    if (this.environment=="expo") {
+    if (this.renderWithOffscreenBuffer) {
       var rawTexData = new Float32Array(sw * sh * 4);
       var alphaScalar = 256.0;
+      var flip_y = false;
       gl.readPixels(
         sx,
         sy,
@@ -425,9 +426,10 @@ export default class Expo2DContext {
     } else {
       var rawTexData = new Uint8Array(sw * sh * 4);
       var alphaScalar = 1.0;
+      var flip_y = true;
       gl.readPixels(
         sx,
-        sy,
+        gl.drawingBufferHeight-sh-sy, // have to y-flip the coordinate system 
         sw,
         sh,
         gl.RGBA,
@@ -439,11 +441,17 @@ export default class Expo2DContext {
     // Undo premultiplied alpha
     // (TODO: is there any way to do this with the GPU??)
     // (TODO: does this work on systems where the bg color is black?)
-    for (let i = 0; i < imageDataObj.data.length; i += 4) {
-      imageDataObj.data[i+0] = Math.floor((rawTexData[i+0] / rawTexData[i+3]) * 256.0);
-      imageDataObj.data[i+1] = Math.floor((rawTexData[i+1] / rawTexData[i+3]) * 256.0);
-      imageDataObj.data[i+2] = Math.floor((rawTexData[i+2] / rawTexData[i+3]) * 256.0);
-      imageDataObj.data[i+3] = Math.floor(rawTexData[i+3] * alphaScalar);
+    for (let y = 0; y < imageDataObj.height; y += 1) {
+      let src_base = y * imageDataObj.width * 4;
+      let dst_base = (flip_y ? imageDataObj.height - y - 1: y) * imageDataObj.width * 4;
+      for (let i = 0; i < imageDataObj.width * 4; i += 4) {
+        let src = src_base + i;
+        let dst = dst_base + i;
+        imageDataObj.data[dst+0] = Math.floor((rawTexData[src+0] / rawTexData[src+3]) * 256.0);
+        imageDataObj.data[dst+1] = Math.floor((rawTexData[src+1] / rawTexData[src+3]) * 256.0);
+        imageDataObj.data[dst+2] = Math.floor((rawTexData[src+2] / rawTexData[src+3]) * 256.0);
+        imageDataObj.data[dst+3] = Math.floor(rawTexData[src+3] * alphaScalar);
+      }
     }
 
     return imageDataObj;
