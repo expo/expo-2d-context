@@ -232,24 +232,26 @@ export default class Expo2DContext {
 
     this._invMvMatrix = null;
 
-    gl.uniformMatrix4fv(
-      this.activeShaderProgram.uniforms['uPMatrix'],
-      false,
-      this.pMatrix
-    );
-    gl.uniformMatrix4fv(
-      this.activeShaderProgram.uniforms['uMVMatrix'],
-      false,
-      this.drawingState.mvMatrix
-    );
-    if ('uiMVMatrix' in this.activeShaderProgram.uniforms) {
+    if (this.activeShaderProgram != null) {
       gl.uniformMatrix4fv(
-        this.activeShaderProgram.uniforms['uiMVMatrix'],
+        this.activeShaderProgram.uniforms['uPMatrix'],
         false,
-        this._getInvMvMatrix()
+        this.pMatrix
       );
+      gl.uniformMatrix4fv(
+        this.activeShaderProgram.uniforms['uMVMatrix'],
+        false,
+        this.drawingState.mvMatrix
+      );
+      if ('uiMVMatrix' in this.activeShaderProgram.uniforms) {
+        gl.uniformMatrix4fv(
+          this.activeShaderProgram.uniforms['uiMVMatrix'],
+          false,
+          this._getInvMvMatrix()
+        );
+      }
+      gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], false);
     }
-    gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], false);
   }
 
   _updateClippingRegion() {
@@ -536,6 +538,9 @@ export default class Expo2DContext {
       {"width": imagedata.width, "height": imagedata.height, "data": imagedata.data},
       'src-rect');
     this._applyStyle(pattern);
+    if (this.activeShaderProgram == null) {
+      return;
+    }
 
     var minScreenX = dx + dirtyX;
     var minScreenY = dy + dirtyY;
@@ -678,6 +683,9 @@ export default class Expo2DContext {
 
     var pattern = this.createPattern(asset, 'src-rect');
     this._applyStyle(pattern);
+    if (this.activeShaderProgram == null) {
+      return;
+    }
 
     gl.enableVertexAttribArray(this.activeShaderProgram.attributes["aTexCoord"]);
 
@@ -863,6 +871,9 @@ export default class Expo2DContext {
     }
 
     this._applyStyle(this.drawingState.fillStyle);
+    if (this.activeShaderProgram == null) {
+      return;
+    }
 
     gl.enableVertexAttribArray(this.activeShaderProgram.attributes["aTextPageCoord"]);
     gl.uniform1i(this.activeShaderProgram.uniforms["uTextEnabled"], 1);
@@ -999,6 +1010,9 @@ export default class Expo2DContext {
     let gl = this.gl;
 
     this._applyStyle(this.drawingState.fillStyle);
+    if (this.activeShaderProgram == null) {
+      return;
+    }
 
     var vertices = [
       x, y,
@@ -1030,6 +1044,9 @@ export default class Expo2DContext {
     let gl = this.gl;
 
     this._applyStyle(this.drawingState.strokeStyle);
+    if (this.activeShaderProgram == null) {
+      return;
+    }
 
     let topLeft = this._getTransformedPt(x,y);
     let bottomRight = this._getTransformedPt(x+w,y+h);
@@ -1193,6 +1210,9 @@ export default class Expo2DContext {
     let gl = this.gl;
 
     this._applyStyle(this.drawingState.fillStyle);
+    if (this.activeShaderProgram == null) {
+      return;
+    }
 
     gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
 
@@ -1258,6 +1278,9 @@ export default class Expo2DContext {
     gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
 
     this._applyStyle(this.drawingState.strokeStyle);
+    if (this.activeShaderProgram == null) {
+      return;
+    }
     gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
 
     gl.bufferData(
@@ -1671,10 +1694,6 @@ export default class Expo2DContext {
 
   set globalAlpha(val) {
     this.drawingState.globalAlpha = val;
-    this.gl.uniform1f(
-      this.activeShaderProgram.uniforms['uGlobalAlpha'],
-      this.drawingState.globalAlpha
-    );
   }
   get globalAlpha() {
     return this.drawingState.globalAlpha;
@@ -1919,7 +1938,10 @@ export default class Expo2DContext {
           reverse_stops = true;
         }
 
-        if (r1 > d + r0) {
+        if (r0 === r1 && p0[0] === p1[0] && p0[1] === p1[1]) {
+          // Perfect overlap; draw nothing
+          this._setShaderProgram(null);
+        } else if (r1 > d + r0) {
           // One circle circumscribes the other; use normal radial shader 
           this._setShaderProgram(this.radialGradShaderProgram);
           gl.uniform1i(this.activeShaderProgram.uniforms['uCirclesTouching'], 0);
@@ -1941,45 +1963,41 @@ export default class Expo2DContext {
         throw new SyntaxError('Bad color value');
       }
 
-      gl.uniform1f(this.activeShaderProgram.uniforms['r0'], r0);
-      gl.uniform1f(this.activeShaderProgram.uniforms['r1'], r1);
-      gl.uniform2fv(this.activeShaderProgram.uniforms['p0'], p0);
-      gl.uniform2fv(this.activeShaderProgram.uniforms['p1'], p1);
-      let color_arr = [];
-      let offset_arr = [];
-      let sortedStops = val.stops.slice();
-      if (reverse_stops) {
-        sortedStops.sort(function(a, b) {
-          return b[1] - a[1];
-        });
-      } else {
-        sortedStops.sort(function(a, b) {
-          return a[1] - b[1];
-        });
-      }
-      for (let i = 0; i < sortedStops.length; i++) {
-        color_arr = color_arr.concat(sortedStops[i][0]);
+      if (this.activeShaderProgram != null) {
+        gl.uniform1f(this.activeShaderProgram.uniforms['r0'], r0);
+        gl.uniform1f(this.activeShaderProgram.uniforms['r1'], r1);
+        gl.uniform2fv(this.activeShaderProgram.uniforms['p0'], p0);
+        gl.uniform2fv(this.activeShaderProgram.uniforms['p1'], p1);
+        let color_arr = [];
+        let offset_arr = [];
+        let stops = val.stops;
         if (reverse_stops) {
-          offset_arr.push(1-sortedStops[i][1]);
-        } else {
-          offset_arr.push(sortedStops[i][1]);
+          stops = val.stops.slice().reverse();
         }
+        for (let i = 0; i < stops.length; i++) {
+          color_arr = color_arr.concat(stops[i][0]);
+          if (reverse_stops) {
+            offset_arr.push(1-stops[i][1]);
+          } else {
+            offset_arr.push(stops[i][1]);
+          }
+        }
+        offset_arr.push(-1.0);
+
+        gl.uniform4fv(
+          this.activeShaderProgram.uniforms['colors[0]'],
+          new Float32Array(color_arr)
+        );
+        gl.uniform1fv(
+          this.activeShaderProgram.uniforms['offsets[0]'],
+          new Float32Array(offset_arr)
+        );
+
+        gl.uniform1f(
+          this.activeShaderProgram.uniforms['uGlobalAlpha'],
+          this.drawingState.globalAlpha
+        );
       }
-      offset_arr.push(-1.0);
-
-      gl.uniform4fv(
-        this.activeShaderProgram.uniforms['colors[0]'],
-        new Float32Array(color_arr)
-      );
-      gl.uniform1fv(
-        this.activeShaderProgram.uniforms['offsets[0]'],
-        new Float32Array(offset_arr)
-      );
-
-      gl.uniform1f(
-        this.activeShaderProgram.uniforms['uGlobalAlpha'],
-        this.drawingState.globalAlpha
-      );
     } else if (val && val instanceof CanvasPattern) {
       this._setShaderProgram(this.patternShaderProgram);
 
@@ -2023,10 +2041,12 @@ export default class Expo2DContext {
       throw new SyntaxError('Bad color value');
     }
 
-    gl.enableVertexAttribArray(this.activeShaderProgram.attributes["aVertexPosition"]);
-    gl.disableVertexAttribArray(this.activeShaderProgram.attributes["aTextPageCoord"]);
-    gl.uniform1i(this.activeShaderProgram.uniforms["uTextEnabled"], 0);
-    gl.uniform1i(this.activeShaderProgram.uniforms["uTextPages"], 1);
+    if (this.activeShaderProgram != null) {
+      gl.enableVertexAttribArray(this.activeShaderProgram.attributes["aVertexPosition"]);
+      gl.disableVertexAttribArray(this.activeShaderProgram.attributes["aTextPageCoord"]);
+      gl.uniform1i(this.activeShaderProgram.uniforms["uTextEnabled"], 0);
+      gl.uniform1i(this.activeShaderProgram.uniforms["uTextPages"], 1);
+    }
   }
 
   createLinearGradient(x0, y0, x1, y1) {
@@ -2073,7 +2093,31 @@ export default class Expo2DContext {
         if (offset < 0 || offset > 1) {
           throw new DOMException('Bad stop offset', 'IndexSizeError');
         }
-        this.stops.push([cssToGlColor(color), offset]);
+
+        // Insert the stop in the right pre-sorted position
+        for (var i=0; i < this.stops.length; i++) {
+          if (this.stops[i][1] == offset) {
+            // Only two stops can exist at a given offset:
+            //  - the first one (approaching from the "left")
+            //  - the second one (approaching from the "right")
+            // If we have a stop collision, check if the second
+            // stop has been added yet and just overwrite that
+            // one. Otherwise, insert the new from-the-right stop
+            // after the from-the-left stop
+            if (i < this.stops.length-1 && this.stops[i+1][1] == offset) {
+              this.stops[i+1][0] = cssToGlColor(color);
+              i = -1;
+            } else {
+              i++;
+            }
+            break;
+          } else if (this.stops[i][1] >= offset) {
+            break;
+          }
+        }
+        if (i > -1) {
+          this.stops.splice(i, 0, [cssToGlColor(color), offset]);
+        }
       },
     };
     return gradObj;
@@ -2118,7 +2162,12 @@ export default class Expo2DContext {
   _setShaderProgram(shaderProgram) {
     let gl = this.gl;
     if (this.activeShaderProgram != shaderProgram) {
-      shaderProgram.bind();
+      if (shaderProgram !== null) {
+        shaderProgram.bind();
+      } else {
+        gl.useProgram(null);
+        gl.bindVertexArray(null);
+      }
       this.activeShaderProgram = shaderProgram;
       this._updateMatrixUniforms();
     }
