@@ -181,8 +181,15 @@ export class StrokeExtruder {
 
   _rectCorners(startPt, endPt, seg) {
     var halfThickness = this._halfThickness;
-    // TODO: make sure that this works properly when everything is scaled
-    var epsilon = seg.direction; 
+    
+    // TODO: this epsilon removes line artifacts, but makes them
+    //       non-pixel-perfect (and hence fail conformance). figure out
+    //       a good way to deal with artifacts that doesn't involve
+    //       ignorantly expanding rectangles
+    // TODO: make sure that this epsilon works properly when everything
+    //       is scaled
+    //var epsilon = seg.direction; 
+    var epsilon = 0;
     return [
       startPt.add(seg.normal.multiply(halfThickness).subtract(epsilon)),
       startPt.add(seg.normal.multiply(-halfThickness).subtract(epsilon)),
