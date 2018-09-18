@@ -1941,15 +1941,19 @@ export default class Expo2DContext {
         if (r0 === r1 && p0[0] === p1[0] && p0[1] === p1[1]) {
           // Perfect overlap; draw nothing
           this._setShaderProgram(null);
+          console.log("abc", r0, r1, d)
         } else if (r1 > d + r0) {
           // One circle circumscribes the other; use normal radial shader 
+          console.log("def", r0, r1, d)
           this._setShaderProgram(this.radialGradShaderProgram);
           gl.uniform1i(this.activeShaderProgram.uniforms['uCirclesTouching'], 0);
         } else if (r1 == d + r0) {
           // Total bullshit edgecase
+          console.log("lol", r0, r1, d)
           this._setShaderProgram(this.radialGradShaderProgram);
           gl.uniform1i(this.activeShaderProgram.uniforms['uCirclesTouching'], 1);
         } else {
+          console.log("ghi", r0, r1, d)
           // Circles are not compact; use disjoint shader
           this._setShaderProgram(this.disjointRadialGradShaderProgram);
           let pinchPt = [0,0];
