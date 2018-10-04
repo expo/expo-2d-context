@@ -39,7 +39,9 @@ import { StrokeExtruder } from './StrokeExtruder'
 
 function isValidCanvasImageSource(asset) {
   var environment = getEnvironment();
-  if (environment === "expo") {
+  if (asset instanceof Expo2DContext) {
+    return true;
+  } else if (environment === "expo") {
     if (asset.hasOwnProperty("width") &&
         asset.hasOwnProperty("height") &&
         asset.hasOwnProperty("localUri")) {
@@ -47,7 +49,8 @@ function isValidCanvasImageSource(asset) {
     }
   } else if (environment === "web") {
     if (asset.nodeName.toLowerCase() === "img" ||
-        asset.nodeName.toLowerCase() === "canvas") {
+        asset.nodeName.toLowerCase() === "canvas" ||
+        asset.nodeName.toLowerCase() === "img") {
       return true;
     }
   }
@@ -981,11 +984,16 @@ export default class Expo2DContext {
 
     let gl = this.gl;
 
+    if (!isFinite(x) || !isFinite(y) || !isFinite(w) || !isFinite(h)) {
+      return;
+    }
+
     if (
       x <= 0.0 &&
       y <= 0.0 &&
       x + w >= gl.drawingBufferWidth &&
-      y + h >= gl.drawingBufferHeight
+      y + h >= gl.drawingBufferHeight &&
+      this.drawingState.clippingPaths.length == 0
     ) {
       this.gl.clear(
         this.gl.COLOR_BUFFER_BIT |
@@ -1006,6 +1014,10 @@ export default class Expo2DContext {
 
   fillRect(x, y, w, h) {
     if (arguments.length != 4) throw new TypeError();
+
+    if (!isFinite(x) || !isFinite(y) || !isFinite(w) || !isFinite(h)) {
+      return;
+    }
 
     let gl = this.gl;
 
