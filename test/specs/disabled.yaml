@@ -1,0 +1,101 @@
+DISABLED:
+  - 2d.drawImage.incomplete.immediate:
+    - Images aren't HTML img objects
+  - 2d.drawImage.incomplete.removedsrc:
+    - Images aren't HTML img objects
+  - 2d.drawImage.incomplete.nosrc:
+    - Images aren't HTML img objects
+  - 2d.drawImage.incomplete.emptysrc:
+    - Images aren't HTML img objects
+  - 2d.drawImage.incomplete.reload:
+    - Images aren't HTML img objects
+  - 2d.drawImage.zerosource:
+    - TODO svg files aren't supported as assets right now? (or are they??)
+  - 2d.drawImage.animated.gif:
+    - Animated assets aren't supported and probably never will be
+  - 2d.drawImage.animated.apng:
+    - Animated assets aren't supported and probably never will be
+  - 2d.drawImage.animated.poster:
+    - Animated assets aren't supported and probably never will be
+  - 2d.drawImage.composite:
+    - TODO implement compositing
+  - 2d.drawImage.svg:
+    - TODO svg files aren't supported as assets right now? (or are they??)
+  - 2d.drawImage.broken:
+    - broken image loading fails long before we can get it as an asset to the 2d context
+  - 2d.gradient.object.return:
+    - window object/DOM doesn't exist
+  - 2d.gradient.object.type:
+    - window object/DOM doesn't exist
+  - 2d.gradient.object.current:
+    - no canvas object
+      (TODO should there be a way of grabbing style information from surrounding GLView for css value 'currentColor'??)
+  - 2d.gradient.object.crosscanvas:
+    - TODO support cross-canvas drawing
+  - 2d.imageData.put.cross:
+    - TODO support cross-canvas drawing
+  - 2d.path.arc.selfintersect.1:
+    - arc stroking is so radically different from the reference, there is no clear way to support this edgecase
+  - 2d.path.stroke.prune.curve:
+    - chrome fails this one too, and it's unclear exactly what this means/how to do it efficiently anyway
+  - 2d.pattern.image.incomplete.emptysrc:
+    - expo assets aren't traditional DOM images, don't have src attributes
+  - 2d.pattern.image.incomplete.removedsrc:
+    - expo assets aren't traditional DOM images, don't have src attributes
+  - 2d.pattern.image.incomplete.nosrc:
+    - expo assets aren't traditional DOM images, don't have src attributes
+  - 2d.pattern.image.incomplete.immediate:
+    - expo assets aren't traditional DOM images
+  - 2d.pattern.image.incomplete.reload:
+    - expo assets aren't traditional DOM images
+  - 2d.pattern.animated.gif:
+    - lol, yeah right
+  - 2d.pattern.basic.zerocanvas:
+    - context does not exist within a DOM element with width/height attributes
+  - 2d.pattern.modify.image1:
+    - expo assets aren't traditional DOM images, don't have src attributes
+      (TODO write an equivalent test that modifies canvas data or something after pattern creation)
+  - 2d.pattern.modify.image2:
+    - expo assets aren't traditional DOM images, don't have src attributes
+      (TODO write an equivalent test that modifies canvas data or something after pattern creation)
+  - 2d.pattern.image.broken:
+    - expo assets aren't traditional DOM images, don't have src attributes
+      (TODO investigate how to tell from native client if source asset is broken or not)
+  - initial.reset.2dstate:
+    - TODO should we/can we reset canvas state when the surrounding GLView size changes?
+  - 2d.scaled:
+    - context does not exist within a DOM element that can have CSS attributes applied to it
+  - 2d.state.saverestore.shadowOffsetX:
+    - TODO implement shadows
+  - 2d.state.saverestore.shadowOffsetY:
+    - TODO implement shadows
+  - 2d.state.saverestore.globalCompositeOperation:
+    - TODO implement compositing
+  - 2d.state.saverestore.shadowColor:
+    - TODO implement shadows
+  - 2d.state.saverestore.shadowBlur:
+    - TODO implement shadows
+  - 2d.strokeRect.globalcomposite:
+    - TODO implement compositing
+  - 2d.strokeRect.shadow:
+    - TODO implement shadows
+  - 2d.transformation.setTransform.multiple:
+    - This test straight up expects incorrect behavior
+      (setTransform() should not be allowed to have 0 arguments)
+  - 2d.voidreturn:
+    - This test straight up expects incorrect behavior
+      (setTransform() should not be allowed to have 0 arguments)
+  - 2d.shadow.*:
+    - TODO implement shadows
+  - 2d.composite.*:
+    - TODO implement compositing
+  - 2d.canvas.*:
+    - expected to fail (DOM/canvas tag doesn't exist)
+  - 2d.type.*:
+    - expected to fail (DOM/canvas tag doesn't exist)
+  - 2d.getcontext.*:
+    - expected to fail (DOM/canvas tag doesn't exist)
+  - 2d.clearRect.globalcomposite:
+    - TODO implement compositing
+  - 2d.fillRect.shadow:
+    - TODO implement shadows
