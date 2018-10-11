@@ -226,6 +226,9 @@ var webAssert = {
   },
   "assert_throws": (t, code, func, description) => 
    {
+      if (!description) {
+        description = func.toString()
+      }
       try {
         func.call(this);
         t.expect(description, false).toBe(true);

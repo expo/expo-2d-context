@@ -58,24 +58,28 @@ function isValidCanvasImageSource(asset) {
 }
 
 function cssToGlColor(cssStr) {
-  let parsedColor = parseColor(cssStr);
-  // TODO: clean this crap up:
-  if (!parsedColor ||
-      (!("r" in parsedColor && isFinite(parsedColor.r) &&
-        "g" in parsedColor && isFinite(parsedColor.g) &&
-        "b" in parsedColor && isFinite(parsedColor.b)) &&
-       (!("a" in parsedColor) || isFinite(parsedColor.a)))) {
+  try {
+    let parsedColor = parseColor(cssStr);
+    // TODO: clean this crap up:
+    if (!parsedColor ||
+        (!("r" in parsedColor && isFinite(parsedColor.r) &&
+          "g" in parsedColor && isFinite(parsedColor.g) &&
+          "b" in parsedColor && isFinite(parsedColor.b)) &&
+         (!("a" in parsedColor) || isFinite(parsedColor.a)))) {
+      throw new SyntaxError('Bad color value');
+    }
+    if (!('a' in parsedColor)) {
+      parsedColor['a'] = 1.0;
+    }
+    return [
+      parsedColor['r'] / 255,
+      parsedColor['g'] / 255,
+      parsedColor['b'] / 255,
+      parsedColor['a'],
+    ];
+  } catch (e) {
     throw new SyntaxError('Bad color value');
   }
-  if (!('a' in parsedColor)) {
-    parsedColor['a'] = 1.0;
-  }
-  return [
-    parsedColor['r'] / 255,
-    parsedColor['g'] / 255,
-    parsedColor['b'] / 255,
-    parsedColor['a'],
-  ];
 }
 
 function outerTangent(p0, r0, p1, r1) {
@@ -2095,7 +2099,7 @@ export default class Expo2DContext {
       gradient: type,
       stops: [],
       addColorStop: function(offset, color) {
-        var parsedColor = parseColor(color);
+        var parsedColor = cssToGlColor(color);
         if (!parsedColor) {
           throw new DOMException('Bad color value', 'SyntaxError');
         }
