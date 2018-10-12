@@ -1,8 +1,8 @@
 {
   "name": "exponent-2d-context",
-  "version": "0.0.0",
-  "description": "None",
-  "author": "",
+  "version": "0.0.1",
+  "description": "A pure-js implementation of the W3C's Canvas-2D Context API that can run on top of either Expo Graphics or a browser WebGL context.",
+  "author": "Naomi Alterman",
   "main": "Expo2DContext.js",
   "dependencies": {
     "adaptive-bezier-curve": "1.0.3",
