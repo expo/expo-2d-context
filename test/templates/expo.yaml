@@ -1,0 +1,126 @@
+spec: |
+  //////////////////////////////////////////////////////////
+  'use strict';
+
+  import Expo from 'expo';
+  import React from 'react';
+  import {View} from 'react-native';
+  import Expo2DContext from 'exponent-2d-context';
+  import * as window from 'exponent-2d-context';
+
+  ////////////////////////////////////////////////
+  //// Put expected DOM-sourced prototypes here
+  //
+  window.Uint8ClampedArray = Uint8ClampedArray;
+  var CanvasRenderingContext2D = Expo2DContext;
+  var ImageData = window.ImageData;
+  var CanvasPattern = window.CanvasPattern;
+  var document = {
+    "createElement": () => {
+      console.log("WARNING: document.createElement() called in environment with no DOM");
+      return {}
+    }
+  }
+  //
+  ////
+  ////////////////////////////////////////////////
+
+  import * as webAssert from './web-platform-assertions';
+  import * as canvasAssert from './canvas-assertions';
+  import { getAsset } from './assets';
+
+  export const name = '%name%';
+
+  export function test(t, { setPortalChild, cleanupPortal }) {
+    t.describe("%name%", () => {
+
+      t.afterEach(async () => {
+        await cleanupPortal();
+      });
+
+      %tests%      
+    });
+  }
+  //////////////////////////////////////////////////////////
+
+test: |
+  //////////////////////////////////////////////////////////`
+      t.it("%description%", async () => {
+
+        let allContexts = [];
+
+        let activeContexts = 0;
+        let totalContexts = %totalContexts%;
+
+        %init%
+
+        let finishedRendering = new Promise(resolve => {
+          let _onGLContextCreate = (gl) => {
+            let newContext = new Expo2DContext(gl);
+            newContext.getContext = () => {return newContext;}
+
+            allContexts.push(newContext);
+            activeContexts += 1;
+
+            if (activeContexts == totalContexts) {
+              resolve();
+            }
+          };
+
+          let glViews = [];
+
+          for(let i=0; i < totalContexts; i++) {
+              glViews.push(
+                <Expo.GLView key={i}
+                  style={{ height: %height%, width: %width% }}
+                  onContextCreate={_onGLContextCreate}/>
+              )
+          }
+          let totalView = <View> { glViews } </View>;
+          setPortalChild(totalView);
+        });
+
+        await finishedRendering;
+
+        let ctx = allContexts[0];
+        let canvas = ctx;
+
+        %body%
+      });
+  //////////////////////////////////////////////////////////
+
+asset_definition: |
+  "%asset_filename%": require("../../assets/conformanceImages/%asset_filename%")
+
+assets: |
+  //////////////////////////////////////////////////////////
+  
+  import Expo from 'expo';
+
+  export const rawImageAssets = {
+    %assetlist%
+  }
+
+  var expoAssets = {};
+
+  export const getAsset = async (name) => {
+    if (expoAssets.hasOwnProperty(name)) {
+      return expoAssets[name]
+    }
+    let asset = Expo.Asset.fromModule(rawImageAssets[name]);
+    if (!asset.localUri) {
+        await asset.downloadAsync();
+    }
+    expoAssets[name] = asset;
+    return expoAssets[name];
+  }
+
+  //////////////////////////////////////////////////////////
+
+filenames: |
+  %name%.js
+
+disabled: |
+  /* DISABLED: %reason%
+  %body%
+  */

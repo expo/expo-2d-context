@@ -19,12 +19,14 @@
     "tess2": "^1.0.0"
   },
   "devDependencies": {
+    "argparse": "^1.0.10",
     "babel-core": "^6.26.2",
     "babel-preset-es2015": "^6.24.1",
     "babelify": "^8.0.0",
     "browserify": "^16.2.2",
     "gulp": "^3.9.1",
     "gulp-util": "^3.0.8",
+    "http-server": "^0.11.1",
     "vinyl-source-stream": "^2.0.0"
   }
 }

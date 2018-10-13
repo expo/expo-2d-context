@@ -1,20 +1,16 @@
 #!/usr/bin/env node
+var ArgumentParser = require('argparse').ArgumentParser;
 const puppeteer = require('puppeteer');
-const suite_base_url = "http://localhost:8000/"
 
 process.on('unhandledRejection', error => {
   console.error('unhandledRejection', error.message);
 });
 
-var suites = process.argv.slice(2)
-
 var suiteResults = {}
 
-var runTestSuite = async (suite_name) => {
+var runTestSuite = async (suite_name, suite_url) => {
   const browser = await puppeteer.launch({headless: true});
   const page = await browser.newPage();
-
-  const suite_url = suite_base_url+suite_name+".html"
 
   page.on('console', msg => console.log('PAGE LOG:', msg.text()));
 
@@ -65,10 +61,34 @@ var runTestSuite = async (suite_name) => {
 
 
 (async () => {
-  for (var i=0; i<suites.length; i++) {
-    console.log("Launching suite "+suites[i])
+
+  var parser = new ArgumentParser({
+    version: '0.0.1',
+    addHelp:true,
+    description: 'expo-2d-context test suite runner'
+  });
+  parser.addArgument(
+    [ '--base-url' ],
+    {
+      help: 'Base URL to load test suites from',
+      defaultValue: 'http://127.0.0.1:8081/'
+    }
+  );
+  parser.addArgument(
+    [ 'suite' ],
+    {
+      nargs: '+',
+      help: 'Name of suite(s) to run',
+      defaultValue: 'http://127.0.0.1:8081/'
+    }
+  );
+  var args = parser.parseArgs();  
+
+  for (var i=0; i<args["suite"].length; i++) {
     try {
-      await runTestSuite(suites[i]);
+      let suite_url = args["base_url"]+args["suite"][i]+".html"
+      console.log("Launching suite "+args["suite"][i]+" ("+suite_url+")")
+      await runTestSuite(args["suite"][i], suite_url);
     } catch (error) {
       console.error(error);
     }
