@@ -1,0 +1,3082 @@
+<html>
+
+<head>
+<title>2d.imageData // WebGL2DContext conformance</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<style>
+  div {
+    padding: 5px;
+  }
+  canvas {
+    border: 1px black solid;
+  }
+  .progress {
+    font: 100% monospace;
+  }
+  .failure {
+    background-color: red;
+    color: white;
+    font: 100% sans-serif;
+  }
+  .success {
+    background-color: #88FF88;
+    font: 100% sans-serif;
+  }
+  .failure a:link {
+    color: white
+  }
+  .failure a:visited {
+    color: white
+  }
+</style>
+
+<script type="text/javascript" src="bundle.js"></script>
+<script type="text/javascript" src="assets.js"></script>
+<script type="text/javascript" src="asserts.js"></script>
+
+<script type="text/javascript">
+    async function getAsset(name) {
+      return new Promise((resolve, reject) => {
+        let img = document.createElement("IMG")
+        img.onload = () => resolve(img)
+        img.onerror = reject
+        img.src = rawImageAssets[name]
+      })
+    }
+
+    function bootCanvas(container, id, width, height) {
+        var canvas = document.createElement("CANVAS")
+        canvas.setAttribute("id", id)
+        canvas.setAttribute("width", width)
+        canvas.setAttribute("height", height)
+
+        container.appendChild(canvas)
+
+        var gl = canvas.getContext("webgl2", {
+          stencil: 8,
+          preserveDrawingBuffer: true
+        });
+        gl.viewportWidth = canvas.width;
+        gl.viewportHeight = canvas.height;
+        if (!gl) {
+            console.log("Could not initialise WebGL, sorry :-(")
+            return null;
+        }
+
+        gl.clearColor(1.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        /* TODO: figure out how to pass some gradient tests that need
+         * more grad stops: */
+        let ctx = new Expo2DContext.default(gl, maxGradStops=50)
+        ctx.getContext = () => {return ctx;}
+        
+        return [canvas, gl, ctx]
+    }
+
+    function spinner_graphic(i) {
+      let anim = ["/","&ndash;","\\","|","/","&ndash;","\\", "|"]
+      return anim[i%anim.length]
+    }
+
+    var testContexts = {};
+
+    function focusTest (num) {
+      window.ctx = testContexts[num][0]
+    }
+    window.onhashchange = () => {
+      var url = new URL(window.location)
+      var hashVal = url.hash.substr(1)
+      if (hashVal in testContexts) {
+        focusTest(hashVal)
+      }
+    }
+
+    async function runTests() {
+
+      // TODO: assets??
+
+      if (!window.testComplete) {
+        window.testComplete = (testResults, completedTests, totalTests) =>
+          { /* PUPPETEER STUB */ };
+      }
+
+      testContexts = {};
+
+      var tests = document.getElementsByClassName("test")
+
+      var url = new URL(window.location)
+      if (url.searchParams.get("runTests") != null) {
+        selected_test_ids = url.searchParams.get("runTests").split(",").map((x) => parseInt(x))
+        tests = selected_test_ids.map((x) => document.getElementById("test_"+x+"_content")) 
+      }
+
+      var cleanUp = url.searchParams.get("noCleanup") == null
+
+      let suite_status = document.getElementById("suite_status")
+
+      var failures = new Set();
+      var failureSummaryHTML = "Failed:<ul>"
+
+      let i = 0;
+
+      var testIteration = async (i) => {
+
+        if (i >= tests.length) {
+          finishTests();
+          return;
+        }
+
+        let test_area = tests[i]
+        let test = test_area.dataset
+    
+        // TODO: how to un-convert-from-string numbers in dataset
+        
+        let allCanvases = []
+        let allWebGLContexts = []
+        let allContexts = []
+        
+        let failureMessages = []
+
+        for (let j=0; j<parseInt(test.contexts); j++) {
+          let [canvas, gl, ctx] = bootCanvas(
+            test_area,
+            "canvas_"+test.id+"_"+j,
+            parseInt(test.width),
+            parseInt(test.height)
+          )
+          // Install fake getContext wrapper to allow context objects to be
+          // used in place of canvas objects for our tests:
+          ctx.getContext = (unused) => {return ctx};
+          allCanvases.push(canvas)
+          allWebGLContexts.push(gl)
+          allContexts.push(ctx)
+        }
+
+        let onFail = TriggerObject((message) => {
+          let status_box = document.getElementById("test_"+test.id+"_status")
+
+          status_box.setAttribute("class","failure")
+          status_box.innerHTML += message + "<br />";
+          failureMessages.push(message)
+
+          if (!failures.has(test.id)) {
+            failureSummaryHTML += "<li><a href='#"+test.id+"'>"+test.id+": "+test.description+"</a></li>"
+            failures.add(test.id);
+          }
+        })
+
+        try {
+          let test_fn = eval("test_"+test.id+"_body");
+          await test_fn(onFail, allCanvases, allContexts);
+        } catch (err) {
+          onFail.trigger(false, err.toString());
+        }
+
+        if (cleanUp) {
+          // Copy the resulting drawings out of the original canvas and
+          // safely trash the old gl context, to free up resources:
+          for (let j=0; j<parseInt(test.contexts); j++) {
+            let canvas_clone = allCanvases[j].cloneNode(true);
+            let clone_ctx = canvas_clone.getContext('2d');
+            clone_ctx.drawImage(allCanvases[j], 0, 0);
+
+            allCanvases[j].replaceWith(canvas_clone);
+
+            allWebGLContexts[j].getExtension('WEBGL_lose_context').loseContext();
+            allWebGLContexts[j] = null;
+          }
+        } else {
+          testContexts[test.id] = allContexts
+        }
+
+        suite_status.innerHTML = "["+ spinner_graphic(i) + "] Tests run: " + (i+1) + " / " + tests.length;
+
+        window.testComplete(
+          Object.assign({
+            "failureMessages": failureMessages
+          }, test), i+1, tests.length);
+
+        setTimeout(() => { testIteration(i+1) }, 1);
+      }
+
+      var finishTests = () => {
+        if (failures.size > 0) {
+          failureSummaryHTML += "</ul><br />"
+          suite_status.setAttribute("class","failure")
+          suite_status.innerHTML = failureSummaryHTML
+        } else {
+          suite_status.setAttribute("class","success")
+          suite_status.innerHTML = "[:)] All tests pass !" 
+        }
+
+        if (!cleanUp && tests.length==1){
+          focusTest(tests[0].dataset.id)
+        } else {
+          window.onhashchange()
+        }
+      };
+
+      testIteration(0);
+
+    }
+
+</script>
+</head>
+<body onload="runTests();">
+<h1> 2d.imageData </h1>
+<div id="suite_status" class="progress">&nbsp;</div>
+<hr />
+
+<p><a id="716" href="#716"\>716</a>: 2d.imageData.put.basic (putImageData() puts image data from getImageData() onto the canvas)</p>
+
+<script>
+  async function test_716_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50)
+      var imgdata = ctx.getImageData(0, 0, 100, 50);
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50)
+      ctx.putImageData(imgdata, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_716_content"
+  data-contexts="1"
+  data-id="716"
+  data-name="2d.imageData.put.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.put.basic (putImageData() puts image data from getImageData() onto the canvas)">&nbsp;</div><br />
+
+<div id="test_716_status">&nbsp;</div>
+
+[<a href="?runTests=716&noCleanup#716" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="690" href="#690"\>690</a>: 2d.imageData.get.source.negative (getImageData() works with negative width and height, and returns top-to-bottom left-to-right)</p>
+
+<script>
+  async function test_690_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(20, 10, 60, 10);
+      
+      var imgdata1 = ctx.getImageData(85, 25, -10, -10);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.data[0], 255, "imgdata1.data[\""+(0)+"\"]", "255");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.data[1], 255, "imgdata1.data[\""+(1)+"\"]", "255");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.data[2], 255, "imgdata1.data[\""+(2)+"\"]", "255");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.data[3], 255, "imgdata1.data[\""+(3)+"\"]", "255");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.data[imgdata1.data.length-4+0], 0, "imgdata1.data[imgdata1.data.length-4+0]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.data[imgdata1.data.length-4+1], 0, "imgdata1.data[imgdata1.data.length-4+1]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.data[imgdata1.data.length-4+2], 0, "imgdata1.data[imgdata1.data.length-4+2]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.data[imgdata1.data.length-4+3], 255, "imgdata1.data[imgdata1.data.length-4+3]", "255");
+      
+      var imgdata2 = ctx.getImageData(0, 0, -1, -1);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata2.data[0], 0, "imgdata2.data[\""+(0)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata2.data[1], 0, "imgdata2.data[\""+(1)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata2.data[2], 0, "imgdata2.data[\""+(2)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata2.data[3], 0, "imgdata2.data[\""+(3)+"\"]", "0");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_690_content"
+  data-contexts="1"
+  data-id="690"
+  data-name="2d.imageData.get.source.negative"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.get.source.negative (getImageData() works with negative width and height, and returns top-to-bottom left-to-right)">&nbsp;</div><br />
+
+<div id="test_690_status">&nbsp;</div>
+
+[<a href="?runTests=690&noCleanup#690" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="723" href="#723"\>723</a>: 2d.imageData.put.dirty.rect1 (putImageData() only modifies areas inside the dirty rectangle, using width and height)</p>
+
+<script>
+  async function test_723_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50)
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 20, 20)
+      
+      var imgdata = ctx.getImageData(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50)
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(40, 20, 20, 20)
+      ctx.putImageData(imgdata, 40, 20, 0, 0, 20, 20);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 35,25, 0,255,0,255, "35,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 65,25, 0,255,0,255, "65,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,15, 0,255,0,255, "50,15", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,45, 0,255,0,255, "50,45", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_723_content"
+  data-contexts="1"
+  data-id="723"
+  data-name="2d.imageData.put.dirty.rect1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.put.dirty.rect1 (putImageData() only modifies areas inside the dirty rectangle, using width and height)">&nbsp;</div><br />
+
+<div id="test_723_status">&nbsp;</div>
+
+[<a href="?runTests=723&noCleanup#723" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="700" href="#700"\>700</a>: 2d.imageData.get.order.alpha (getImageData() returns A in the fourth component)</p>
+
+<script>
+  async function test_700_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      var imgdata = ctx.getImageData(0, 0, 10, 10);
+      ctx.flush()
+      webAssert._assert(t, imgdata.data[3] < 200, "imgdata.data[\""+(3)+"\"] < 200");
+      ctx.flush()
+      webAssert._assert(t, imgdata.data[3] > 100, "imgdata.data[\""+(3)+"\"] > 100");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_700_content"
+  data-contexts="1"
+  data-id="700"
+  data-name="2d.imageData.get.order.alpha"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.get.order.alpha (getImageData() returns A in the fourth component)">&nbsp;</div><br />
+
+<div id="test_700_status">&nbsp;</div>
+
+[<a href="?runTests=700&noCleanup#700" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="728" href="#728"\>728</a>: 2d.imageData.put.unaffected (putImageData() is not affected by context state)</p>
+
+<script>
+  async function test_728_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50)
+      var imgdata = ctx.getImageData(0, 0, 100, 50);
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50)
+      ctx.globalAlpha = 0.1;
+      ctx.globalCompositeOperation = 'destination-atop';
+      ctx.shadowColor = '#f00';
+      ctx.shadowBlur = 1;
+      ctx.translate(100, 50);
+      ctx.scale(0.1, 0.1);
+      ctx.putImageData(imgdata, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_728_content"
+  data-contexts="1"
+  data-id="728"
+  data-name="2d.imageData.put.unaffected"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.put.unaffected (putImageData() is not affected by context state)">&nbsp;</div><br />
+
+<div id="test_728_status">&nbsp;</div>
+
+[<a href="?runTests=728&noCleanup#728" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="681" href="#681"\>681</a>: 2d.imageData.create2.zero (createImageData(sw, sh) throws INDEX_SIZE_ERR if size is zero)</p>
+
+<script>
+  async function test_681_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { ctx.createImageData(10, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { ctx.createImageData(0, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { ctx.createImageData(0, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { ctx.createImageData(0.99, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { ctx.createImageData(10, 0.1); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_681_content"
+  data-contexts="1"
+  data-id="681"
+  data-name="2d.imageData.create2.zero"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.create2.zero (createImageData(sw, sh) throws INDEX_SIZE_ERR if size is zero)">&nbsp;</div><br />
+
+<div id="test_681_status">&nbsp;</div>
+
+[<a href="?runTests=681&noCleanup#681" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="702" href="#702"\>702</a>: 2d.imageData.object.properties (ImageData objects have the right properties)</p>
+
+<script>
+  async function test_702_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var imgdata = ctx.getImageData(0, 0, 10, 10);
+      ctx.flush()
+      canvasAssert._assertSame(t, typeof(imgdata.width), 'number', "typeof(imgdata.width)", "'number'");
+      ctx.flush()
+      canvasAssert._assertSame(t, typeof(imgdata.height), 'number', "typeof(imgdata.height)", "'number'");
+      ctx.flush()
+      canvasAssert._assertSame(t, typeof(imgdata.data), 'object', "typeof(imgdata.data)", "'object'");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_702_content"
+  data-contexts="1"
+  data-id="702"
+  data-name="2d.imageData.object.properties"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.object.properties (ImageData objects have the right properties)">&nbsp;</div><br />
+
+<div id="test_702_status">&nbsp;</div>
+
+[<a href="?runTests=702&noCleanup#702" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="674" href="#674"\>674</a>: 2d.imageData.create1.type (createImageData(imgdata) returns an ImageData object containing a Uint8ClampedArray object)</p>
+
+<script>
+  async function test_674_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      canvasAssert._assertDifferent(t, window.ImageData, undefined, "window.ImageData", "undefined");
+      ctx.flush()
+      canvasAssert._assertDifferent(t, window.Uint8ClampedArray, undefined, "window.Uint8ClampedArray", "undefined");
+      window.ImageData.prototype.thisImplementsImageData = true;
+      window.Uint8ClampedArray.prototype.thisImplementsUint8ClampedArray = true;
+      var imgdata = ctx.createImageData(ctx.createImageData(1, 1));
+      ctx.flush()
+      webAssert._assert(t, imgdata.thisImplementsImageData, "imgdata.thisImplementsImageData");
+      ctx.flush()
+      webAssert._assert(t, imgdata.data.thisImplementsUint8ClampedArray, "imgdata.data.thisImplementsUint8ClampedArray");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_674_content"
+  data-contexts="1"
+  data-id="674"
+  data-name="2d.imageData.create1.type"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.create1.type (createImageData(imgdata) returns an ImageData object containing a Uint8ClampedArray object)">&nbsp;</div><br />
+
+<div id="test_674_status">&nbsp;</div>
+
+[<a href="?runTests=674&noCleanup#674" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="677" href="#677"\>677</a>: 2d.imageData.create2.initial (createImageData(sw, sh) returns transparent black data of the right size)</p>
+
+<script>
+  async function test_677_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var imgdata = ctx.createImageData(10, 20);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data.length, imgdata.width*imgdata.height*4, "imgdata.data.length", "imgdata.width*imgdata.height*4");
+      ctx.flush()
+      webAssert._assert(t, imgdata.width < imgdata.height, "imgdata.width < imgdata.height");
+      ctx.flush()
+      webAssert._assert(t, imgdata.width > 0, "imgdata.width > 0");
+      var isTransparentBlack = true;
+      for (var i = 0; i < imgdata.data.length; ++i)
+          if (imgdata.data[i] !== 0)
+              isTransparentBlack = false;
+      ctx.flush()
+      webAssert._assert(t, isTransparentBlack, "isTransparentBlack");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_677_content"
+  data-contexts="1"
+  data-id="677"
+  data-name="2d.imageData.create2.initial"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.create2.initial (createImageData(sw, sh) returns transparent black data of the right size)">&nbsp;</div><br />
+
+<div id="test_677_status">&nbsp;</div>
+
+[<a href="?runTests=677&noCleanup#677" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="689" href="#689"\>689</a>: 2d.imageData.get.source.outside (getImageData() returns transparent black outside the canvas)</p>
+
+<script>
+  async function test_689_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#08f';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var imgdata1 = ctx.getImageData(-10, 5, 1, 1);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.data[0], 0, "imgdata1.data[\""+(0)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.data[1], 0, "imgdata1.data[\""+(1)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.data[2], 0, "imgdata1.data[\""+(2)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.data[3], 0, "imgdata1.data[\""+(3)+"\"]", "0");
+      
+      var imgdata2 = ctx.getImageData(10, -5, 1, 1);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata2.data[0], 0, "imgdata2.data[\""+(0)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata2.data[1], 0, "imgdata2.data[\""+(1)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata2.data[2], 0, "imgdata2.data[\""+(2)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata2.data[3], 0, "imgdata2.data[\""+(3)+"\"]", "0");
+      
+      var imgdata3 = ctx.getImageData(200, 5, 1, 1);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata3.data[0], 0, "imgdata3.data[\""+(0)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata3.data[1], 0, "imgdata3.data[\""+(1)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata3.data[2], 0, "imgdata3.data[\""+(2)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata3.data[3], 0, "imgdata3.data[\""+(3)+"\"]", "0");
+      
+      var imgdata4 = ctx.getImageData(10, 60, 1, 1);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata4.data[0], 0, "imgdata4.data[\""+(0)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata4.data[1], 0, "imgdata4.data[\""+(1)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata4.data[2], 0, "imgdata4.data[\""+(2)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata4.data[3], 0, "imgdata4.data[\""+(3)+"\"]", "0");
+      
+      var imgdata5 = ctx.getImageData(100, 10, 1, 1);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata5.data[0], 0, "imgdata5.data[\""+(0)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata5.data[1], 0, "imgdata5.data[\""+(1)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata5.data[2], 0, "imgdata5.data[\""+(2)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata5.data[3], 0, "imgdata5.data[\""+(3)+"\"]", "0");
+      
+      var imgdata6 = ctx.getImageData(0, 10, 1, 1);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata6.data[0], 0, "imgdata6.data[\""+(0)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata6.data[1], 136, "imgdata6.data[\""+(1)+"\"]", "136");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata6.data[2], 255, "imgdata6.data[\""+(2)+"\"]", "255");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata6.data[3], 255, "imgdata6.data[\""+(3)+"\"]", "255");
+      
+      var imgdata7 = ctx.getImageData(-10, 10, 20, 20);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata7.data[ 0*4+0], 0, "imgdata7.data[ 0*4+0]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata7.data[ 0*4+1], 0, "imgdata7.data[ 0*4+1]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata7.data[ 0*4+2], 0, "imgdata7.data[ 0*4+2]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata7.data[ 0*4+3], 0, "imgdata7.data[ 0*4+3]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata7.data[ 9*4+0], 0, "imgdata7.data[ 9*4+0]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata7.data[ 9*4+1], 0, "imgdata7.data[ 9*4+1]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata7.data[ 9*4+2], 0, "imgdata7.data[ 9*4+2]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata7.data[ 9*4+3], 0, "imgdata7.data[ 9*4+3]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata7.data[10*4+0], 0, "imgdata7.data[10*4+0]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata7.data[10*4+1], 136, "imgdata7.data[10*4+1]", "136");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata7.data[10*4+2], 255, "imgdata7.data[10*4+2]", "255");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata7.data[10*4+3], 255, "imgdata7.data[10*4+3]", "255");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata7.data[19*4+0], 0, "imgdata7.data[19*4+0]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata7.data[19*4+1], 136, "imgdata7.data[19*4+1]", "136");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata7.data[19*4+2], 255, "imgdata7.data[19*4+2]", "255");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata7.data[19*4+3], 255, "imgdata7.data[19*4+3]", "255");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata7.data[20*4+0], 0, "imgdata7.data[20*4+0]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata7.data[20*4+1], 0, "imgdata7.data[20*4+1]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata7.data[20*4+2], 0, "imgdata7.data[20*4+2]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata7.data[20*4+3], 0, "imgdata7.data[20*4+3]", "0");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_689_content"
+  data-contexts="1"
+  data-id="689"
+  data-name="2d.imageData.get.source.outside"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.get.source.outside (getImageData() returns transparent black outside the canvas)">&nbsp;</div><br />
+
+<div id="test_689_status">&nbsp;</div>
+
+[<a href="?runTests=689&noCleanup#689" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="727" href="#727"\>727</a>: 2d.imageData.put.unchanged (putImageData(getImageData(...), ...) has no effect)</p>
+
+<script>
+  async function test_727_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var i = 0;
+      for (var y = 0; y < 16; ++y) {
+          for (var x = 0; x < 16; ++x, ++i) {
+              ctx.fillStyle = 'rgba(' + i + ',' + (Math.floor(i*1.5) % 256) + ',' + (Math.floor(i*23.3) % 256) + ',' + (i/256) + ')';
+              ctx.fillRect(x, y, 1, 1);
+          }
+      }
+      var imgdata1 = ctx.getImageData(0.1, 0.2, 15.8, 15.9);
+      var olddata = [];
+      for (var i = 0; i < imgdata1.data.length; ++i)
+          olddata[i] = imgdata1.data[i];
+      
+      ctx.putImageData(imgdata1, 0.1, 0.2);
+      
+      var imgdata2 = ctx.getImageData(0.1, 0.2, 15.8, 15.9);
+      for (var i = 0; i < imgdata2.data.length; ++i) {
+          ctx.flush()
+      canvasAssert._assertSame(t, olddata[i], imgdata2.data[i], "olddata[\""+(i)+"\"]", "imgdata2.data[\""+(i)+"\"]");
+      }
+      
+  }
+</script>
+
+<div class="test"
+  id="test_727_content"
+  data-contexts="1"
+  data-id="727"
+  data-name="2d.imageData.put.unchanged"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.put.unchanged (putImageData(getImageData(...), ...) has no effect)">&nbsp;</div><br />
+
+<div id="test_727_status">&nbsp;</div>
+
+[<a href="?runTests=727&noCleanup#727" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="686" href="#686"\>686</a>: 2d.imageData.get.type (getImageData() returns an ImageData object containing a Uint8ClampedArray object)</p>
+
+<script>
+  async function test_686_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      canvasAssert._assertDifferent(t, window.ImageData, undefined, "window.ImageData", "undefined");
+      ctx.flush()
+      canvasAssert._assertDifferent(t, window.Uint8ClampedArray, undefined, "window.Uint8ClampedArray", "undefined");
+      window.ImageData.prototype.thisImplementsImageData = true;
+      window.Uint8ClampedArray.prototype.thisImplementsUint8ClampedArray = true;
+      var imgdata = ctx.getImageData(0, 0, 1, 1);
+      ctx.flush()
+      webAssert._assert(t, imgdata.thisImplementsImageData, "imgdata.thisImplementsImageData");
+      ctx.flush()
+      webAssert._assert(t, imgdata.data.thisImplementsUint8ClampedArray, "imgdata.data.thisImplementsUint8ClampedArray");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_686_content"
+  data-contexts="1"
+  data-id="686"
+  data-name="2d.imageData.get.type"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.get.type (getImageData() returns an ImageData object containing a Uint8ClampedArray object)">&nbsp;</div><br />
+
+<div id="test_686_status">&nbsp;</div>
+
+[<a href="?runTests=686&noCleanup#686" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="694" href="#694"\>694</a>: 2d.imageData.get.range (getImageData() returns values in the range [0, 255])</p>
+
+<script>
+  async function test_694_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(20, 10, 60, 10);
+      var imgdata1 = ctx.getImageData(10, 5, 1, 1);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.data[0], 0, "imgdata1.data[\""+(0)+"\"]", "0");
+      var imgdata2 = ctx.getImageData(30, 15, 1, 1);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata2.data[0], 255, "imgdata2.data[\""+(0)+"\"]", "255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_694_content"
+  data-contexts="1"
+  data-id="694"
+  data-name="2d.imageData.get.range"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.get.range (getImageData() returns values in the range [0, 255])">&nbsp;</div><br />
+
+<div id="test_694_status">&nbsp;</div>
+
+[<a href="?runTests=694&noCleanup#694" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="699" href="#699"\>699</a>: 2d.imageData.get.order.rgb (getImageData() returns R then G then B)</p>
+
+<script>
+  async function test_699_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#48c';
+      ctx.fillRect(0, 0, 100, 50);
+      var imgdata = ctx.getImageData(0, 0, 10, 10);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 0x44, "imgdata.data[\""+(0)+"\"]", "0x44");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[1], 0x88, "imgdata.data[\""+(1)+"\"]", "0x88");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[2], 0xCC, "imgdata.data[\""+(2)+"\"]", "0xCC");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[3], 255, "imgdata.data[\""+(3)+"\"]", "255");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[4], 0x44, "imgdata.data[\""+(4)+"\"]", "0x44");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[5], 0x88, "imgdata.data[\""+(5)+"\"]", "0x88");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[6], 0xCC, "imgdata.data[\""+(6)+"\"]", "0xCC");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[7], 255, "imgdata.data[\""+(7)+"\"]", "255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_699_content"
+  data-contexts="1"
+  data-id="699"
+  data-name="2d.imageData.get.order.rgb"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.get.order.rgb (getImageData() returns R then G then B)">&nbsp;</div><br />
+
+<div id="test_699_status">&nbsp;</div>
+
+[<a href="?runTests=699&noCleanup#699" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="711" href="#711"\>711</a>: 2d.imageData.object.string (ImageData.data converts strings to numbers with ToNumber)</p>
+
+<script>
+  async function test_711_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var imgdata = ctx.getImageData(0, 0, 10, 10);
+      imgdata.data[0] = 100;
+      imgdata.data[0] = "110";
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 110, "imgdata.data[\""+(0)+"\"]", "110");
+      imgdata.data[0] = 100;
+      imgdata.data[0] = "0x78";
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 120, "imgdata.data[\""+(0)+"\"]", "120");
+      imgdata.data[0] = 100;
+      imgdata.data[0] = " +130e0 ";
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 130, "imgdata.data[\""+(0)+"\"]", "130");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_711_content"
+  data-contexts="1"
+  data-id="711"
+  data-name="2d.imageData.object.string"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.object.string (ImageData.data converts strings to numbers with ToNumber)">&nbsp;</div><br />
+
+<div id="test_711_status">&nbsp;</div>
+
+[<a href="?runTests=711&noCleanup#711" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="725" href="#725"\>725</a>: 2d.imageData.put.dirty.negative (putImageData() handles negative-sized dirty rectangles correctly)</p>
+
+<script>
+  async function test_725_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50)
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 20, 20)
+      
+      var imgdata = ctx.getImageData(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50)
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(40, 20, 20, 20)
+      ctx.putImageData(imgdata, 40, 20, 20, 20, -20, -20);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 35,25, 0,255,0,255, "35,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 65,25, 0,255,0,255, "65,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,15, 0,255,0,255, "50,15", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,45, 0,255,0,255, "50,45", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_725_content"
+  data-contexts="1"
+  data-id="725"
+  data-name="2d.imageData.put.dirty.negative"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.put.dirty.negative (putImageData() handles negative-sized dirty rectangles correctly)">&nbsp;</div><br />
+
+<div id="test_725_status">&nbsp;</div>
+
+[<a href="?runTests=725&noCleanup#725" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="706" href="#706"\>706</a>: 2d.imageData.object.ctor.array (ImageData has a usable constructor)</p>
+
+<script>
+  async function test_706_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      canvasAssert._assertDifferent(t, window.ImageData, undefined, "window.ImageData", "undefined");
+      
+      var array = new Uint8ClampedArray(8);
+      var imgdata = new window.ImageData(array, 1, 2);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.width, 1, "imgdata.width", "1");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.height, 2, "imgdata.height", "2");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data, array, "imgdata.data", "array");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_706_content"
+  data-contexts="1"
+  data-id="706"
+  data-name="2d.imageData.object.ctor.array"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.object.ctor.array (ImageData has a usable constructor)">&nbsp;</div><br />
+
+<div id="test_706_status">&nbsp;</div>
+
+[<a href="?runTests=706&noCleanup#706" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: TODO support cross-canvas drawing
+<p><a id="719" href="#719"\>719</a>: 2d.imageData.put.cross (putImageData() accepts image data got from a different canvas)</p>
+
+<script>
+  async function test_719_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var canvas2 = allContexts[1];
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.fillStyle = '#0f0';
+      ctx2.fillRect(0, 0, 100, 50)
+      var imgdata = ctx2.getImageData(0, 0, 100, 50);
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50)
+      ctx.putImageData(imgdata, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_719_content"
+  data-contexts="2"
+  data-id="719"
+  data-name="2d.imageData.put.cross"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.put.cross (putImageData() accepts image data got from a different canvas)">&nbsp;</div><br />
+
+<div id="test_719_status">&nbsp;</div>
+
+[<a href="?runTests=719&noCleanup#719" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="691" href="#691"\>691</a>: 2d.imageData.get.source.size (getImageData() returns bigger ImageData for bigger source rectangle)</p>
+
+<script>
+  async function test_691_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var imgdata1 = ctx.getImageData(0, 0, 10, 10);
+      var imgdata2 = ctx.getImageData(0, 0, 20, 20);
+      ctx.flush()
+      webAssert._assert(t, imgdata2.width > imgdata1.width, "imgdata2.width > imgdata1.width");
+      ctx.flush()
+      webAssert._assert(t, imgdata2.height > imgdata1.height, "imgdata2.height > imgdata1.height");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_691_content"
+  data-contexts="1"
+  data-id="691"
+  data-name="2d.imageData.get.source.size"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.get.source.size (getImageData() returns bigger ImageData for bigger source rectangle)">&nbsp;</div><br />
+
+<div id="test_691_status">&nbsp;</div>
+
+[<a href="?runTests=691&noCleanup#691" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="705" href="#705"\>705</a>: 2d.imageData.object.ctor.size.bounds (ImageData has a usable constructor)</p>
+
+<script>
+  async function test_705_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      canvasAssert._assertDifferent(t, window.ImageData, undefined, "window.ImageData", "undefined");
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { new window.ImageData(0, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { new window.ImageData(0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { new window.ImageData(1, 0); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_705_content"
+  data-contexts="1"
+  data-id="705"
+  data-name="2d.imageData.object.ctor.size.bounds"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.object.ctor.size.bounds (ImageData has a usable constructor)">&nbsp;</div><br />
+
+<div id="test_705_status">&nbsp;</div>
+
+[<a href="?runTests=705&noCleanup#705" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="671" href="#671"\>671</a>: 2d.imageData.create2.basic (createImageData(sw, sh) exists and returns something)</p>
+
+<script>
+  async function test_671_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      canvasAssert._assertDifferent(t, ctx.createImageData(1, 1), null, "ctx.createImageData(1, 1)", "null");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_671_content"
+  data-contexts="1"
+  data-id="671"
+  data-name="2d.imageData.create2.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.create2.basic (createImageData(sw, sh) exists and returns something)">&nbsp;</div><br />
+
+<div id="test_671_status">&nbsp;</div>
+
+[<a href="?runTests=671&noCleanup#671" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="673" href="#673"\>673</a>: 2d.imageData.create2.type (createImageData(sw, sh) returns an ImageData object containing a Uint8ClampedArray object)</p>
+
+<script>
+  async function test_673_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      canvasAssert._assertDifferent(t, window.ImageData, undefined, "window.ImageData", "undefined");
+      ctx.flush()
+      canvasAssert._assertDifferent(t, window.Uint8ClampedArray, undefined, "window.Uint8ClampedArray", "undefined");
+      window.ImageData.prototype.thisImplementsImageData = true;
+      window.Uint8ClampedArray.prototype.thisImplementsUint8ClampedArray = true;
+      var imgdata = ctx.createImageData(1, 1);
+      ctx.flush()
+      webAssert._assert(t, imgdata.thisImplementsImageData, "imgdata.thisImplementsImageData");
+      ctx.flush()
+      webAssert._assert(t, imgdata.data.thisImplementsUint8ClampedArray, "imgdata.data.thisImplementsUint8ClampedArray");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_673_content"
+  data-contexts="1"
+  data-id="673"
+  data-name="2d.imageData.create2.type"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.create2.type (createImageData(sw, sh) returns an ImageData object containing a Uint8ClampedArray object)">&nbsp;</div><br />
+
+<div id="test_673_status">&nbsp;</div>
+
+[<a href="?runTests=673&noCleanup#673" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="717" href="#717"\>717</a>: 2d.imageData.put.created (putImageData() puts image data from createImageData() onto the canvas)</p>
+
+<script>
+  async function test_717_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var imgdata = ctx.createImageData(100, 50);
+      for (var i = 0; i < imgdata.data.length; i += 4) {
+          imgdata.data[i] = 0;
+          imgdata.data[i+1] = 255;
+          imgdata.data[i+2] = 0;
+          imgdata.data[i+3] = 255;
+      }
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50)
+      ctx.putImageData(imgdata, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_717_content"
+  data-contexts="1"
+  data-id="717"
+  data-name="2d.imageData.put.created"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.put.created (putImageData() puts image data from createImageData() onto the canvas)">&nbsp;</div><br />
+
+<div id="test_717_status">&nbsp;</div>
+
+[<a href="?runTests=717&noCleanup#717" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="703" href="#703"\>703</a>: 2d.imageData.object.readonly (ImageData objects properties are read-only)</p>
+
+<script>
+  async function test_703_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var imgdata = ctx.getImageData(0, 0, 10, 10);
+      var w = imgdata.width;
+      var h = imgdata.height;
+      var d = imgdata.data;
+      imgdata.width = 123;
+      imgdata.height = 123;
+      imgdata.data = [100,100,100,100];
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.width, w, "imgdata.width", "w");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.height, h, "imgdata.height", "h");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data, d, "imgdata.data", "d");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 0, "imgdata.data[\""+(0)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[1], 0, "imgdata.data[\""+(1)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[2], 0, "imgdata.data[\""+(2)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[3], 0, "imgdata.data[\""+(3)+"\"]", "0");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_703_content"
+  data-contexts="1"
+  data-id="703"
+  data-name="2d.imageData.object.readonly"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.object.readonly (ImageData objects properties are read-only)">&nbsp;</div><br />
+
+<div id="test_703_status">&nbsp;</div>
+
+[<a href="?runTests=703&noCleanup#703" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="720" href="#720"\>720</a>: 2d.imageData.put.alpha (putImageData() puts non-solid image data correctly)</p>
+
+<script>
+  async function test_720_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = 'rgba(0, 255, 0, 0.25)';
+      ctx.fillRect(0, 0, 100, 50)
+      var imgdata = ctx.getImageData(0, 0, 100, 50);
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50)
+      ctx.putImageData(imgdata, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,64, "50,25", "0,255,0,64", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_720_content"
+  data-contexts="1"
+  data-id="720"
+  data-name="2d.imageData.put.alpha"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.put.alpha (putImageData() puts non-solid image data correctly)">&nbsp;</div><br />
+
+<div id="test_720_status">&nbsp;</div>
+
+[<a href="?runTests=720&noCleanup#720" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="709" href="#709"\>709</a>: 2d.imageData.object.undefined (ImageData.data converts undefined to 0)</p>
+
+<script>
+  async function test_709_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var imgdata = ctx.getImageData(0, 0, 10, 10);
+      imgdata.data[0] = 100;
+      imgdata.data[0] = undefined;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 0, "imgdata.data[\""+(0)+"\"]", "0");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_709_content"
+  data-contexts="1"
+  data-id="709"
+  data-name="2d.imageData.object.undefined"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.object.undefined (ImageData.data converts undefined to 0)">&nbsp;</div><br />
+
+<div id="test_709_status">&nbsp;</div>
+
+[<a href="?runTests=709&noCleanup#709" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="684" href="#684"\>684</a>: 2d.imageData.create2.double (createImageData(w, h) double is converted to long)</p>
+
+<script>
+  async function test_684_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var imgdata1 = ctx.createImageData(10.01, 10.99);
+      var imgdata2 = ctx.createImageData(-10.01, -10.99);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.width, 10, "imgdata1.width", "10");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.height, 10, "imgdata1.height", "10");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata2.width, 10, "imgdata2.width", "10");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata2.height, 10, "imgdata2.height", "10");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_684_content"
+  data-contexts="1"
+  data-id="684"
+  data-name="2d.imageData.create2.double"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.create2.double (createImageData(w, h) double is converted to long)">&nbsp;</div><br />
+
+<div id="test_684_status">&nbsp;</div>
+
+[<a href="?runTests=684&noCleanup#684" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="722" href="#722"\>722</a>: 2d.imageData.put.dirty.zero (putImageData() with zero-sized dirty rectangle puts nothing)</p>
+
+<script>
+  async function test_722_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50)
+      var imgdata = ctx.getImageData(0, 0, 100, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50)
+      ctx.putImageData(imgdata, 0, 0, 0, 0, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_722_content"
+  data-contexts="1"
+  data-id="722"
+  data-name="2d.imageData.put.dirty.zero"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.put.dirty.zero (putImageData() with zero-sized dirty rectangle puts nothing)">&nbsp;</div><br />
+
+<div id="test_722_status">&nbsp;</div>
+
+[<a href="?runTests=722&noCleanup#722" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="672" href="#672"\>672</a>: 2d.imageData.create1.basic (createImageData(imgdata) exists and returns something)</p>
+
+<script>
+  async function test_672_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      canvasAssert._assertDifferent(t, ctx.createImageData(ctx.createImageData(1, 1)), null, "ctx.createImageData(ctx.createImageData(1, 1))", "null");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_672_content"
+  data-contexts="1"
+  data-id="672"
+  data-name="2d.imageData.create1.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.create1.basic (createImageData(imgdata) exists and returns something)">&nbsp;</div><br />
+
+<div id="test_672_status">&nbsp;</div>
+
+[<a href="?runTests=672&noCleanup#672" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="688" href="#688"\>688</a>: 2d.imageData.get.nonfinite (getImageData() throws TypeError if arguments are not finite)</p>
+
+<script>
+  async function test_688_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(Infinity, 10, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(-Infinity, 10, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(NaN, 10, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, Infinity, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, -Infinity, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, NaN, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, 10, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, 10, -Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, 10, NaN, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, 10, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, 10, 10, -Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, 10, 10, NaN); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(Infinity, Infinity, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(Infinity, Infinity, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(Infinity, Infinity, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(Infinity, Infinity, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(Infinity, 10, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(Infinity, 10, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(Infinity, 10, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, Infinity, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, Infinity, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, Infinity, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, 10, Infinity, Infinity); });
+      var posinfobj = { valueOf: function() { return Infinity; } },
+          neginfobj = { valueOf: function() { return -Infinity; } },
+          nanobj = { valueOf: function() { return -Infinity; } };
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(posinfobj, 10, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(neginfobj, 10, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(nanobj, 10, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, posinfobj, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, neginfobj, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, nanobj, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, 10, posinfobj, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, 10, neginfobj, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, 10, nanobj, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, 10, 10, posinfobj); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, 10, 10, neginfobj); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, 10, 10, nanobj); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(posinfobj, posinfobj, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(posinfobj, posinfobj, posinfobj, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(posinfobj, posinfobj, posinfobj, posinfobj); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(posinfobj, posinfobj, 10, posinfobj); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(posinfobj, 10, posinfobj, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(posinfobj, 10, posinfobj, posinfobj); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(posinfobj, 10, 10, posinfobj); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, posinfobj, posinfobj, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, posinfobj, posinfobj, posinfobj); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, posinfobj, 10, posinfobj); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.getImageData(10, 10, posinfobj, posinfobj); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_688_content"
+  data-contexts="1"
+  data-id="688"
+  data-name="2d.imageData.get.nonfinite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.get.nonfinite (getImageData() throws TypeError if arguments are not finite)">&nbsp;</div><br />
+
+<div id="test_688_status">&nbsp;</div>
+
+[<a href="?runTests=688&noCleanup#688" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="678" href="#678"\>678</a>: 2d.imageData.create1.initial (createImageData(imgdata) returns transparent black data of the right size)</p>
+
+<script>
+  async function test_678_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      var imgdata1 = ctx.getImageData(0, 0, 10, 20);
+      var imgdata2 = ctx.createImageData(imgdata1);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata2.data.length, imgdata1.data.length, "imgdata2.data.length", "imgdata1.data.length");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata2.width, imgdata1.width, "imgdata2.width", "imgdata1.width");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata2.height, imgdata1.height, "imgdata2.height", "imgdata1.height");
+      var isTransparentBlack = true;
+      for (var i = 0; i < imgdata2.data.length; ++i)
+          if (imgdata2.data[i] !== 0)
+              isTransparentBlack = false;
+      ctx.flush()
+      webAssert._assert(t, isTransparentBlack, "isTransparentBlack");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_678_content"
+  data-contexts="1"
+  data-id="678"
+  data-name="2d.imageData.create1.initial"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.create1.initial (createImageData(imgdata) returns transparent black data of the right size)">&nbsp;</div><br />
+
+<div id="test_678_status">&nbsp;</div>
+
+[<a href="?runTests=678&noCleanup#678" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="693" href="#693"\>693</a>: 2d.imageData.get.nonpremul (getImageData() returns non-premultiplied colours)</p>
+
+<script>
+  async function test_693_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      var imgdata = ctx.getImageData(10, 10, 10, 10);
+      ctx.flush()
+      webAssert._assert(t, imgdata.data[0] > 200, "imgdata.data[\""+(0)+"\"] > 200");
+      ctx.flush()
+      webAssert._assert(t, imgdata.data[1] > 200, "imgdata.data[\""+(1)+"\"] > 200");
+      ctx.flush()
+      webAssert._assert(t, imgdata.data[2] > 200, "imgdata.data[\""+(2)+"\"] > 200");
+      ctx.flush()
+      webAssert._assert(t, imgdata.data[3] > 100, "imgdata.data[\""+(3)+"\"] > 100");
+      ctx.flush()
+      webAssert._assert(t, imgdata.data[3] < 200, "imgdata.data[\""+(3)+"\"] < 200");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_693_content"
+  data-contexts="1"
+  data-id="693"
+  data-name="2d.imageData.get.nonpremul"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.get.nonpremul (getImageData() returns non-premultiplied colours)">&nbsp;</div><br />
+
+<div id="test_693_status">&nbsp;</div>
+
+[<a href="?runTests=693&noCleanup#693" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="726" href="#726"\>726</a>: 2d.imageData.put.dirty.outside (putImageData() handles dirty rectangles outside the canvas correctly)</p>
+
+<script>
+  async function test_726_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50)
+      
+      var imgdata = ctx.getImageData(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50)
+      
+      ctx.putImageData(imgdata, 100, 20, 20, 20, -20, -20);
+      ctx.putImageData(imgdata, 200, 200, 0, 0, 100, 50);
+      ctx.putImageData(imgdata, 40, 20, -30, -20, 30, 20);
+      ctx.putImageData(imgdata, -30, 20, 0, 0, 30, 20);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 98,15, 0,255,0,255, "98,15", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 98,45, 0,255,0,255, "98,45", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 1,5, 0,255,0,255, "1,5", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 1,45, 0,255,0,255, "1,45", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_726_content"
+  data-contexts="1"
+  data-id="726"
+  data-name="2d.imageData.put.dirty.outside"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.put.dirty.outside (putImageData() handles dirty rectangles outside the canvas correctly)">&nbsp;</div><br />
+
+<div id="test_726_status">&nbsp;</div>
+
+[<a href="?runTests=726&noCleanup#726" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="715" href="#715"\>715</a>: 2d.imageData.put.nonfinite (putImageData() throws TypeError if arguments are not finite)</p>
+
+<script>
+  async function test_715_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var imgdata = ctx.getImageData(0, 0, 10, 10);
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, -Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, NaN, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, -Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, NaN); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, 10, 10, 10, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, -Infinity, 10, 10, 10, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, NaN, 10, 10, 10, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, Infinity, 10, 10, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, -Infinity, 10, 10, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, NaN, 10, 10, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, Infinity, 10, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, -Infinity, 10, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, NaN, 10, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, 10, Infinity, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, 10, -Infinity, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, 10, NaN, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, 10, 10, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, 10, 10, -Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, 10, 10, NaN, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, 10, 10, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, 10, 10, 10, -Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, 10, 10, 10, NaN); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, Infinity, 10, 10, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, Infinity, Infinity, 10, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, Infinity, Infinity, Infinity, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, Infinity, Infinity, Infinity, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, Infinity, Infinity, Infinity, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, Infinity, Infinity, Infinity, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, Infinity, Infinity, 10, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, Infinity, Infinity, 10, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, Infinity, Infinity, 10, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, Infinity, 10, Infinity, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, Infinity, 10, Infinity, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, Infinity, 10, Infinity, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, Infinity, 10, Infinity, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, Infinity, 10, 10, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, Infinity, 10, 10, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, Infinity, 10, 10, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, 10, Infinity, 10, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, 10, Infinity, Infinity, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, 10, Infinity, Infinity, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, 10, Infinity, Infinity, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, 10, Infinity, Infinity, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, 10, Infinity, 10, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, 10, Infinity, 10, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, 10, Infinity, 10, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, 10, 10, Infinity, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, 10, 10, Infinity, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, 10, 10, Infinity, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, 10, 10, Infinity, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, 10, 10, 10, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, 10, 10, 10, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, Infinity, 10, 10, 10, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, Infinity, Infinity, 10, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, Infinity, Infinity, Infinity, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, Infinity, Infinity, Infinity, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, Infinity, Infinity, Infinity, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, Infinity, Infinity, Infinity, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, Infinity, Infinity, 10, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, Infinity, Infinity, 10, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, Infinity, Infinity, 10, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, Infinity, 10, Infinity, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, Infinity, 10, Infinity, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, Infinity, 10, Infinity, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, Infinity, 10, Infinity, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, Infinity, 10, 10, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, Infinity, 10, 10, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, Infinity, 10, 10, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, Infinity, Infinity, 10, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, Infinity, Infinity, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, Infinity, Infinity, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, Infinity, Infinity, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, Infinity, 10, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, Infinity, 10, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, Infinity, 10, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, 10, Infinity, Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, 10, Infinity, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, 10, Infinity, 10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 10, 10, 10, 10, Infinity, Infinity); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_715_content"
+  data-contexts="1"
+  data-id="715"
+  data-name="2d.imageData.put.nonfinite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.put.nonfinite (putImageData() throws TypeError if arguments are not finite)">&nbsp;</div><br />
+
+<div id="test_715_status">&nbsp;</div>
+
+[<a href="?runTests=715&noCleanup#715" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="685" href="#685"\>685</a>: 2d.imageData.get.basic (getImageData() exists and returns something)</p>
+
+<script>
+  async function test_685_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      canvasAssert._assertDifferent(t, ctx.getImageData(0, 0, 100, 50), null, "ctx.getImageData(0, 0, 100, 50)", "null");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_685_content"
+  data-contexts="1"
+  data-id="685"
+  data-name="2d.imageData.get.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.get.basic (getImageData() exists and returns something)">&nbsp;</div><br />
+
+<div id="test_685_status">&nbsp;</div>
+
+[<a href="?runTests=685&noCleanup#685" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="713" href="#713"\>713</a>: 2d.imageData.object.round (ImageData.data rounds numbers with round-to-zero)</p>
+
+<script>
+  async function test_713_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var imgdata = ctx.getImageData(0, 0, 10, 10);
+      imgdata.data[0] = 0.499;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 0, "imgdata.data[\""+(0)+"\"]", "0");
+      imgdata.data[0] = 0.5;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 0, "imgdata.data[\""+(0)+"\"]", "0");
+      imgdata.data[0] = 0.501;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 1, "imgdata.data[\""+(0)+"\"]", "1");
+      imgdata.data[0] = 1.499;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 1, "imgdata.data[\""+(0)+"\"]", "1");
+      imgdata.data[0] = 1.5;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 2, "imgdata.data[\""+(0)+"\"]", "2");
+      imgdata.data[0] = 1.501;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 2, "imgdata.data[\""+(0)+"\"]", "2");
+      imgdata.data[0] = 2.5;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 2, "imgdata.data[\""+(0)+"\"]", "2");
+      imgdata.data[0] = 3.5;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 4, "imgdata.data[\""+(0)+"\"]", "4");
+      imgdata.data[0] = 252.5;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 252, "imgdata.data[\""+(0)+"\"]", "252");
+      imgdata.data[0] = 253.5;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 254, "imgdata.data[\""+(0)+"\"]", "254");
+      imgdata.data[0] = 254.5;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 254, "imgdata.data[\""+(0)+"\"]", "254");
+      imgdata.data[0] = 256.5;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 255, "imgdata.data[\""+(0)+"\"]", "255");
+      imgdata.data[0] = -0.5;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 0, "imgdata.data[\""+(0)+"\"]", "0");
+      imgdata.data[0] = -1.5;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 0, "imgdata.data[\""+(0)+"\"]", "0");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_713_content"
+  data-contexts="1"
+  data-id="713"
+  data-name="2d.imageData.object.round"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.object.round (ImageData.data rounds numbers with round-to-zero)">&nbsp;</div><br />
+
+<div id="test_713_status">&nbsp;</div>
+
+[<a href="?runTests=713&noCleanup#713" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="718" href="#718"\>718</a>: 2d.imageData.put.wrongtype (putImageData() does not accept non-ImageData objects)</p>
+
+<script>
+  async function test_718_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var imgdata = { width: 1, height: 1, data: [255, 0, 0, 255] };
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(imgdata, 0, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData("cheese", 0, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(42, 0, 0); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_718_content"
+  data-contexts="1"
+  data-id="718"
+  data-name="2d.imageData.put.wrongtype"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.put.wrongtype (putImageData() does not accept non-ImageData objects)">&nbsp;</div><br />
+
+<div id="test_718_status">&nbsp;</div>
+
+[<a href="?runTests=718&noCleanup#718" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="696" href="#696"\>696</a>: 2d.imageData.get.length (getImageData() returns a correctly-sized Uint8ClampedArray)</p>
+
+<script>
+  async function test_696_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var imgdata = ctx.getImageData(0, 0, 10, 10);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data.length, imgdata.width*imgdata.height*4, "imgdata.data.length", "imgdata.width*imgdata.height*4");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_696_content"
+  data-contexts="1"
+  data-id="696"
+  data-name="2d.imageData.get.length"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.get.length (getImageData() returns a correctly-sized Uint8ClampedArray)">&nbsp;</div><br />
+
+<div id="test_696_status">&nbsp;</div>
+
+[<a href="?runTests=696&noCleanup#696" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="701" href="#701"\>701</a>: 2d.imageData.get.unaffected (getImageData() is not affected by context state)</p>
+
+<script>
+  async function test_701_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 50, 50)
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(50, 0, 50, 50)
+      ctx.save();
+      ctx.translate(50, 0);
+      ctx.globalAlpha = 0.1;
+      ctx.globalCompositeOperation = 'destination-atop';
+      ctx.shadowColor = '#f00';
+      ctx.rect(0, 0, 5, 5);
+      ctx.clip();
+      var imgdata = ctx.getImageData(0, 0, 50, 50);
+      ctx.restore();
+      ctx.putImageData(imgdata, 50, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_701_content"
+  data-contexts="1"
+  data-id="701"
+  data-name="2d.imageData.get.unaffected"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.get.unaffected (getImageData() is not affected by context state)">&nbsp;</div><br />
+
+<div id="test_701_status">&nbsp;</div>
+
+[<a href="?runTests=701&noCleanup#701" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="707" href="#707"\>707</a>: 2d.imageData.object.ctor.array.bounds (ImageData has a usable constructor)</p>
+
+<script>
+  async function test_707_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      canvasAssert._assertDifferent(t, window.ImageData, undefined, "window.ImageData", "undefined");
+      
+      ctx.flush()
+      webAssert.assert_throws(t, "INVALID_STATE_ERR", function() { new ImageData(new Uint8ClampedArray(0), 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, "INVALID_STATE_ERR", function() { new ImageData(new Uint8ClampedArray(3), 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { new ImageData(new Uint8ClampedArray(4), 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { new ImageData(new Uint8ClampedArray(4), 1, 2); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { new ImageData(new Uint8Array(8), 1, 2); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { new ImageData(new Int8Array(8), 1, 2); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_707_content"
+  data-contexts="1"
+  data-id="707"
+  data-name="2d.imageData.object.ctor.array.bounds"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.object.ctor.array.bounds (ImageData has a usable constructor)">&nbsp;</div><br />
+
+<div id="test_707_status">&nbsp;</div>
+
+[<a href="?runTests=707&noCleanup#707" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="675" href="#675"\>675</a>: 2d.imageData.create2.this (createImageData(sw, sh) should throw when called with the wrong |this|)</p>
+
+<script>
+  async function test_675_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { CanvasRenderingContext2D.prototype.createImageData.call(null, 1, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { CanvasRenderingContext2D.prototype.createImageData.call(undefined, 1, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { CanvasRenderingContext2D.prototype.createImageData.call({}, 1, 1); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_675_content"
+  data-contexts="1"
+  data-id="675"
+  data-name="2d.imageData.create2.this"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.create2.this (createImageData(sw, sh) should throw when called with the wrong |this|)">&nbsp;</div><br />
+
+<div id="test_675_status">&nbsp;</div>
+
+[<a href="?runTests=675&noCleanup#675" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="729" href="#729"\>729</a>: 2d.imageData.put.clip (putImageData() is not affected by clipping regions)</p>
+
+<script>
+  async function test_729_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50)
+      var imgdata = ctx.getImageData(0, 0, 100, 50);
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50)
+      ctx.beginPath();
+      ctx.rect(0, 0, 50, 50);
+      ctx.clip();
+      ctx.putImageData(imgdata, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_729_content"
+  data-contexts="1"
+  data-id="729"
+  data-name="2d.imageData.put.clip"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.put.clip (putImageData() is not affected by clipping regions)">&nbsp;</div><br />
+
+<div id="test_729_status">&nbsp;</div>
+
+[<a href="?runTests=729&noCleanup#729" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="708" href="#708"\>708</a>: 2d.imageData.object.set (ImageData.data can be modified)</p>
+
+<script>
+  async function test_708_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var imgdata = ctx.getImageData(0, 0, 10, 10);
+      imgdata.data[0] = 100;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 100, "imgdata.data[\""+(0)+"\"]", "100");
+      imgdata.data[0] = 200;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 200, "imgdata.data[\""+(0)+"\"]", "200");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_708_content"
+  data-contexts="1"
+  data-id="708"
+  data-name="2d.imageData.object.set"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.object.set (ImageData.data can be modified)">&nbsp;</div><br />
+
+<div id="test_708_status">&nbsp;</div>
+
+[<a href="?runTests=708&noCleanup#708" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="692" href="#692"\>692</a>: 2d.imageData.get.double (createImageData(w, h) double is converted to long)</p>
+
+<script>
+  async function test_692_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var imgdata1 = ctx.getImageData(0, 0, 10.01, 10.99);
+      var imgdata2 = ctx.getImageData(0, 0, -10.01, -10.99);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.width, 10, "imgdata1.width", "10");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.height, 10, "imgdata1.height", "10");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata2.width, 10, "imgdata2.width", "10");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata2.height, 10, "imgdata2.height", "10");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_692_content"
+  data-contexts="1"
+  data-id="692"
+  data-name="2d.imageData.get.double"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.get.double (createImageData(w, h) double is converted to long)">&nbsp;</div><br />
+
+<div id="test_692_status">&nbsp;</div>
+
+[<a href="?runTests=692&noCleanup#692" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="712" href="#712"\>712</a>: 2d.imageData.object.clamp (ImageData.data clamps numbers to [0, 255])</p>
+
+<script>
+  async function test_712_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var imgdata = ctx.getImageData(0, 0, 10, 10);
+      
+      imgdata.data[0] = 100;
+      imgdata.data[0] = 300;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 255, "imgdata.data[\""+(0)+"\"]", "255");
+      imgdata.data[0] = 100;
+      imgdata.data[0] = -100;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 0, "imgdata.data[\""+(0)+"\"]", "0");
+      
+      imgdata.data[0] = 100;
+      imgdata.data[0] = 200+Math.pow(2, 32);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 255, "imgdata.data[\""+(0)+"\"]", "255");
+      imgdata.data[0] = 100;
+      imgdata.data[0] = -200-Math.pow(2, 32);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 0, "imgdata.data[\""+(0)+"\"]", "0");
+      
+      imgdata.data[0] = 100;
+      imgdata.data[0] = Math.pow(10, 39);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 255, "imgdata.data[\""+(0)+"\"]", "255");
+      imgdata.data[0] = 100;
+      imgdata.data[0] = -Math.pow(10, 39);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 0, "imgdata.data[\""+(0)+"\"]", "0");
+      
+      imgdata.data[0] = 100;
+      imgdata.data[0] = -Infinity;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 0, "imgdata.data[\""+(0)+"\"]", "0");
+      imgdata.data[0] = 100;
+      imgdata.data[0] = Infinity;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 255, "imgdata.data[\""+(0)+"\"]", "255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_712_content"
+  data-contexts="1"
+  data-id="712"
+  data-name="2d.imageData.object.clamp"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.object.clamp (ImageData.data clamps numbers to [0, 255])">&nbsp;</div><br />
+
+<div id="test_712_status">&nbsp;</div>
+
+[<a href="?runTests=712&noCleanup#712" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="698" href="#698"\>698</a>: 2d.imageData.get.order.rows (getImageData() returns topmost rows first)</p>
+
+<script>
+  async function test_698_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, 100, 2);
+      var imgdata = ctx.getImageData(0, 0, 10, 10);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 0, "imgdata.data[\""+(0)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[Math.floor(imgdata.width/2*4)], 0, "imgdata.data[Math.floor(imgdata.width/2*4)]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[(imgdata.height/2)*imgdata.width*4], 255, "imgdata.data[(imgdata.height/2)*imgdata.width*4]", "255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_698_content"
+  data-contexts="1"
+  data-id="698"
+  data-name="2d.imageData.get.order.rows"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.get.order.rows (getImageData() returns topmost rows first)">&nbsp;</div><br />
+
+<div id="test_698_status">&nbsp;</div>
+
+[<a href="?runTests=698&noCleanup#698" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="730" href="#730"\>730</a>: 2d.imageData.put.path (putImageData() does not affect the current path)</p>
+
+<script>
+  async function test_730_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50)
+      ctx.rect(0, 0, 100, 50);
+      var imgdata = ctx.getImageData(0, 0, 100, 50);
+      ctx.putImageData(imgdata, 0, 0);
+      ctx.fillStyle = '#0f0';
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_730_content"
+  data-contexts="1"
+  data-id="730"
+  data-name="2d.imageData.put.path"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.put.path (putImageData() does not affect the current path)">&nbsp;</div><br />
+
+<div id="test_730_status">&nbsp;</div>
+
+[<a href="?runTests=730&noCleanup#730" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="704" href="#704"\>704</a>: 2d.imageData.object.ctor.size (ImageData has a usable constructor)</p>
+
+<script>
+  async function test_704_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      canvasAssert._assertDifferent(t, window.ImageData, undefined, "window.ImageData", "undefined");
+      
+      var imgdata = new window.ImageData(2, 3);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.width, 2, "imgdata.width", "2");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.height, 3, "imgdata.height", "3");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data.length, 2 * 3 * 4, "imgdata.data.length", "2 * 3 * 4");
+      for (var i = 0; i < imgdata.data.length; ++i) {
+        ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[i], 0, "imgdata.data[\""+(i)+"\"]", "0");
+      }
+      
+  }
+</script>
+
+<div class="test"
+  id="test_704_content"
+  data-contexts="1"
+  data-id="704"
+  data-name="2d.imageData.object.ctor.size"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.object.ctor.size (ImageData has a usable constructor)">&nbsp;</div><br />
+
+<div id="test_704_status">&nbsp;</div>
+
+[<a href="?runTests=704&noCleanup#704" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="687" href="#687"\>687</a>: 2d.imageData.get.zero (getImageData() throws INDEX_SIZE_ERR if size is zero)</p>
+
+<script>
+  async function test_687_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { ctx.getImageData(1, 1, 10, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { ctx.getImageData(1, 1, 0, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { ctx.getImageData(1, 1, 0, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { ctx.getImageData(1, 1, 0.1, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { ctx.getImageData(1, 1, 10, 0.99); });
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { ctx.getImageData(1, 1, -0.1, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { ctx.getImageData(1, 1, 10, -0.99); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_687_content"
+  data-contexts="1"
+  data-id="687"
+  data-name="2d.imageData.get.zero"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.get.zero (getImageData() throws INDEX_SIZE_ERR if size is zero)">&nbsp;</div><br />
+
+<div id="test_687_status">&nbsp;</div>
+
+[<a href="?runTests=687&noCleanup#687" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="721" href="#721"\>721</a>: 2d.imageData.put.modified (putImageData() puts modified image data correctly)</p>
+
+<script>
+  async function test_721_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50)
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(45, 20, 10, 10)
+      var imgdata = ctx.getImageData(45, 20, 10, 10);
+      for (var i = 0, len = imgdata.width*imgdata.height*4; i < len; i += 4)
+      {
+          imgdata.data[i] = 0;
+          imgdata.data[i+1] = 255;
+      }
+      ctx.putImageData(imgdata, 45, 20);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_721_content"
+  data-contexts="1"
+  data-id="721"
+  data-name="2d.imageData.put.modified"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.put.modified (putImageData() puts modified image data correctly)">&nbsp;</div><br />
+
+<div id="test_721_status">&nbsp;</div>
+
+[<a href="?runTests=721&noCleanup#721" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="697" href="#697"\>697</a>: 2d.imageData.get.order.cols (getImageData() returns leftmost columns first)</p>
+
+<script>
+  async function test_697_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, 2, 50);
+      var imgdata = ctx.getImageData(0, 0, 10, 10);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 0, "imgdata.data[\""+(0)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[Math.round(imgdata.width/2*4)], 255, "imgdata.data[Math.round(imgdata.width/2*4)]", "255");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[Math.round((imgdata.height/2)*imgdata.width*4)], 0, "imgdata.data[Math.round((imgdata.height/2)*imgdata.width*4)]", "0");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_697_content"
+  data-contexts="1"
+  data-id="697"
+  data-name="2d.imageData.get.order.cols"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.get.order.cols (getImageData() returns leftmost columns first)">&nbsp;</div><br />
+
+<div id="test_697_status">&nbsp;</div>
+
+[<a href="?runTests=697&noCleanup#697" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="724" href="#724"\>724</a>: 2d.imageData.put.dirty.rect2 (putImageData() only modifies areas inside the dirty rectangle, using x and y)</p>
+
+<script>
+  async function test_724_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50)
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(60, 30, 20, 20)
+      
+      var imgdata = ctx.getImageData(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50)
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(40, 20, 20, 20)
+      ctx.putImageData(imgdata, -20, -10, 60, 30, 20, 20);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 35,25, 0,255,0,255, "35,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 65,25, 0,255,0,255, "65,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,15, 0,255,0,255, "50,15", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,45, 0,255,0,255, "50,45", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_724_content"
+  data-contexts="1"
+  data-id="724"
+  data-name="2d.imageData.put.dirty.rect2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.put.dirty.rect2 (putImageData() only modifies areas inside the dirty rectangle, using x and y)">&nbsp;</div><br />
+
+<div id="test_724_status">&nbsp;</div>
+
+[<a href="?runTests=724&noCleanup#724" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="714" href="#714"\>714</a>: 2d.imageData.put.null (putImageData() with null imagedata throws TypeError)</p>
+
+<script>
+  async function test_714_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.putImageData(null, 0, 0); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_714_content"
+  data-contexts="1"
+  data-id="714"
+  data-name="2d.imageData.put.null"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.put.null (putImageData() with null imagedata throws TypeError)">&nbsp;</div><br />
+
+<div id="test_714_status">&nbsp;</div>
+
+[<a href="?runTests=714&noCleanup#714" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="682" href="#682"\>682</a>: 2d.imageData.create2.nonfinite (createImageData() throws TypeError if arguments are not finite)</p>
+
+<script>
+  async function test_682_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createImageData(Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createImageData(-Infinity, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createImageData(NaN, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createImageData(10, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createImageData(10, -Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createImageData(10, NaN); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createImageData(Infinity, Infinity); });
+      var posinfobj = { valueOf: function() { return Infinity; } },
+          neginfobj = { valueOf: function() { return -Infinity; } },
+          nanobj = { valueOf: function() { return -Infinity; } };
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createImageData(posinfobj, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createImageData(neginfobj, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createImageData(nanobj, 10); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createImageData(10, posinfobj); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createImageData(10, neginfobj); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createImageData(10, nanobj); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createImageData(posinfobj, posinfobj); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_682_content"
+  data-contexts="1"
+  data-id="682"
+  data-name="2d.imageData.create2.nonfinite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.create2.nonfinite (createImageData() throws TypeError if arguments are not finite)">&nbsp;</div><br />
+
+<div id="test_682_status">&nbsp;</div>
+
+[<a href="?runTests=682&noCleanup#682" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="683" href="#683"\>683</a>: 2d.imageData.create1.zero (createImageData(null) throws TypeError)</p>
+
+<script>
+  async function test_683_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createImageData(null); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_683_content"
+  data-contexts="1"
+  data-id="683"
+  data-name="2d.imageData.create1.zero"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.create1.zero (createImageData(null) throws TypeError)">&nbsp;</div><br />
+
+<div id="test_683_status">&nbsp;</div>
+
+[<a href="?runTests=683&noCleanup#683" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="680" href="#680"\>680</a>: 2d.imageData.create2.negative (createImageData(sw, sh) takes the absolute magnitude of the size arguments)</p>
+
+<script>
+  async function test_680_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var imgdata1 = ctx.createImageData(10, 20);
+      var imgdata2 = ctx.createImageData(-10, 20);
+      var imgdata3 = ctx.createImageData(10, -20);
+      var imgdata4 = ctx.createImageData(-10, -20);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.data.length, imgdata2.data.length, "imgdata1.data.length", "imgdata2.data.length");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata2.data.length, imgdata3.data.length, "imgdata2.data.length", "imgdata3.data.length");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata3.data.length, imgdata4.data.length, "imgdata3.data.length", "imgdata4.data.length");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_680_content"
+  data-contexts="1"
+  data-id="680"
+  data-name="2d.imageData.create2.negative"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.create2.negative (createImageData(sw, sh) takes the absolute magnitude of the size arguments)">&nbsp;</div><br />
+
+<div id="test_680_status">&nbsp;</div>
+
+[<a href="?runTests=680&noCleanup#680" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="679" href="#679"\>679</a>: 2d.imageData.create2.large (createImageData(sw, sh) works for sizes much larger than the canvas)</p>
+
+<script>
+  async function test_679_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var imgdata = ctx.createImageData(1000, 2000);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data.length, imgdata.width*imgdata.height*4, "imgdata.data.length", "imgdata.width*imgdata.height*4");
+      ctx.flush()
+      webAssert._assert(t, imgdata.width < imgdata.height, "imgdata.width < imgdata.height");
+      ctx.flush()
+      webAssert._assert(t, imgdata.width > 0, "imgdata.width > 0");
+      var isTransparentBlack = true;
+      for (var i = 0; i < imgdata.data.length; i += 7813) // check ~1024 points (assuming normal scaling)
+          if (imgdata.data[i] !== 0)
+              isTransparentBlack = false;
+      ctx.flush()
+      webAssert._assert(t, isTransparentBlack, "isTransparentBlack");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_679_content"
+  data-contexts="1"
+  data-id="679"
+  data-name="2d.imageData.create2.large"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.create2.large (createImageData(sw, sh) works for sizes much larger than the canvas)">&nbsp;</div><br />
+
+<div id="test_679_status">&nbsp;</div>
+
+[<a href="?runTests=679&noCleanup#679" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="676" href="#676"\>676</a>: 2d.imageData.create1.this (createImageData(imgdata) should throw when called with the wrong |this|)</p>
+
+<script>
+  async function test_676_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var imgdata = ctx.createImageData(1, 1);
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { CanvasRenderingContext2D.prototype.createImageData.call(null, imgdata); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { CanvasRenderingContext2D.prototype.createImageData.call(undefined, imgdata); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { CanvasRenderingContext2D.prototype.createImageData.call({}, imgdata); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_676_content"
+  data-contexts="1"
+  data-id="676"
+  data-name="2d.imageData.create1.this"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.create1.this (createImageData(imgdata) should throw when called with the wrong |this|)">&nbsp;</div><br />
+
+<div id="test_676_status">&nbsp;</div>
+
+[<a href="?runTests=676&noCleanup#676" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="710" href="#710"\>710</a>: 2d.imageData.object.nan (ImageData.data converts NaN to 0)</p>
+
+<script>
+  async function test_710_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var imgdata = ctx.getImageData(0, 0, 10, 10);
+      imgdata.data[0] = 100;
+      imgdata.data[0] = NaN;
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 0, "imgdata.data[\""+(0)+"\"]", "0");
+      imgdata.data[0] = 100;
+      imgdata.data[0] = "cheese";
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata.data[0], 0, "imgdata.data[\""+(0)+"\"]", "0");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_710_content"
+  data-contexts="1"
+  data-id="710"
+  data-name="2d.imageData.object.nan"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.object.nan (ImageData.data converts NaN to 0)">&nbsp;</div><br />
+
+<div id="test_710_status">&nbsp;</div>
+
+[<a href="?runTests=710&noCleanup#710" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="695" href="#695"\>695</a>: 2d.imageData.get.clamp (getImageData() clamps colours to the range [0, 255])</p>
+
+<script>
+  async function test_695_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = 'rgb(-100, -200, -300)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = 'rgb(256, 300, 400)';
+      ctx.fillRect(20, 10, 60, 10);
+      var imgdata1 = ctx.getImageData(10, 5, 1, 1);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.data[0], 0, "imgdata1.data[\""+(0)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.data[1], 0, "imgdata1.data[\""+(1)+"\"]", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata1.data[2], 0, "imgdata1.data[\""+(2)+"\"]", "0");
+      var imgdata2 = ctx.getImageData(30, 15, 1, 1);
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata2.data[0], 255, "imgdata2.data[\""+(0)+"\"]", "255");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata2.data[1], 255, "imgdata2.data[\""+(1)+"\"]", "255");
+      ctx.flush()
+      canvasAssert._assertSame(t, imgdata2.data[2], 255, "imgdata2.data[\""+(2)+"\"]", "255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_695_content"
+  data-contexts="1"
+  data-id="695"
+  data-name="2d.imageData.get.clamp"
+  data-width="100"
+  data-height="50"
+  data-description="2d.imageData.get.clamp (getImageData() clamps colours to the range [0, 255])">&nbsp;</div><br />
+
+<div id="test_695_status">&nbsp;</div>
+
+[<a href="?runTests=695&noCleanup#695" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+
+<br /><br />
+&lt;3
+
+</body>
+</html>

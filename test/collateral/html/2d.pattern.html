@@ -1,0 +1,2224 @@
+<html>
+
+<head>
+<title>2d.pattern // WebGL2DContext conformance</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<style>
+  div {
+    padding: 5px;
+  }
+  canvas {
+    border: 1px black solid;
+  }
+  .progress {
+    font: 100% monospace;
+  }
+  .failure {
+    background-color: red;
+    color: white;
+    font: 100% sans-serif;
+  }
+  .success {
+    background-color: #88FF88;
+    font: 100% sans-serif;
+  }
+  .failure a:link {
+    color: white
+  }
+  .failure a:visited {
+    color: white
+  }
+</style>
+
+<script type="text/javascript" src="bundle.js"></script>
+<script type="text/javascript" src="assets.js"></script>
+<script type="text/javascript" src="asserts.js"></script>
+
+<script type="text/javascript">
+    async function getAsset(name) {
+      return new Promise((resolve, reject) => {
+        let img = document.createElement("IMG")
+        img.onload = () => resolve(img)
+        img.onerror = reject
+        img.src = rawImageAssets[name]
+      })
+    }
+
+    function bootCanvas(container, id, width, height) {
+        var canvas = document.createElement("CANVAS")
+        canvas.setAttribute("id", id)
+        canvas.setAttribute("width", width)
+        canvas.setAttribute("height", height)
+
+        container.appendChild(canvas)
+
+        var gl = canvas.getContext("webgl2", {
+          stencil: 8,
+          preserveDrawingBuffer: true
+        });
+        gl.viewportWidth = canvas.width;
+        gl.viewportHeight = canvas.height;
+        if (!gl) {
+            console.log("Could not initialise WebGL, sorry :-(")
+            return null;
+        }
+
+        gl.clearColor(1.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        /* TODO: figure out how to pass some gradient tests that need
+         * more grad stops: */
+        let ctx = new Expo2DContext.default(gl, maxGradStops=50)
+        ctx.getContext = () => {return ctx;}
+        
+        return [canvas, gl, ctx]
+    }
+
+    function spinner_graphic(i) {
+      let anim = ["/","&ndash;","\\","|","/","&ndash;","\\", "|"]
+      return anim[i%anim.length]
+    }
+
+    var testContexts = {};
+
+    function focusTest (num) {
+      window.ctx = testContexts[num][0]
+    }
+    window.onhashchange = () => {
+      var url = new URL(window.location)
+      var hashVal = url.hash.substr(1)
+      if (hashVal in testContexts) {
+        focusTest(hashVal)
+      }
+    }
+
+    async function runTests() {
+
+      // TODO: assets??
+
+      if (!window.testComplete) {
+        window.testComplete = (testResults, completedTests, totalTests) =>
+          { /* PUPPETEER STUB */ };
+      }
+
+      testContexts = {};
+
+      var tests = document.getElementsByClassName("test")
+
+      var url = new URL(window.location)
+      if (url.searchParams.get("runTests") != null) {
+        selected_test_ids = url.searchParams.get("runTests").split(",").map((x) => parseInt(x))
+        tests = selected_test_ids.map((x) => document.getElementById("test_"+x+"_content")) 
+      }
+
+      var cleanUp = url.searchParams.get("noCleanup") == null
+
+      let suite_status = document.getElementById("suite_status")
+
+      var failures = new Set();
+      var failureSummaryHTML = "Failed:<ul>"
+
+      let i = 0;
+
+      var testIteration = async (i) => {
+
+        if (i >= tests.length) {
+          finishTests();
+          return;
+        }
+
+        let test_area = tests[i]
+        let test = test_area.dataset
+    
+        // TODO: how to un-convert-from-string numbers in dataset
+        
+        let allCanvases = []
+        let allWebGLContexts = []
+        let allContexts = []
+        
+        let failureMessages = []
+
+        for (let j=0; j<parseInt(test.contexts); j++) {
+          let [canvas, gl, ctx] = bootCanvas(
+            test_area,
+            "canvas_"+test.id+"_"+j,
+            parseInt(test.width),
+            parseInt(test.height)
+          )
+          // Install fake getContext wrapper to allow context objects to be
+          // used in place of canvas objects for our tests:
+          ctx.getContext = (unused) => {return ctx};
+          allCanvases.push(canvas)
+          allWebGLContexts.push(gl)
+          allContexts.push(ctx)
+        }
+
+        let onFail = TriggerObject((message) => {
+          let status_box = document.getElementById("test_"+test.id+"_status")
+
+          status_box.setAttribute("class","failure")
+          status_box.innerHTML += message + "<br />";
+          failureMessages.push(message)
+
+          if (!failures.has(test.id)) {
+            failureSummaryHTML += "<li><a href='#"+test.id+"'>"+test.id+": "+test.description+"</a></li>"
+            failures.add(test.id);
+          }
+        })
+
+        try {
+          let test_fn = eval("test_"+test.id+"_body");
+          await test_fn(onFail, allCanvases, allContexts);
+        } catch (err) {
+          onFail.trigger(false, err.toString());
+        }
+
+        if (cleanUp) {
+          // Copy the resulting drawings out of the original canvas and
+          // safely trash the old gl context, to free up resources:
+          for (let j=0; j<parseInt(test.contexts); j++) {
+            let canvas_clone = allCanvases[j].cloneNode(true);
+            let clone_ctx = canvas_clone.getContext('2d');
+            clone_ctx.drawImage(allCanvases[j], 0, 0);
+
+            allCanvases[j].replaceWith(canvas_clone);
+
+            allWebGLContexts[j].getExtension('WEBGL_lose_context').loseContext();
+            allWebGLContexts[j] = null;
+          }
+        } else {
+          testContexts[test.id] = allContexts
+        }
+
+        suite_status.innerHTML = "["+ spinner_graphic(i) + "] Tests run: " + (i+1) + " / " + tests.length;
+
+        window.testComplete(
+          Object.assign({
+            "failureMessages": failureMessages
+          }, test), i+1, tests.length);
+
+        setTimeout(() => { testIteration(i+1) }, 1);
+      }
+
+      var finishTests = () => {
+        if (failures.size > 0) {
+          failureSummaryHTML += "</ul><br />"
+          suite_status.setAttribute("class","failure")
+          suite_status.innerHTML = failureSummaryHTML
+        } else {
+          suite_status.setAttribute("class","success")
+          suite_status.innerHTML = "[:)] All tests pass !" 
+        }
+
+        if (!cleanUp && tests.length==1){
+          focusTest(tests[0].dataset.id)
+        } else {
+          window.onhashchange()
+        }
+      };
+
+      testIteration(0);
+
+    }
+
+</script>
+</head>
+<body onload="runTests();">
+<h1> 2d.pattern </h1>
+<div id="suite_status" class="progress">&nbsp;</div>
+<hr />
+
+<p><a id="379" href="#379"\>379</a>: 2d.pattern.paint.orientation.canvas (Canvas patterns do not get flipped when painted)</p>
+
+<script>
+  async function test_379_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var canvas2 = allContexts[1];
+      canvas2.width = 100;
+      canvas2.height = 50;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.fillStyle = '#f00';
+      ctx2.fillRect(0, 0, 100, 25);
+      ctx2.fillStyle = '#0f0';
+      ctx2.fillRect(0, 25, 100, 25);
+      
+      var pattern = ctx.createPattern(canvas2, 'no-repeat');
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 25);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_379_content"
+  data-contexts="2"
+  data-id="379"
+  data-name="2d.pattern.paint.orientation.canvas"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.paint.orientation.canvas (Canvas patterns do not get flipped when painted)">&nbsp;</div><br />
+
+<div id="test_379_status">&nbsp;</div>
+
+[<a href="?runTests=379&noCleanup#379" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="338" href="#338"\>338</a>: 2d.pattern.basic.canvas</p>
+
+<script>
+  async function test_338_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var canvas2 = allContexts[1];
+      canvas2.width = 100;
+      canvas2.height = 50;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.fillStyle = '#0f0';
+      ctx2.fillRect(0, 0, 100, 50);
+      
+      var pattern = ctx.createPattern(canvas2, 'no-repeat');
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_338_content"
+  data-contexts="2"
+  data-id="338"
+  data-name="2d.pattern.basic.canvas"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.basic.canvas">&nbsp;</div><br />
+
+<div id="test_338_status">&nbsp;</div>
+
+[<a href="?runTests=338&noCleanup#338" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="354" href="#354"\>354</a>: 2d.pattern.repeat.unrecognisednull</p>
+
+<script>
+  async function test_354_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, "SYNTAX_ERR", function() { ctx.createPattern(canvas, "null"); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_354_content"
+  data-contexts="1"
+  data-id="354"
+  data-name="2d.pattern.repeat.unrecognisednull"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.repeat.unrecognisednull">&nbsp;</div><br />
+
+<div id="test_354_status">&nbsp;</div>
+
+[<a href="?runTests=354&noCleanup#354" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="375" href="#375"\>375</a>: 2d.pattern.paint.repeaty.basic</p>
+
+<script>
+  async function test_375_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('green-16x16.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 16, 50);
+      
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'repeat-y');
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_375_content"
+  data-contexts="1"
+  data-id="375"
+  data-name="2d.pattern.paint.repeaty.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.paint.repeaty.basic">&nbsp;</div><br />
+
+<div id="test_375_status">&nbsp;</div>
+
+[<a href="?runTests=375&noCleanup#375" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="378" href="#378"\>378</a>: 2d.pattern.paint.orientation.image (Image patterns do not get flipped when painted)</p>
+
+<script>
+  async function test_378_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('rrgg-256x256.png')
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'no-repeat');
+      ctx.fillStyle = pattern;
+      ctx.save();
+      ctx.translate(0, -103);
+      ctx.fillRect(0, 103, 100, 50);
+      ctx.restore();
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 25);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_378_content"
+  data-contexts="1"
+  data-id="378"
+  data-name="2d.pattern.paint.orientation.image"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.paint.orientation.image (Image patterns do not get flipped when painted)">&nbsp;</div><br />
+
+<div id="test_378_status">&nbsp;</div>
+
+[<a href="?runTests=378&noCleanup#378" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="352" href="#352"\>352</a>: 2d.pattern.repeat.undefined</p>
+
+<script>
+  async function test_352_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, "SYNTAX_ERR", function() { ctx.createPattern(canvas, undefined); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_352_content"
+  data-contexts="1"
+  data-id="352"
+  data-name="2d.pattern.repeat.undefined"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.repeat.undefined">&nbsp;</div><br />
+
+<div id="test_352_status">&nbsp;</div>
+
+[<a href="?runTests=352&noCleanup#352" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="362" href="#362"\>362</a>: 2d.pattern.paint.norepeat.basic</p>
+
+<script>
+  async function test_362_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('green.png')
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'no-repeat');
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_362_content"
+  data-contexts="1"
+  data-id="362"
+  data-name="2d.pattern.paint.norepeat.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.paint.norepeat.basic">&nbsp;</div><br />
+
+<div id="test_362_status">&nbsp;</div>
+
+[<a href="?runTests=362&noCleanup#362" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="361" href="#361"\>361</a>: 2d.pattern.crosscanvas</p>
+
+<script>
+  async function test_361_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('green.png')
+      var img = _AssetRef0;
+      
+      var pattern = allContexts[1].getContext('2d').createPattern(img, 'no-repeat');
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_361_content"
+  data-contexts="2"
+  data-id="361"
+  data-name="2d.pattern.crosscanvas"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.crosscanvas">&nbsp;</div><br />
+
+<div id="test_361_status">&nbsp;</div>
+
+[<a href="?runTests=361&noCleanup#361" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: expo assets aren't traditional DOM images, don't have src attributes
+<p><a id="348" href="#348"\>348</a>: 2d.pattern.image.incomplete.removedsrc</p>
+
+<script>
+  async function test_348_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red.png')
+      var img = _AssetRef0;
+      img.removeAttribute('src');
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.createPattern(img, 'repeat'), null, "ctx.createPattern(img, 'repeat')", "null");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_348_content"
+  data-contexts="1"
+  data-id="348"
+  data-name="2d.pattern.image.incomplete.removedsrc"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.image.incomplete.removedsrc">&nbsp;</div><br />
+
+<div id="test_348_status">&nbsp;</div>
+
+[<a href="?runTests=348&noCleanup#348" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="364" href="#364"\>364</a>: 2d.pattern.paint.norepeat.coord1</p>
+
+<script>
+  async function test_364_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('green.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(50, 0, 50, 50);
+      
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'no-repeat');
+      ctx.fillStyle = pattern;
+      ctx.translate(50, 0);
+      ctx.fillRect(-50, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_364_content"
+  data-contexts="1"
+  data-id="364"
+  data-name="2d.pattern.paint.norepeat.coord1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.paint.norepeat.coord1">&nbsp;</div><br />
+
+<div id="test_364_status">&nbsp;</div>
+
+[<a href="?runTests=364&noCleanup#364" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="356" href="#356"\>356</a>: 2d.pattern.repeat.nullsuffix</p>
+
+<script>
+  async function test_356_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, "SYNTAX_ERR", function() { ctx.createPattern(canvas, "repeat\0"); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_356_content"
+  data-contexts="1"
+  data-id="356"
+  data-name="2d.pattern.repeat.nullsuffix"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.repeat.nullsuffix">&nbsp;</div><br />
+
+<div id="test_356_status">&nbsp;</div>
+
+[<a href="?runTests=356&noCleanup#356" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="366" href="#366"\>366</a>: 2d.pattern.paint.norepeat.coord3</p>
+
+<script>
+  async function test_366_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'no-repeat');
+      ctx.fillStyle = pattern;
+      ctx.translate(50, 25);
+      ctx.fillRect(-50, -25, 100, 50);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 50, 25);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_366_content"
+  data-contexts="1"
+  data-id="366"
+  data-name="2d.pattern.paint.norepeat.coord3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.paint.norepeat.coord3">&nbsp;</div><br />
+
+<div id="test_366_status">&nbsp;</div>
+
+[<a href="?runTests=366&noCleanup#366" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="365" href="#365"\>365</a>: 2d.pattern.paint.norepeat.coord2</p>
+
+<script>
+  async function test_365_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('green.png')
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'no-repeat');
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, 50, 50);
+      
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(50, 0, 50, 50);
+      
+      ctx.fillStyle = pattern;
+      ctx.translate(50, 0);
+      ctx.fillRect(-50, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_365_content"
+  data-contexts="1"
+  data-id="365"
+  data-name="2d.pattern.paint.norepeat.coord2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.paint.norepeat.coord2">&nbsp;</div><br />
+
+<div id="test_365_status">&nbsp;</div>
+
+[<a href="?runTests=365&noCleanup#365" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: expo assets aren't traditional DOM images, don't have src attributes
+<p><a id="347" href="#347"\>347</a>: 2d.pattern.image.incomplete.emptysrc</p>
+
+<script>
+  async function test_347_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red.png')
+      var img = _AssetRef0;
+      img.src = "";
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.createPattern(img, 'repeat'), null, "ctx.createPattern(img, 'repeat')", "null");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_347_content"
+  data-contexts="1"
+  data-id="347"
+  data-name="2d.pattern.image.incomplete.emptysrc"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.image.incomplete.emptysrc">&nbsp;</div><br />
+
+<div id="test_347_status">&nbsp;</div>
+
+[<a href="?runTests=347&noCleanup#347" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: context does not exist within a DOM element with width/height attributes
+<p><a id="339" href="#339"\>339</a>: 2d.pattern.basic.zerocanvas</p>
+
+<script>
+  async function test_339_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          canvas.width = 0;
+      canvas.height = 10;
+      ctx.flush()
+      canvasAssert._assertSame(t, canvas.width, 0, "canvas.width", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, canvas.height, 10, "canvas.height", "10");
+      ctx.flush()
+      webAssert.assert_throws(t, "INVALID_STATE_ERR", function() { ctx.createPattern(canvas, 'repeat'); });
+      
+      canvas.width = 10;
+      canvas.height = 0;
+      ctx.flush()
+      canvasAssert._assertSame(t, canvas.width, 10, "canvas.width", "10");
+      ctx.flush()
+      canvasAssert._assertSame(t, canvas.height, 0, "canvas.height", "0");
+      ctx.flush()
+      webAssert.assert_throws(t, "INVALID_STATE_ERR", function() { ctx.createPattern(canvas, 'repeat'); });
+      
+      canvas.width = 0;
+      canvas.height = 0;
+      ctx.flush()
+      canvasAssert._assertSame(t, canvas.width, 0, "canvas.width", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, canvas.height, 0, "canvas.height", "0");
+      ctx.flush()
+      webAssert.assert_throws(t, "INVALID_STATE_ERR", function() { ctx.createPattern(canvas, 'repeat'); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_339_content"
+  data-contexts="1"
+  data-id="339"
+  data-name="2d.pattern.basic.zerocanvas"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.basic.zerocanvas">&nbsp;</div><br />
+
+<div id="test_339_status">&nbsp;</div>
+
+[<a href="?runTests=339&noCleanup#339" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: expo assets aren't traditional DOM images
+<p><a id="345" href="#345"\>345</a>: 2d.pattern.image.incomplete.immediate</p>
+
+<script>
+  async function test_345_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var img = new Image();
+      img.src = '../images/red.png';
+      // This triggers the "update the image data" algorithm.
+      // The image will not go to the "completely available" state
+      // until a fetch task in the networking task source is processed,
+      // so the image must not be fully decodable yet:
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.createPattern(img, 'repeat'), null, "ctx.createPattern(img, 'repeat')", "null");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_345_content"
+  data-contexts="1"
+  data-id="345"
+  data-name="2d.pattern.image.incomplete.immediate"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.image.incomplete.immediate">&nbsp;</div><br />
+
+<div id="test_345_status">&nbsp;</div>
+
+[<a href="?runTests=345&noCleanup#345" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="359" href="#359"\>359</a>: 2d.pattern.modify.canvas1</p>
+
+<script>
+  async function test_359_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var canvas2 = allContexts[1];
+      canvas2.width = 100;
+      canvas2.height = 50;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.fillStyle = '#0f0';
+      ctx2.fillRect(0, 0, 100, 50);
+      
+      var pattern = ctx.createPattern(canvas2, 'no-repeat');
+      
+      ctx2.fillStyle = '#f00';
+      ctx2.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_359_content"
+  data-contexts="2"
+  data-id="359"
+  data-name="2d.pattern.modify.canvas1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.modify.canvas1">&nbsp;</div><br />
+
+<div id="test_359_status">&nbsp;</div>
+
+[<a href="?runTests=359&noCleanup#359" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="360" href="#360"\>360</a>: 2d.pattern.modify.canvas2</p>
+
+<script>
+  async function test_360_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var canvas2 = allContexts[1];
+      canvas2.width = 100;
+      canvas2.height = 50;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.fillStyle = '#0f0';
+      ctx2.fillRect(0, 0, 100, 50);
+      
+      var pattern = ctx.createPattern(canvas2, 'no-repeat');
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx2.fillStyle = '#f00';
+      ctx2.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_360_content"
+  data-contexts="2"
+  data-id="360"
+  data-name="2d.pattern.modify.canvas2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.modify.canvas2">&nbsp;</div><br />
+
+<div id="test_360_status">&nbsp;</div>
+
+[<a href="?runTests=360&noCleanup#360" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="367" href="#367"\>367</a>: 2d.pattern.paint.repeat.basic</p>
+
+<script>
+  async function test_367_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('green-16x16.png')
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'repeat');
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_367_content"
+  data-contexts="1"
+  data-id="367"
+  data-name="2d.pattern.paint.repeat.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.paint.repeat.basic">&nbsp;</div><br />
+
+<div id="test_367_status">&nbsp;</div>
+
+[<a href="?runTests=367&noCleanup#367" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="372" href="#372"\>372</a>: 2d.pattern.paint.repeatx.basic</p>
+
+<script>
+  async function test_372_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('green-16x16.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 16);
+      
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'repeat-x');
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_372_content"
+  data-contexts="1"
+  data-id="372"
+  data-name="2d.pattern.paint.repeatx.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.paint.repeatx.basic">&nbsp;</div><br />
+
+<div id="test_372_status">&nbsp;</div>
+
+[<a href="?runTests=372&noCleanup#372" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: lol, yeah right
+<p><a id="380" href="#380"\>380</a>: 2d.pattern.animated.gif (createPattern() of an animated GIF draws the first frame)</p>
+
+<script>
+  async function test_380_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('anim-gr.gif')
+      
+      step_timeout(function () {
+          var pattern = ctx.createPattern(_AssetRef0, 'repeat');
+          ctx.fillStyle = pattern;
+          ctx.fillRect(0, 0, 50, 50);
+           {
+              ctx.fillRect(50, 0, 50, 50);
+              ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255", 2);
+              ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255", 2);
+          }), 250);
+      }, 250);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_380_content"
+  data-contexts="1"
+  data-id="380"
+  data-name="2d.pattern.animated.gif"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.animated.gif (createPattern() of an animated GIF draws the first frame)">&nbsp;</div><br />
+
+<div id="test_380_status">&nbsp;</div>
+
+[<a href="?runTests=380&noCleanup#380" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="341" href="#341"\>341</a>: 2d.pattern.image.undefined</p>
+
+<script>
+  async function test_341_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createPattern(undefined, 'repeat'); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_341_content"
+  data-contexts="1"
+  data-id="341"
+  data-name="2d.pattern.image.undefined"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.image.undefined">&nbsp;</div><br />
+
+<div id="test_341_status">&nbsp;</div>
+
+[<a href="?runTests=341&noCleanup#341" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: expo assets aren't traditional DOM images, don't have src attributes (TODO write an equivalent test that modifies canvas data or something after pattern creation)
+<p><a id="357" href="#357"\>357</a>: 2d.pattern.modify.image1</p>
+
+<script>
+  async function test_357_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('green.png')
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'no-repeat');
+      
+      img.onload = t.step_func_done(function ()
+      {
+          ctx.fillStyle = pattern;
+          ctx.fillRect(0, 0, 100, 50);
+      
+          ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+          ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+          ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+          ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      });
+      img.src = '/images/red.png';
+      
+  }
+</script>
+
+<div class="test"
+  id="test_357_content"
+  data-contexts="1"
+  data-id="357"
+  data-name="2d.pattern.modify.image1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.modify.image1">&nbsp;</div><br />
+
+<div id="test_357_status">&nbsp;</div>
+
+[<a href="?runTests=357&noCleanup#357" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: expo assets aren't traditional DOM images, don't have src attributes (TODO write an equivalent test that modifies canvas data or something after pattern creation)
+<p><a id="358" href="#358"\>358</a>: 2d.pattern.modify.image2</p>
+
+<script>
+  async function test_358_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('green.png')
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'no-repeat');
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#00f';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      img.onload = t.step_func_done(function ()
+      {
+          ctx.fillStyle = pattern;
+          ctx.fillRect(0, 0, 100, 50);
+      
+          ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+          ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+          ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+          ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      });
+      img.src = '/images/red.png';
+      
+  }
+</script>
+
+<div class="test"
+  id="test_358_content"
+  data-contexts="1"
+  data-id="358"
+  data-name="2d.pattern.modify.image2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.modify.image2">&nbsp;</div><br />
+
+<div id="test_358_status">&nbsp;</div>
+
+[<a href="?runTests=358&noCleanup#358" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: expo assets aren't traditional DOM images, don't have src attributes
+<p><a id="344" href="#344"\>344</a>: 2d.pattern.image.incomplete.nosrc</p>
+
+<script>
+  async function test_344_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var img = new Image();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.createPattern(img, 'repeat'), null, "ctx.createPattern(img, 'repeat')", "null");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_344_content"
+  data-contexts="1"
+  data-id="344"
+  data-name="2d.pattern.image.incomplete.nosrc"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.image.incomplete.nosrc">&nbsp;</div><br />
+
+<div id="test_344_status">&nbsp;</div>
+
+[<a href="?runTests=344&noCleanup#344" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="342" href="#342"\>342</a>: 2d.pattern.image.null</p>
+
+<script>
+  async function test_342_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createPattern(null, 'repeat'); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_342_content"
+  data-contexts="1"
+  data-id="342"
+  data-name="2d.pattern.image.null"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.image.null">&nbsp;</div><br />
+
+<div id="test_342_status">&nbsp;</div>
+
+[<a href="?runTests=342&noCleanup#342" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="343" href="#343"\>343</a>: 2d.pattern.image.string</p>
+
+<script>
+  async function test_343_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createPattern('../images/red.png', 'repeat'); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_343_content"
+  data-contexts="1"
+  data-id="343"
+  data-name="2d.pattern.image.string"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.image.string">&nbsp;</div><br />
+
+<div id="test_343_status">&nbsp;</div>
+
+[<a href="?runTests=343&noCleanup#343" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="369" href="#369"\>369</a>: 2d.pattern.paint.repeat.coord1</p>
+
+<script>
+  async function test_369_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('rgrg-256x256.png')
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'repeat');
+      ctx.fillStyle = pattern;
+      ctx.translate(-128, -78);
+      ctx.fillRect(128, 78, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_369_content"
+  data-contexts="1"
+  data-id="369"
+  data-name="2d.pattern.paint.repeat.coord1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.paint.repeat.coord1">&nbsp;</div><br />
+
+<div id="test_369_status">&nbsp;</div>
+
+[<a href="?runTests=369&noCleanup#369" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="370" href="#370"\>370</a>: 2d.pattern.paint.repeat.coord2</p>
+
+<script>
+  async function test_370_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('ggrr-256x256.png')
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'repeat');
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_370_content"
+  data-contexts="1"
+  data-id="370"
+  data-name="2d.pattern.paint.repeat.coord2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.paint.repeat.coord2">&nbsp;</div><br />
+
+<div id="test_370_status">&nbsp;</div>
+
+[<a href="?runTests=370&noCleanup#370" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="371" href="#371"\>371</a>: 2d.pattern.paint.repeat.coord3</p>
+
+<script>
+  async function test_371_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('rgrg-256x256.png')
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'repeat');
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.translate(-128, -78);
+      ctx.fillRect(128, 78, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_371_content"
+  data-contexts="1"
+  data-id="371"
+  data-name="2d.pattern.paint.repeat.coord3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.paint.repeat.coord3">&nbsp;</div><br />
+
+<div id="test_371_status">&nbsp;</div>
+
+[<a href="?runTests=371&noCleanup#371" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="336" href="#336"\>336</a>: 2d.pattern.basic.type</p>
+
+<script>
+  async function test_336_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('green.png')
+      ctx.flush()
+      canvasAssert._assertDifferent(t, window.CanvasPattern, undefined, "window.CanvasPattern", "undefined");
+      
+      window.CanvasPattern.prototype.thisImplementsCanvasPattern = true;
+      
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'no-repeat');
+      ctx.flush()
+      webAssert._assert(t, pattern.thisImplementsCanvasPattern, "pattern.thisImplementsCanvasPattern");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_336_content"
+  data-contexts="1"
+  data-id="336"
+  data-name="2d.pattern.basic.type"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.basic.type">&nbsp;</div><br />
+
+<div id="test_336_status">&nbsp;</div>
+
+[<a href="?runTests=336&noCleanup#336" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="376" href="#376"\>376</a>: 2d.pattern.paint.repeaty.outside</p>
+
+<script>
+  async function test_376_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red-16x16.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'repeat-y');
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 16, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_376_content"
+  data-contexts="1"
+  data-id="376"
+  data-name="2d.pattern.paint.repeaty.outside"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.paint.repeaty.outside">&nbsp;</div><br />
+
+<div id="test_376_status">&nbsp;</div>
+
+[<a href="?runTests=376&noCleanup#376" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="374" href="#374"\>374</a>: 2d.pattern.paint.repeatx.coord1</p>
+
+<script>
+  async function test_374_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red-16x16.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'repeat-x');
+      ctx.fillStyle = pattern;
+      ctx.translate(0, 16);
+      ctx.fillRect(0, -16, 100, 50);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 16);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_374_content"
+  data-contexts="1"
+  data-id="374"
+  data-name="2d.pattern.paint.repeatx.coord1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.paint.repeatx.coord1">&nbsp;</div><br />
+
+<div id="test_374_status">&nbsp;</div>
+
+[<a href="?runTests=374&noCleanup#374" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="368" href="#368"\>368</a>: 2d.pattern.paint.repeat.outside</p>
+
+<script>
+  async function test_368_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('green-16x16.png')
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'repeat');
+      ctx.fillStyle = pattern;
+      ctx.translate(50, 25);
+      ctx.fillRect(-50, -25, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_368_content"
+  data-contexts="1"
+  data-id="368"
+  data-name="2d.pattern.paint.repeat.outside"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.paint.repeat.outside">&nbsp;</div><br />
+
+<div id="test_368_status">&nbsp;</div>
+
+[<a href="?runTests=368&noCleanup#368" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="337" href="#337"\>337</a>: 2d.pattern.basic.image</p>
+
+<script>
+  async function test_337_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('green.png')
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'no-repeat');
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_337_content"
+  data-contexts="1"
+  data-id="337"
+  data-name="2d.pattern.basic.image"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.basic.image">&nbsp;</div><br />
+
+<div id="test_337_status">&nbsp;</div>
+
+[<a href="?runTests=337&noCleanup#337" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: expo assets aren't traditional DOM images, don't have src attributes (TODO investigate how to tell from native client if source asset is broken or not)
+<p><a id="349" href="#349"\>349</a>: 2d.pattern.image.broken</p>
+
+<script>
+  async function test_349_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('broken.png')
+      var img = _AssetRef0;
+      ctx.flush()
+      webAssert.assert_throws(t, "INVALID_STATE_ERR", function() { ctx.createPattern(img, 'repeat'); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_349_content"
+  data-contexts="1"
+  data-id="349"
+  data-name="2d.pattern.image.broken"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.image.broken">&nbsp;</div><br />
+
+<div id="test_349_status">&nbsp;</div>
+
+[<a href="?runTests=349&noCleanup#349" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: expo assets aren't traditional DOM images
+<p><a id="346" href="#346"\>346</a>: 2d.pattern.image.incomplete.reload</p>
+
+<script>
+  async function test_346_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow.png')
+      var img = _AssetRef0;
+      img.src = '../images/red.png';
+      // This triggers the "update the image data" algorithm,
+      // and resets the image to the "unavailable" state.
+      // The image will not go to the "completely available" state
+      // until a fetch task in the networking task source is processed,
+      // so the image must not be fully decodable yet:
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.createPattern(img, 'repeat'), null, "ctx.createPattern(img, 'repeat')", "null");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_346_content"
+  data-contexts="1"
+  data-id="346"
+  data-name="2d.pattern.image.incomplete.reload"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.image.incomplete.reload">&nbsp;</div><br />
+
+<div id="test_346_status">&nbsp;</div>
+
+[<a href="?runTests=346&noCleanup#346" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="350" href="#350"\>350</a>: 2d.pattern.repeat.empty</p>
+
+<script>
+  async function test_350_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('green-1x1.png')
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, "");
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, 200, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_350_content"
+  data-contexts="1"
+  data-id="350"
+  data-name="2d.pattern.repeat.empty"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.repeat.empty">&nbsp;</div><br />
+
+<div id="test_350_status">&nbsp;</div>
+
+[<a href="?runTests=350&noCleanup#350" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="363" href="#363"\>363</a>: 2d.pattern.paint.norepeat.outside</p>
+
+<script>
+  async function test_363_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red.png')
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'no-repeat');
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, -50, 100, 50);
+      ctx.fillRect(-100, 0, 100, 50);
+      ctx.fillRect(0, 50, 100, 50);
+      ctx.fillRect(100, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_363_content"
+  data-contexts="1"
+  data-id="363"
+  data-name="2d.pattern.paint.norepeat.outside"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.paint.norepeat.outside">&nbsp;</div><br />
+
+<div id="test_363_status">&nbsp;</div>
+
+[<a href="?runTests=363&noCleanup#363" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="355" href="#355"\>355</a>: 2d.pattern.repeat.case</p>
+
+<script>
+  async function test_355_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, "SYNTAX_ERR", function() { ctx.createPattern(canvas, "Repeat"); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_355_content"
+  data-contexts="1"
+  data-id="355"
+  data-name="2d.pattern.repeat.case"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.repeat.case">&nbsp;</div><br />
+
+<div id="test_355_status">&nbsp;</div>
+
+[<a href="?runTests=355&noCleanup#355" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="373" href="#373"\>373</a>: 2d.pattern.paint.repeatx.outside</p>
+
+<script>
+  async function test_373_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red-16x16.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'repeat-x');
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 16);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_373_content"
+  data-contexts="1"
+  data-id="373"
+  data-name="2d.pattern.paint.repeatx.outside"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.paint.repeatx.outside">&nbsp;</div><br />
+
+<div id="test_373_status">&nbsp;</div>
+
+[<a href="?runTests=373&noCleanup#373" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="353" href="#353"\>353</a>: 2d.pattern.repeat.unrecognised</p>
+
+<script>
+  async function test_353_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, "SYNTAX_ERR", function() { ctx.createPattern(canvas, "invalid"); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_353_content"
+  data-contexts="1"
+  data-id="353"
+  data-name="2d.pattern.repeat.unrecognised"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.repeat.unrecognised">&nbsp;</div><br />
+
+<div id="test_353_status">&nbsp;</div>
+
+[<a href="?runTests=353&noCleanup#353" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="351" href="#351"\>351</a>: 2d.pattern.repeat.null</p>
+
+<script>
+  async function test_351_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert._assert(t, ctx.createPattern(canvas, null) != null, "ctx.createPattern(canvas, null) != null");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_351_content"
+  data-contexts="1"
+  data-id="351"
+  data-name="2d.pattern.repeat.null"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.repeat.null">&nbsp;</div><br />
+
+<div id="test_351_status">&nbsp;</div>
+
+[<a href="?runTests=351&noCleanup#351" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="340" href="#340"\>340</a>: 2d.pattern.basic.nocontext</p>
+
+<script>
+  async function test_340_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var canvas2 = allContexts[1];
+      canvas2.width = 100;
+      canvas2.height = 50;
+      var pattern = ctx.createPattern(canvas2, 'no-repeat');
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_340_content"
+  data-contexts="2"
+  data-id="340"
+  data-name="2d.pattern.basic.nocontext"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.basic.nocontext">&nbsp;</div><br />
+
+<div id="test_340_status">&nbsp;</div>
+
+[<a href="?runTests=340&noCleanup#340" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="377" href="#377"\>377</a>: 2d.pattern.paint.repeaty.coord1</p>
+
+<script>
+  async function test_377_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red-16x16.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var img = _AssetRef0;
+      var pattern = ctx.createPattern(img, 'repeat-y');
+      ctx.fillStyle = pattern;
+      ctx.translate(48, 0);
+      ctx.fillRect(-48, 0, 100, 50);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 16, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_377_content"
+  data-contexts="1"
+  data-id="377"
+  data-name="2d.pattern.paint.repeaty.coord1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.pattern.paint.repeaty.coord1">&nbsp;</div><br />
+
+<div id="test_377_status">&nbsp;</div>
+
+[<a href="?runTests=377&noCleanup#377" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+
+<br /><br />
+&lt;3
+
+</body>
+</html>

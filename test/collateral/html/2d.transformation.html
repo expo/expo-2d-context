@@ -1,0 +1,1328 @@
+<html>
+
+<head>
+<title>2d.transformation // WebGL2DContext conformance</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<style>
+  div {
+    padding: 5px;
+  }
+  canvas {
+    border: 1px black solid;
+  }
+  .progress {
+    font: 100% monospace;
+  }
+  .failure {
+    background-color: red;
+    color: white;
+    font: 100% sans-serif;
+  }
+  .success {
+    background-color: #88FF88;
+    font: 100% sans-serif;
+  }
+  .failure a:link {
+    color: white
+  }
+  .failure a:visited {
+    color: white
+  }
+</style>
+
+<script type="text/javascript" src="bundle.js"></script>
+<script type="text/javascript" src="assets.js"></script>
+<script type="text/javascript" src="asserts.js"></script>
+
+<script type="text/javascript">
+    async function getAsset(name) {
+      return new Promise((resolve, reject) => {
+        let img = document.createElement("IMG")
+        img.onload = () => resolve(img)
+        img.onerror = reject
+        img.src = rawImageAssets[name]
+      })
+    }
+
+    function bootCanvas(container, id, width, height) {
+        var canvas = document.createElement("CANVAS")
+        canvas.setAttribute("id", id)
+        canvas.setAttribute("width", width)
+        canvas.setAttribute("height", height)
+
+        container.appendChild(canvas)
+
+        var gl = canvas.getContext("webgl2", {
+          stencil: 8,
+          preserveDrawingBuffer: true
+        });
+        gl.viewportWidth = canvas.width;
+        gl.viewportHeight = canvas.height;
+        if (!gl) {
+            console.log("Could not initialise WebGL, sorry :-(")
+            return null;
+        }
+
+        gl.clearColor(1.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        /* TODO: figure out how to pass some gradient tests that need
+         * more grad stops: */
+        let ctx = new Expo2DContext.default(gl, maxGradStops=50)
+        ctx.getContext = () => {return ctx;}
+        
+        return [canvas, gl, ctx]
+    }
+
+    function spinner_graphic(i) {
+      let anim = ["/","&ndash;","\\","|","/","&ndash;","\\", "|"]
+      return anim[i%anim.length]
+    }
+
+    var testContexts = {};
+
+    function focusTest (num) {
+      window.ctx = testContexts[num][0]
+    }
+    window.onhashchange = () => {
+      var url = new URL(window.location)
+      var hashVal = url.hash.substr(1)
+      if (hashVal in testContexts) {
+        focusTest(hashVal)
+      }
+    }
+
+    async function runTests() {
+
+      // TODO: assets??
+
+      if (!window.testComplete) {
+        window.testComplete = (testResults, completedTests, totalTests) =>
+          { /* PUPPETEER STUB */ };
+      }
+
+      testContexts = {};
+
+      var tests = document.getElementsByClassName("test")
+
+      var url = new URL(window.location)
+      if (url.searchParams.get("runTests") != null) {
+        selected_test_ids = url.searchParams.get("runTests").split(",").map((x) => parseInt(x))
+        tests = selected_test_ids.map((x) => document.getElementById("test_"+x+"_content")) 
+      }
+
+      var cleanUp = url.searchParams.get("noCleanup") == null
+
+      let suite_status = document.getElementById("suite_status")
+
+      var failures = new Set();
+      var failureSummaryHTML = "Failed:<ul>"
+
+      let i = 0;
+
+      var testIteration = async (i) => {
+
+        if (i >= tests.length) {
+          finishTests();
+          return;
+        }
+
+        let test_area = tests[i]
+        let test = test_area.dataset
+    
+        // TODO: how to un-convert-from-string numbers in dataset
+        
+        let allCanvases = []
+        let allWebGLContexts = []
+        let allContexts = []
+        
+        let failureMessages = []
+
+        for (let j=0; j<parseInt(test.contexts); j++) {
+          let [canvas, gl, ctx] = bootCanvas(
+            test_area,
+            "canvas_"+test.id+"_"+j,
+            parseInt(test.width),
+            parseInt(test.height)
+          )
+          // Install fake getContext wrapper to allow context objects to be
+          // used in place of canvas objects for our tests:
+          ctx.getContext = (unused) => {return ctx};
+          allCanvases.push(canvas)
+          allWebGLContexts.push(gl)
+          allContexts.push(ctx)
+        }
+
+        let onFail = TriggerObject((message) => {
+          let status_box = document.getElementById("test_"+test.id+"_status")
+
+          status_box.setAttribute("class","failure")
+          status_box.innerHTML += message + "<br />";
+          failureMessages.push(message)
+
+          if (!failures.has(test.id)) {
+            failureSummaryHTML += "<li><a href='#"+test.id+"'>"+test.id+": "+test.description+"</a></li>"
+            failures.add(test.id);
+          }
+        })
+
+        try {
+          let test_fn = eval("test_"+test.id+"_body");
+          await test_fn(onFail, allCanvases, allContexts);
+        } catch (err) {
+          onFail.trigger(false, err.toString());
+        }
+
+        if (cleanUp) {
+          // Copy the resulting drawings out of the original canvas and
+          // safely trash the old gl context, to free up resources:
+          for (let j=0; j<parseInt(test.contexts); j++) {
+            let canvas_clone = allCanvases[j].cloneNode(true);
+            let clone_ctx = canvas_clone.getContext('2d');
+            clone_ctx.drawImage(allCanvases[j], 0, 0);
+
+            allCanvases[j].replaceWith(canvas_clone);
+
+            allWebGLContexts[j].getExtension('WEBGL_lose_context').loseContext();
+            allWebGLContexts[j] = null;
+          }
+        } else {
+          testContexts[test.id] = allContexts
+        }
+
+        suite_status.innerHTML = "["+ spinner_graphic(i) + "] Tests run: " + (i+1) + " / " + tests.length;
+
+        window.testComplete(
+          Object.assign({
+            "failureMessages": failureMessages
+          }, test), i+1, tests.length);
+
+        setTimeout(() => { testIteration(i+1) }, 1);
+      }
+
+      var finishTests = () => {
+        if (failures.size > 0) {
+          failureSummaryHTML += "</ul><br />"
+          suite_status.setAttribute("class","failure")
+          suite_status.innerHTML = failureSummaryHTML
+        } else {
+          suite_status.setAttribute("class","success")
+          suite_status.innerHTML = "[:)] All tests pass !" 
+        }
+
+        if (!cleanUp && tests.length==1){
+          focusTest(tests[0].dataset.id)
+        } else {
+          window.onhashchange()
+        }
+      };
+
+      testIteration(0);
+
+    }
+
+</script>
+</head>
+<body onload="runTests();">
+<h1> 2d.transformation </h1>
+<div id="suite_status" class="progress">&nbsp;</div>
+<hr />
+
+<p><a id="56" href="#56"\>56</a>: 2d.transformation.transform.nonfinite (transform() with Infinity/NaN is ignored)</p>
+
+<script>
+  async function test_56_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.translate(100, 10);
+      ctx.transform(Infinity, 0, 0, 0, 0, 0);
+      ctx.transform(-Infinity, 0, 0, 0, 0, 0);
+      ctx.transform(NaN, 0, 0, 0, 0, 0);
+      ctx.transform(0, Infinity, 0, 0, 0, 0);
+      ctx.transform(0, -Infinity, 0, 0, 0, 0);
+      ctx.transform(0, NaN, 0, 0, 0, 0);
+      ctx.transform(0, 0, Infinity, 0, 0, 0);
+      ctx.transform(0, 0, -Infinity, 0, 0, 0);
+      ctx.transform(0, 0, NaN, 0, 0, 0);
+      ctx.transform(0, 0, 0, Infinity, 0, 0);
+      ctx.transform(0, 0, 0, -Infinity, 0, 0);
+      ctx.transform(0, 0, 0, NaN, 0, 0);
+      ctx.transform(0, 0, 0, 0, Infinity, 0);
+      ctx.transform(0, 0, 0, 0, -Infinity, 0);
+      ctx.transform(0, 0, 0, 0, NaN, 0);
+      ctx.transform(0, 0, 0, 0, 0, Infinity);
+      ctx.transform(0, 0, 0, 0, 0, -Infinity);
+      ctx.transform(0, 0, 0, 0, 0, NaN);
+      ctx.transform(Infinity, Infinity, 0, 0, 0, 0);
+      ctx.transform(Infinity, Infinity, Infinity, 0, 0, 0);
+      ctx.transform(Infinity, Infinity, Infinity, Infinity, 0, 0);
+      ctx.transform(Infinity, Infinity, Infinity, Infinity, Infinity, 0);
+      ctx.transform(Infinity, Infinity, Infinity, Infinity, Infinity, Infinity);
+      ctx.transform(Infinity, Infinity, Infinity, Infinity, 0, Infinity);
+      ctx.transform(Infinity, Infinity, Infinity, 0, Infinity, 0);
+      ctx.transform(Infinity, Infinity, Infinity, 0, Infinity, Infinity);
+      ctx.transform(Infinity, Infinity, Infinity, 0, 0, Infinity);
+      ctx.transform(Infinity, Infinity, 0, Infinity, 0, 0);
+      ctx.transform(Infinity, Infinity, 0, Infinity, Infinity, 0);
+      ctx.transform(Infinity, Infinity, 0, Infinity, Infinity, Infinity);
+      ctx.transform(Infinity, Infinity, 0, Infinity, 0, Infinity);
+      ctx.transform(Infinity, Infinity, 0, 0, Infinity, 0);
+      ctx.transform(Infinity, Infinity, 0, 0, Infinity, Infinity);
+      ctx.transform(Infinity, Infinity, 0, 0, 0, Infinity);
+      ctx.transform(Infinity, 0, Infinity, 0, 0, 0);
+      ctx.transform(Infinity, 0, Infinity, Infinity, 0, 0);
+      ctx.transform(Infinity, 0, Infinity, Infinity, Infinity, 0);
+      ctx.transform(Infinity, 0, Infinity, Infinity, Infinity, Infinity);
+      ctx.transform(Infinity, 0, Infinity, Infinity, 0, Infinity);
+      ctx.transform(Infinity, 0, Infinity, 0, Infinity, 0);
+      ctx.transform(Infinity, 0, Infinity, 0, Infinity, Infinity);
+      ctx.transform(Infinity, 0, Infinity, 0, 0, Infinity);
+      ctx.transform(Infinity, 0, 0, Infinity, 0, 0);
+      ctx.transform(Infinity, 0, 0, Infinity, Infinity, 0);
+      ctx.transform(Infinity, 0, 0, Infinity, Infinity, Infinity);
+      ctx.transform(Infinity, 0, 0, Infinity, 0, Infinity);
+      ctx.transform(Infinity, 0, 0, 0, Infinity, 0);
+      ctx.transform(Infinity, 0, 0, 0, Infinity, Infinity);
+      ctx.transform(Infinity, 0, 0, 0, 0, Infinity);
+      ctx.transform(0, Infinity, Infinity, 0, 0, 0);
+      ctx.transform(0, Infinity, Infinity, Infinity, 0, 0);
+      ctx.transform(0, Infinity, Infinity, Infinity, Infinity, 0);
+      ctx.transform(0, Infinity, Infinity, Infinity, Infinity, Infinity);
+      ctx.transform(0, Infinity, Infinity, Infinity, 0, Infinity);
+      ctx.transform(0, Infinity, Infinity, 0, Infinity, 0);
+      ctx.transform(0, Infinity, Infinity, 0, Infinity, Infinity);
+      ctx.transform(0, Infinity, Infinity, 0, 0, Infinity);
+      ctx.transform(0, Infinity, 0, Infinity, 0, 0);
+      ctx.transform(0, Infinity, 0, Infinity, Infinity, 0);
+      ctx.transform(0, Infinity, 0, Infinity, Infinity, Infinity);
+      ctx.transform(0, Infinity, 0, Infinity, 0, Infinity);
+      ctx.transform(0, Infinity, 0, 0, Infinity, 0);
+      ctx.transform(0, Infinity, 0, 0, Infinity, Infinity);
+      ctx.transform(0, Infinity, 0, 0, 0, Infinity);
+      ctx.transform(0, 0, Infinity, Infinity, 0, 0);
+      ctx.transform(0, 0, Infinity, Infinity, Infinity, 0);
+      ctx.transform(0, 0, Infinity, Infinity, Infinity, Infinity);
+      ctx.transform(0, 0, Infinity, Infinity, 0, Infinity);
+      ctx.transform(0, 0, Infinity, 0, Infinity, 0);
+      ctx.transform(0, 0, Infinity, 0, Infinity, Infinity);
+      ctx.transform(0, 0, Infinity, 0, 0, Infinity);
+      ctx.transform(0, 0, 0, Infinity, Infinity, 0);
+      ctx.transform(0, 0, 0, Infinity, Infinity, Infinity);
+      ctx.transform(0, 0, 0, Infinity, 0, Infinity);
+      ctx.transform(0, 0, 0, 0, Infinity, Infinity);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(-100, -10, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_56_content"
+  data-contexts="1"
+  data-id="56"
+  data-name="2d.transformation.transform.nonfinite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.transform.nonfinite (transform() with Infinity/NaN is ignored)">&nbsp;</div><br />
+
+<div id="test_56_status">&nbsp;</div>
+
+[<a href="?runTests=56&noCleanup#56" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="44" href="#44"\>44</a>: 2d.transformation.scale.multiple (Multiple scale()s combine)</p>
+
+<script>
+  async function test_44_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.scale(Math.sqrt(2), Math.sqrt(2));
+      ctx.scale(Math.sqrt(2), Math.sqrt(2));
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 50, 25);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 90,40, 0,255,0,255, "90,40", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_44_content"
+  data-contexts="1"
+  data-id="44"
+  data-name="2d.transformation.scale.multiple"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.scale.multiple (Multiple scale()s combine)">&nbsp;</div><br />
+
+<div id="test_44_status">&nbsp;</div>
+
+[<a href="?runTests=44&noCleanup#44" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="46" href="#46"\>46</a>: 2d.transformation.rotate.radians (rotate() uses radians)</p>
+
+<script>
+  async function test_46_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.rotate(Math.PI); // should fail obviously if this is 3.1 degrees
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(-100, -50, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_46_content"
+  data-contexts="1"
+  data-id="46"
+  data-name="2d.transformation.rotate.radians"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.rotate.radians (rotate() uses radians)">&nbsp;</div><br />
+
+<div id="test_46_status">&nbsp;</div>
+
+[<a href="?runTests=46&noCleanup#46" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="39" href="#39"\>39</a>: 2d.transformation.scale.basic (scale() works)</p>
+
+<script>
+  async function test_39_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.scale(2, 4);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 50, 12.5);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 90,40, 0,255,0,255, "90,40", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_39_content"
+  data-contexts="1"
+  data-id="39"
+  data-name="2d.transformation.scale.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.scale.basic (scale() works)">&nbsp;</div><br />
+
+<div id="test_39_status">&nbsp;</div>
+
+[<a href="?runTests=39&noCleanup#39" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="42" href="#42"\>42</a>: 2d.transformation.scale.large (scale() with large scale factors works)</p>
+
+<script>
+  async function test_42_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.scale(1e5, 1e5);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 1, 1);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_42_content"
+  data-contexts="1"
+  data-id="42"
+  data-name="2d.transformation.scale.large"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.scale.large (scale() with large scale factors works)">&nbsp;</div><br />
+
+<div id="test_42_status">&nbsp;</div>
+
+[<a href="?runTests=42&noCleanup#42" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="55" href="#55"\>55</a>: 2d.transformation.transform.multiply (transform() multiplies the CTM)</p>
+
+<script>
+  async function test_55_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.transform(1,2, 3,4, 5,6);
+      ctx.transform(-2,1, 3/2,-1/2, 1,-2);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_55_content"
+  data-contexts="1"
+  data-id="55"
+  data-name="2d.transformation.transform.multiply"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.transform.multiply (transform() multiplies the CTM)">&nbsp;</div><br />
+
+<div id="test_55_status">&nbsp;</div>
+
+[<a href="?runTests=55&noCleanup#55" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="45" href="#45"\>45</a>: 2d.transformation.rotate.zero (rotate() by 0 does nothing)</p>
+
+<script>
+  async function test_45_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.rotate(0);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_45_content"
+  data-contexts="1"
+  data-id="45"
+  data-name="2d.transformation.rotate.zero"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.rotate.zero (rotate() by 0 does nothing)">&nbsp;</div><br />
+
+<div id="test_45_status">&nbsp;</div>
+
+[<a href="?runTests=45&noCleanup#45" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="49" href="#49"\>49</a>: 2d.transformation.rotate.wrapnegative (rotate() wraps large negative values correctly)</p>
+
+<script>
+  async function test_49_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.rotate(-Math.PI * (1 + 4096));
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(-100, -50, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,2, 0,255,0,255, "98,2", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,47, 0,255,0,255, "98,47", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_49_content"
+  data-contexts="1"
+  data-id="49"
+  data-name="2d.transformation.rotate.wrapnegative"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.rotate.wrapnegative (rotate() wraps large negative values correctly)">&nbsp;</div><br />
+
+<div id="test_49_status">&nbsp;</div>
+
+[<a href="?runTests=49&noCleanup#49" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="43" href="#43"\>43</a>: 2d.transformation.scale.nonfinite (scale() with Infinity/NaN is ignored)</p>
+
+<script>
+  async function test_43_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.translate(100, 10);
+      ctx.scale(Infinity, 0.1);
+      ctx.scale(-Infinity, 0.1);
+      ctx.scale(NaN, 0.1);
+      ctx.scale(0.1, Infinity);
+      ctx.scale(0.1, -Infinity);
+      ctx.scale(0.1, NaN);
+      ctx.scale(Infinity, Infinity);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(-100, -10, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_43_content"
+  data-contexts="1"
+  data-id="43"
+  data-name="2d.transformation.scale.nonfinite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.scale.nonfinite (scale() with Infinity/NaN is ignored)">&nbsp;</div><br />
+
+<div id="test_43_status">&nbsp;</div>
+
+[<a href="?runTests=43&noCleanup#43" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="38" href="#38"\>38</a>: 2d.transformation.order (Transformations are applied in the right order)</p>
+
+<script>
+  async function test_38_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.scale(2, 1);
+      ctx.rotate(Math.PI / 2);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, -50, 50, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_38_content"
+  data-contexts="1"
+  data-id="38"
+  data-name="2d.transformation.order"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.order (Transformations are applied in the right order)">&nbsp;</div><br />
+
+<div id="test_38_status">&nbsp;</div>
+
+[<a href="?runTests=38&noCleanup#38" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="47" href="#47"\>47</a>: 2d.transformation.rotate.direction (rotate() is clockwise)</p>
+
+<script>
+  async function test_47_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.rotate(Math.PI / 2);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, -100, 50, 100);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_47_content"
+  data-contexts="1"
+  data-id="47"
+  data-name="2d.transformation.rotate.direction"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.rotate.direction (rotate() is clockwise)">&nbsp;</div><br />
+
+<div id="test_47_status">&nbsp;</div>
+
+[<a href="?runTests=47&noCleanup#47" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="54" href="#54"\>54</a>: 2d.transformation.transform.skewed (transform() with skewy matrix transforms correctly)</p>
+
+<script>
+  async function test_54_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          // Create green with a red square ring inside it
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(20, 10, 60, 30);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(40, 20, 20, 10);
+      
+      // Draw a skewed shape to fill that gap, to make sure it is aligned correctly
+      ctx.transform(1,4, 2,3, 5,6);
+      // Post-transform coordinates:
+      //   [[20,10],[80,10],[80,40],[20,40],[20,10],[40,20],[40,30],[60,30],[60,20],[40,20],[20,10]];
+      // Hence pre-transform coordinates:
+      var pts=[[-7.4,11.2],[-43.4,59.2],[-31.4,53.2],[4.6,5.2],[-7.4,11.2],
+               [-15.4,25.2],[-11.4,23.2],[-23.4,39.2],[-27.4,41.2],[-15.4,25.2],
+               [-7.4,11.2]];
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (var i = 0; i < pts.length; ++i)
+          ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 21,11, 0,255,0,255, "21,11", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 79,11, 0,255,0,255, "79,11", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 21,39, 0,255,0,255, "21,39", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 79,39, 0,255,0,255, "79,39", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 39,19, 0,255,0,255, "39,19", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 61,19, 0,255,0,255, "61,19", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 39,31, 0,255,0,255, "39,31", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 61,31, 0,255,0,255, "61,31", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_54_content"
+  data-contexts="1"
+  data-id="54"
+  data-name="2d.transformation.transform.skewed"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.transform.skewed (transform() with skewy matrix transforms correctly)">&nbsp;</div><br />
+
+<div id="test_54_status">&nbsp;</div>
+
+[<a href="?runTests=54&noCleanup#54" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="48" href="#48"\>48</a>: 2d.transformation.rotate.wrap (rotate() wraps large positive values correctly)</p>
+
+<script>
+  async function test_48_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.rotate(Math.PI * (1 + 4096)); // == pi (mod 2*pi)
+      // We need about pi +/- 0.001 in order to get correct-looking results
+      // 32-bit floats can store pi*4097 with precision 2^-10, so that should
+      // be safe enough on reasonable implementations
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(-100, -50, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,2, 0,255,0,255, "98,2", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,47, 0,255,0,255, "98,47", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_48_content"
+  data-contexts="1"
+  data-id="48"
+  data-name="2d.transformation.rotate.wrap"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.rotate.wrap (rotate() wraps large positive values correctly)">&nbsp;</div><br />
+
+<div id="test_48_status">&nbsp;</div>
+
+[<a href="?runTests=48&noCleanup#48" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="41" href="#41"\>41</a>: 2d.transformation.scale.negative (scale() with negative scale factors works)</p>
+
+<script>
+  async function test_41_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.save();
+      ctx.scale(-1, 1);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(-50, 0, 50, 50);
+      ctx.restore();
+      
+      ctx.save();
+      ctx.scale(1, -1);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(50, -50, 50, 50);
+      ctx.restore();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_41_content"
+  data-contexts="1"
+  data-id="41"
+  data-name="2d.transformation.scale.negative"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.scale.negative (scale() with negative scale factors works)">&nbsp;</div><br />
+
+<div id="test_41_status">&nbsp;</div>
+
+[<a href="?runTests=41&noCleanup#41" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: This test straight up expects incorrect behavior (setTransform() should not be allowed to have 0 arguments)
+<p><a id="58" href="#58"\>58</a>: 2d.transformation.setTransform.multiple</p>
+
+<script>
+  async function test_58_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.setTransform(1/2,0, 0,1/2, 0,0);
+      ctx.setTransform();
+      ctx.setTransform(2,0, 0,2, 0,0);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 50, 25);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,35, 0,255,0,255, "75,35", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_58_content"
+  data-contexts="1"
+  data-id="58"
+  data-name="2d.transformation.setTransform.multiple"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.setTransform.multiple">&nbsp;</div><br />
+
+<div id="test_58_status">&nbsp;</div>
+
+[<a href="?runTests=58&noCleanup#58" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="51" href="#51"\>51</a>: 2d.transformation.translate.basic (translate() works)</p>
+
+<script>
+  async function test_51_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.translate(100, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(-100, -50, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 90,40, 0,255,0,255, "90,40", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_51_content"
+  data-contexts="1"
+  data-id="51"
+  data-name="2d.transformation.translate.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.translate.basic (translate() works)">&nbsp;</div><br />
+
+<div id="test_51_status">&nbsp;</div>
+
+[<a href="?runTests=51&noCleanup#51" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="59" href="#59"\>59</a>: 2d.transformation.setTransform.nonfinite (setTransform() with Infinity/NaN is ignored)</p>
+
+<script>
+  async function test_59_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.translate(100, 10);
+      ctx.setTransform(Infinity, 0, 0, 0, 0, 0);
+      ctx.setTransform(-Infinity, 0, 0, 0, 0, 0);
+      ctx.setTransform(NaN, 0, 0, 0, 0, 0);
+      ctx.setTransform(0, Infinity, 0, 0, 0, 0);
+      ctx.setTransform(0, -Infinity, 0, 0, 0, 0);
+      ctx.setTransform(0, NaN, 0, 0, 0, 0);
+      ctx.setTransform(0, 0, Infinity, 0, 0, 0);
+      ctx.setTransform(0, 0, -Infinity, 0, 0, 0);
+      ctx.setTransform(0, 0, NaN, 0, 0, 0);
+      ctx.setTransform(0, 0, 0, Infinity, 0, 0);
+      ctx.setTransform(0, 0, 0, -Infinity, 0, 0);
+      ctx.setTransform(0, 0, 0, NaN, 0, 0);
+      ctx.setTransform(0, 0, 0, 0, Infinity, 0);
+      ctx.setTransform(0, 0, 0, 0, -Infinity, 0);
+      ctx.setTransform(0, 0, 0, 0, NaN, 0);
+      ctx.setTransform(0, 0, 0, 0, 0, Infinity);
+      ctx.setTransform(0, 0, 0, 0, 0, -Infinity);
+      ctx.setTransform(0, 0, 0, 0, 0, NaN);
+      ctx.setTransform(Infinity, Infinity, 0, 0, 0, 0);
+      ctx.setTransform(Infinity, Infinity, Infinity, 0, 0, 0);
+      ctx.setTransform(Infinity, Infinity, Infinity, Infinity, 0, 0);
+      ctx.setTransform(Infinity, Infinity, Infinity, Infinity, Infinity, 0);
+      ctx.setTransform(Infinity, Infinity, Infinity, Infinity, Infinity, Infinity);
+      ctx.setTransform(Infinity, Infinity, Infinity, Infinity, 0, Infinity);
+      ctx.setTransform(Infinity, Infinity, Infinity, 0, Infinity, 0);
+      ctx.setTransform(Infinity, Infinity, Infinity, 0, Infinity, Infinity);
+      ctx.setTransform(Infinity, Infinity, Infinity, 0, 0, Infinity);
+      ctx.setTransform(Infinity, Infinity, 0, Infinity, 0, 0);
+      ctx.setTransform(Infinity, Infinity, 0, Infinity, Infinity, 0);
+      ctx.setTransform(Infinity, Infinity, 0, Infinity, Infinity, Infinity);
+      ctx.setTransform(Infinity, Infinity, 0, Infinity, 0, Infinity);
+      ctx.setTransform(Infinity, Infinity, 0, 0, Infinity, 0);
+      ctx.setTransform(Infinity, Infinity, 0, 0, Infinity, Infinity);
+      ctx.setTransform(Infinity, Infinity, 0, 0, 0, Infinity);
+      ctx.setTransform(Infinity, 0, Infinity, 0, 0, 0);
+      ctx.setTransform(Infinity, 0, Infinity, Infinity, 0, 0);
+      ctx.setTransform(Infinity, 0, Infinity, Infinity, Infinity, 0);
+      ctx.setTransform(Infinity, 0, Infinity, Infinity, Infinity, Infinity);
+      ctx.setTransform(Infinity, 0, Infinity, Infinity, 0, Infinity);
+      ctx.setTransform(Infinity, 0, Infinity, 0, Infinity, 0);
+      ctx.setTransform(Infinity, 0, Infinity, 0, Infinity, Infinity);
+      ctx.setTransform(Infinity, 0, Infinity, 0, 0, Infinity);
+      ctx.setTransform(Infinity, 0, 0, Infinity, 0, 0);
+      ctx.setTransform(Infinity, 0, 0, Infinity, Infinity, 0);
+      ctx.setTransform(Infinity, 0, 0, Infinity, Infinity, Infinity);
+      ctx.setTransform(Infinity, 0, 0, Infinity, 0, Infinity);
+      ctx.setTransform(Infinity, 0, 0, 0, Infinity, 0);
+      ctx.setTransform(Infinity, 0, 0, 0, Infinity, Infinity);
+      ctx.setTransform(Infinity, 0, 0, 0, 0, Infinity);
+      ctx.setTransform(0, Infinity, Infinity, 0, 0, 0);
+      ctx.setTransform(0, Infinity, Infinity, Infinity, 0, 0);
+      ctx.setTransform(0, Infinity, Infinity, Infinity, Infinity, 0);
+      ctx.setTransform(0, Infinity, Infinity, Infinity, Infinity, Infinity);
+      ctx.setTransform(0, Infinity, Infinity, Infinity, 0, Infinity);
+      ctx.setTransform(0, Infinity, Infinity, 0, Infinity, 0);
+      ctx.setTransform(0, Infinity, Infinity, 0, Infinity, Infinity);
+      ctx.setTransform(0, Infinity, Infinity, 0, 0, Infinity);
+      ctx.setTransform(0, Infinity, 0, Infinity, 0, 0);
+      ctx.setTransform(0, Infinity, 0, Infinity, Infinity, 0);
+      ctx.setTransform(0, Infinity, 0, Infinity, Infinity, Infinity);
+      ctx.setTransform(0, Infinity, 0, Infinity, 0, Infinity);
+      ctx.setTransform(0, Infinity, 0, 0, Infinity, 0);
+      ctx.setTransform(0, Infinity, 0, 0, Infinity, Infinity);
+      ctx.setTransform(0, Infinity, 0, 0, 0, Infinity);
+      ctx.setTransform(0, 0, Infinity, Infinity, 0, 0);
+      ctx.setTransform(0, 0, Infinity, Infinity, Infinity, 0);
+      ctx.setTransform(0, 0, Infinity, Infinity, Infinity, Infinity);
+      ctx.setTransform(0, 0, Infinity, Infinity, 0, Infinity);
+      ctx.setTransform(0, 0, Infinity, 0, Infinity, 0);
+      ctx.setTransform(0, 0, Infinity, 0, Infinity, Infinity);
+      ctx.setTransform(0, 0, Infinity, 0, 0, Infinity);
+      ctx.setTransform(0, 0, 0, Infinity, Infinity, 0);
+      ctx.setTransform(0, 0, 0, Infinity, Infinity, Infinity);
+      ctx.setTransform(0, 0, 0, Infinity, 0, Infinity);
+      ctx.setTransform(0, 0, 0, 0, Infinity, Infinity);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(-100, -10, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_59_content"
+  data-contexts="1"
+  data-id="59"
+  data-name="2d.transformation.setTransform.nonfinite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.setTransform.nonfinite (setTransform() with Infinity/NaN is ignored)">&nbsp;</div><br />
+
+<div id="test_59_status">&nbsp;</div>
+
+[<a href="?runTests=59&noCleanup#59" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="53" href="#53"\>53</a>: 2d.transformation.transform.identity (transform() with the identity matrix does nothing)</p>
+
+<script>
+  async function test_53_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.transform(1,0, 0,1, 0,0);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_53_content"
+  data-contexts="1"
+  data-id="53"
+  data-name="2d.transformation.transform.identity"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.transform.identity (transform() with the identity matrix does nothing)">&nbsp;</div><br />
+
+<div id="test_53_status">&nbsp;</div>
+
+[<a href="?runTests=53&noCleanup#53" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="52" href="#52"\>52</a>: 2d.transformation.translate.nonfinite (translate() with Infinity/NaN is ignored)</p>
+
+<script>
+  async function test_52_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.translate(100, 10);
+      ctx.translate(Infinity, 0.1);
+      ctx.translate(-Infinity, 0.1);
+      ctx.translate(NaN, 0.1);
+      ctx.translate(0.1, Infinity);
+      ctx.translate(0.1, -Infinity);
+      ctx.translate(0.1, NaN);
+      ctx.translate(Infinity, Infinity);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(-100, -10, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_52_content"
+  data-contexts="1"
+  data-id="52"
+  data-name="2d.transformation.translate.nonfinite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.translate.nonfinite (translate() with Infinity/NaN is ignored)">&nbsp;</div><br />
+
+<div id="test_52_status">&nbsp;</div>
+
+[<a href="?runTests=52&noCleanup#52" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="57" href="#57"\>57</a>: 2d.transformation.setTransform.skewed</p>
+
+<script>
+  async function test_57_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          // Create green with a red square ring inside it
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(20, 10, 60, 30);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(40, 20, 20, 10);
+      
+      // Draw a skewed shape to fill that gap, to make sure it is aligned correctly
+      ctx.setTransform(1,4, 2,3, 5,6);
+      // Post-transform coordinates:
+      //   [[20,10],[80,10],[80,40],[20,40],[20,10],[40,20],[40,30],[60,30],[60,20],[40,20],[20,10]];
+      // Hence pre-transform coordinates:
+      var pts=[[-7.4,11.2],[-43.4,59.2],[-31.4,53.2],[4.6,5.2],[-7.4,11.2],
+               [-15.4,25.2],[-11.4,23.2],[-23.4,39.2],[-27.4,41.2],[-15.4,25.2],
+               [-7.4,11.2]];
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (var i = 0; i < pts.length; ++i)
+          ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 21,11, 0,255,0,255, "21,11", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 79,11, 0,255,0,255, "79,11", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 21,39, 0,255,0,255, "21,39", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 79,39, 0,255,0,255, "79,39", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 39,19, 0,255,0,255, "39,19", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 61,19, 0,255,0,255, "61,19", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 39,31, 0,255,0,255, "39,31", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 61,31, 0,255,0,255, "61,31", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_57_content"
+  data-contexts="1"
+  data-id="57"
+  data-name="2d.transformation.setTransform.skewed"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.setTransform.skewed">&nbsp;</div><br />
+
+<div id="test_57_status">&nbsp;</div>
+
+[<a href="?runTests=57&noCleanup#57" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="50" href="#50"\>50</a>: 2d.transformation.rotate.nonfinite (rotate() with Infinity/NaN is ignored)</p>
+
+<script>
+  async function test_50_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.translate(100, 10);
+      ctx.rotate(Infinity);
+      ctx.rotate(-Infinity);
+      ctx.rotate(NaN);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(-100, -10, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_50_content"
+  data-contexts="1"
+  data-id="50"
+  data-name="2d.transformation.rotate.nonfinite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.rotate.nonfinite (rotate() with Infinity/NaN is ignored)">&nbsp;</div><br />
+
+<div id="test_50_status">&nbsp;</div>
+
+[<a href="?runTests=50&noCleanup#50" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="40" href="#40"\>40</a>: 2d.transformation.scale.zero (scale() with a scale factor of zero works)</p>
+
+<script>
+  async function test_40_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.save();
+      ctx.translate(50, 0);
+      ctx.scale(0, 1);
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.restore();
+      
+      ctx.save();
+      ctx.translate(0, 25);
+      ctx.scale(1, 0);
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.restore();
+      
+      ;
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_40_content"
+  data-contexts="1"
+  data-id="40"
+  data-name="2d.transformation.scale.zero"
+  data-width="100"
+  data-height="50"
+  data-description="2d.transformation.scale.zero (scale() with a scale factor of zero works)">&nbsp;</div><br />
+
+<div id="test_40_status">&nbsp;</div>
+
+[<a href="?runTests=40&noCleanup#40" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+
+<br /><br />
+&lt;3
+
+</body>
+</html>

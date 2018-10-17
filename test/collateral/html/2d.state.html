@@ -1,0 +1,1213 @@
+<html>
+
+<head>
+<title>2d.state // WebGL2DContext conformance</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<style>
+  div {
+    padding: 5px;
+  }
+  canvas {
+    border: 1px black solid;
+  }
+  .progress {
+    font: 100% monospace;
+  }
+  .failure {
+    background-color: red;
+    color: white;
+    font: 100% sans-serif;
+  }
+  .success {
+    background-color: #88FF88;
+    font: 100% sans-serif;
+  }
+  .failure a:link {
+    color: white
+  }
+  .failure a:visited {
+    color: white
+  }
+</style>
+
+<script type="text/javascript" src="bundle.js"></script>
+<script type="text/javascript" src="assets.js"></script>
+<script type="text/javascript" src="asserts.js"></script>
+
+<script type="text/javascript">
+    async function getAsset(name) {
+      return new Promise((resolve, reject) => {
+        let img = document.createElement("IMG")
+        img.onload = () => resolve(img)
+        img.onerror = reject
+        img.src = rawImageAssets[name]
+      })
+    }
+
+    function bootCanvas(container, id, width, height) {
+        var canvas = document.createElement("CANVAS")
+        canvas.setAttribute("id", id)
+        canvas.setAttribute("width", width)
+        canvas.setAttribute("height", height)
+
+        container.appendChild(canvas)
+
+        var gl = canvas.getContext("webgl2", {
+          stencil: 8,
+          preserveDrawingBuffer: true
+        });
+        gl.viewportWidth = canvas.width;
+        gl.viewportHeight = canvas.height;
+        if (!gl) {
+            console.log("Could not initialise WebGL, sorry :-(")
+            return null;
+        }
+
+        gl.clearColor(1.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        /* TODO: figure out how to pass some gradient tests that need
+         * more grad stops: */
+        let ctx = new Expo2DContext.default(gl, maxGradStops=50)
+        ctx.getContext = () => {return ctx;}
+        
+        return [canvas, gl, ctx]
+    }
+
+    function spinner_graphic(i) {
+      let anim = ["/","&ndash;","\\","|","/","&ndash;","\\", "|"]
+      return anim[i%anim.length]
+    }
+
+    var testContexts = {};
+
+    function focusTest (num) {
+      window.ctx = testContexts[num][0]
+    }
+    window.onhashchange = () => {
+      var url = new URL(window.location)
+      var hashVal = url.hash.substr(1)
+      if (hashVal in testContexts) {
+        focusTest(hashVal)
+      }
+    }
+
+    async function runTests() {
+
+      // TODO: assets??
+
+      if (!window.testComplete) {
+        window.testComplete = (testResults, completedTests, totalTests) =>
+          { /* PUPPETEER STUB */ };
+      }
+
+      testContexts = {};
+
+      var tests = document.getElementsByClassName("test")
+
+      var url = new URL(window.location)
+      if (url.searchParams.get("runTests") != null) {
+        selected_test_ids = url.searchParams.get("runTests").split(",").map((x) => parseInt(x))
+        tests = selected_test_ids.map((x) => document.getElementById("test_"+x+"_content")) 
+      }
+
+      var cleanUp = url.searchParams.get("noCleanup") == null
+
+      let suite_status = document.getElementById("suite_status")
+
+      var failures = new Set();
+      var failureSummaryHTML = "Failed:<ul>"
+
+      let i = 0;
+
+      var testIteration = async (i) => {
+
+        if (i >= tests.length) {
+          finishTests();
+          return;
+        }
+
+        let test_area = tests[i]
+        let test = test_area.dataset
+    
+        // TODO: how to un-convert-from-string numbers in dataset
+        
+        let allCanvases = []
+        let allWebGLContexts = []
+        let allContexts = []
+        
+        let failureMessages = []
+
+        for (let j=0; j<parseInt(test.contexts); j++) {
+          let [canvas, gl, ctx] = bootCanvas(
+            test_area,
+            "canvas_"+test.id+"_"+j,
+            parseInt(test.width),
+            parseInt(test.height)
+          )
+          // Install fake getContext wrapper to allow context objects to be
+          // used in place of canvas objects for our tests:
+          ctx.getContext = (unused) => {return ctx};
+          allCanvases.push(canvas)
+          allWebGLContexts.push(gl)
+          allContexts.push(ctx)
+        }
+
+        let onFail = TriggerObject((message) => {
+          let status_box = document.getElementById("test_"+test.id+"_status")
+
+          status_box.setAttribute("class","failure")
+          status_box.innerHTML += message + "<br />";
+          failureMessages.push(message)
+
+          if (!failures.has(test.id)) {
+            failureSummaryHTML += "<li><a href='#"+test.id+"'>"+test.id+": "+test.description+"</a></li>"
+            failures.add(test.id);
+          }
+        })
+
+        try {
+          let test_fn = eval("test_"+test.id+"_body");
+          await test_fn(onFail, allCanvases, allContexts);
+        } catch (err) {
+          onFail.trigger(false, err.toString());
+        }
+
+        if (cleanUp) {
+          // Copy the resulting drawings out of the original canvas and
+          // safely trash the old gl context, to free up resources:
+          for (let j=0; j<parseInt(test.contexts); j++) {
+            let canvas_clone = allCanvases[j].cloneNode(true);
+            let clone_ctx = canvas_clone.getContext('2d');
+            clone_ctx.drawImage(allCanvases[j], 0, 0);
+
+            allCanvases[j].replaceWith(canvas_clone);
+
+            allWebGLContexts[j].getExtension('WEBGL_lose_context').loseContext();
+            allWebGLContexts[j] = null;
+          }
+        } else {
+          testContexts[test.id] = allContexts
+        }
+
+        suite_status.innerHTML = "["+ spinner_graphic(i) + "] Tests run: " + (i+1) + " / " + tests.length;
+
+        window.testComplete(
+          Object.assign({
+            "failureMessages": failureMessages
+          }, test), i+1, tests.length);
+
+        setTimeout(() => { testIteration(i+1) }, 1);
+      }
+
+      var finishTests = () => {
+        if (failures.size > 0) {
+          failureSummaryHTML += "</ul><br />"
+          suite_status.setAttribute("class","failure")
+          suite_status.innerHTML = failureSummaryHTML
+        } else {
+          suite_status.setAttribute("class","success")
+          suite_status.innerHTML = "[:)] All tests pass !" 
+        }
+
+        if (!cleanUp && tests.length==1){
+          focusTest(tests[0].dataset.id)
+        } else {
+          window.onhashchange()
+        }
+      };
+
+      testIteration(0);
+
+    }
+
+</script>
+</head>
+<body onload="runTests();">
+<h1> 2d.state </h1>
+<div id="suite_status" class="progress">&nbsp;</div>
+<hr />
+
+<p><a id="29" href="#29"\>29</a>: 2d.state.saverestore.textBaseline (save()/restore() works for textBaseline)</p>
+
+<script>
+  async function test_29_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          // Test that restore() undoes any modifications
+      var old = ctx.textBaseline;
+      ctx.save();
+      ctx.textBaseline = "bottom";
+      ctx.restore();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.textBaseline, old, "ctx.textBaseline", "old");
+      
+      // Also test that save() doesn't modify the values
+      ctx.textBaseline = "bottom";
+      old = ctx.textBaseline;
+          // we're not interested in failures caused by get(set(x)) != x (e.g.
+          // from rounding), so compare against 'old' instead of against "bottom"
+      ctx.save();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.textBaseline, old, "ctx.textBaseline", "old");
+      ctx.restore();
+      
+  }
+</script>
+
+<div class="test"
+  id="test_29_content"
+  data-contexts="1"
+  data-id="29"
+  data-name="2d.state.saverestore.textBaseline"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.textBaseline (save()/restore() works for textBaseline)">&nbsp;</div><br />
+
+<div id="test_29_status">&nbsp;</div>
+
+[<a href="?runTests=29&noCleanup#29" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="35" href="#35"\>35</a>: 2d.state.saverestore.stack (save()/restore() can be nested as a stack)</p>
+
+<script>
+  async function test_35_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.lineWidth = 1;
+      ctx.save();
+      ctx.lineWidth = 2;
+      ctx.save();
+      ctx.lineWidth = 3;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineWidth, 3, "ctx.lineWidth", "3");
+      ctx.restore();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineWidth, 2, "ctx.lineWidth", "2");
+      ctx.restore();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineWidth, 1, "ctx.lineWidth", "1");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_35_content"
+  data-contexts="1"
+  data-id="35"
+  data-name="2d.state.saverestore.stack"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.stack (save()/restore() can be nested as a stack)">&nbsp;</div><br />
+
+<div id="test_35_status">&nbsp;</div>
+
+[<a href="?runTests=35&noCleanup#35" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="23" href="#23"\>23</a>: 2d.state.saverestore.shadowOffsetY (save()/restore() works for shadowOffsetY)</p>
+
+<script>
+  async function test_23_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          // Test that restore() undoes any modifications
+      var old = ctx.shadowOffsetY;
+      ctx.save();
+      ctx.shadowOffsetY = 5;
+      ctx.restore();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetY, old, "ctx.shadowOffsetY", "old");
+      
+      // Also test that save() doesn't modify the values
+      ctx.shadowOffsetY = 5;
+      old = ctx.shadowOffsetY;
+          // we're not interested in failures caused by get(set(x)) != x (e.g.
+          // from rounding), so compare against 'old' instead of against 5
+      ctx.save();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetY, old, "ctx.shadowOffsetY", "old");
+      ctx.restore();
+      
+  }
+</script>
+
+<div class="test"
+  id="test_23_content"
+  data-contexts="1"
+  data-id="23"
+  data-name="2d.state.saverestore.shadowOffsetY"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.shadowOffsetY (save()/restore() works for shadowOffsetY)">&nbsp;</div><br />
+
+<div id="test_23_status">&nbsp;</div>
+
+[<a href="?runTests=23&noCleanup#23" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="22" href="#22"\>22</a>: 2d.state.saverestore.shadowOffsetX (save()/restore() works for shadowOffsetX)</p>
+
+<script>
+  async function test_22_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          // Test that restore() undoes any modifications
+      var old = ctx.shadowOffsetX;
+      ctx.save();
+      ctx.shadowOffsetX = 5;
+      ctx.restore();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetX, old, "ctx.shadowOffsetX", "old");
+      
+      // Also test that save() doesn't modify the values
+      ctx.shadowOffsetX = 5;
+      old = ctx.shadowOffsetX;
+          // we're not interested in failures caused by get(set(x)) != x (e.g.
+          // from rounding), so compare against 'old' instead of against 5
+      ctx.save();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetX, old, "ctx.shadowOffsetX", "old");
+      ctx.restore();
+      
+  }
+</script>
+
+<div class="test"
+  id="test_22_content"
+  data-contexts="1"
+  data-id="22"
+  data-name="2d.state.saverestore.shadowOffsetX"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.shadowOffsetX (save()/restore() works for shadowOffsetX)">&nbsp;</div><br />
+
+<div id="test_22_status">&nbsp;</div>
+
+[<a href="?runTests=22&noCleanup#22" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="18" href="#18"\>18</a>: 2d.state.saverestore.lineWidth (save()/restore() works for lineWidth)</p>
+
+<script>
+  async function test_18_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          // Test that restore() undoes any modifications
+      var old = ctx.lineWidth;
+      ctx.save();
+      ctx.lineWidth = 0.5;
+      ctx.restore();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineWidth, old, "ctx.lineWidth", "old");
+      
+      // Also test that save() doesn't modify the values
+      ctx.lineWidth = 0.5;
+      old = ctx.lineWidth;
+          // we're not interested in failures caused by get(set(x)) != x (e.g.
+          // from rounding), so compare against 'old' instead of against 0.5
+      ctx.save();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineWidth, old, "ctx.lineWidth", "old");
+      ctx.restore();
+      
+  }
+</script>
+
+<div class="test"
+  id="test_18_content"
+  data-contexts="1"
+  data-id="18"
+  data-name="2d.state.saverestore.lineWidth"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.lineWidth (save()/restore() works for lineWidth)">&nbsp;</div><br />
+
+<div id="test_18_status">&nbsp;</div>
+
+[<a href="?runTests=18&noCleanup#18" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="34" href="#34"\>34</a>: 2d.state.saverestore.bitmap (save()/restore() does not affect the current bitmap)</p>
+
+<script>
+  async function test_34_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.save();
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.restore();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_34_content"
+  data-contexts="1"
+  data-id="34"
+  data-name="2d.state.saverestore.bitmap"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.bitmap (save()/restore() does not affect the current bitmap)">&nbsp;</div><br />
+
+<div id="test_34_status">&nbsp;</div>
+
+[<a href="?runTests=34&noCleanup#34" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="17" href="#17"\>17</a>: 2d.state.saverestore.globalAlpha (save()/restore() works for globalAlpha)</p>
+
+<script>
+  async function test_17_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          // Test that restore() undoes any modifications
+      var old = ctx.globalAlpha;
+      ctx.save();
+      ctx.globalAlpha = 0.5;
+      ctx.restore();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalAlpha, old, "ctx.globalAlpha", "old");
+      
+      // Also test that save() doesn't modify the values
+      ctx.globalAlpha = 0.5;
+      old = ctx.globalAlpha;
+          // we're not interested in failures caused by get(set(x)) != x (e.g.
+          // from rounding), so compare against 'old' instead of against 0.5
+      ctx.save();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalAlpha, old, "ctx.globalAlpha", "old");
+      ctx.restore();
+      
+  }
+</script>
+
+<div class="test"
+  id="test_17_content"
+  data-contexts="1"
+  data-id="17"
+  data-name="2d.state.saverestore.globalAlpha"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.globalAlpha (save()/restore() works for globalAlpha)">&nbsp;</div><br />
+
+<div id="test_17_status">&nbsp;</div>
+
+[<a href="?runTests=17&noCleanup#17" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="33" href="#33"\>33</a>: 2d.state.saverestore.path (save()/restore() does not affect the current path)</p>
+
+<script>
+  async function test_33_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.save();
+      ctx.rect(0, 0, 100, 50);
+      ctx.restore();
+      ctx.fillStyle = '#0f0';
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_33_content"
+  data-contexts="1"
+  data-id="33"
+  data-name="2d.state.saverestore.path"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.path (save()/restore() does not affect the current path)">&nbsp;</div><br />
+
+<div id="test_33_status">&nbsp;</div>
+
+[<a href="?runTests=33&noCleanup#33" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="27" href="#27"\>27</a>: 2d.state.saverestore.font (save()/restore() works for font)</p>
+
+<script>
+  async function test_27_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          await ctx.initializeText();
+      // Test that restore() undoes any modifications
+      var old = ctx.font;
+      ctx.save();
+      ctx.font = "25px serif";
+      ctx.restore();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.font, old, "ctx.font", "old");
+      
+      // Also test that save() doesn't modify the values
+      ctx.font = "25px serif";
+      old = ctx.font;
+          // we're not interested in failures caused by get(set(x)) != x (e.g.
+          // from rounding), so compare against 'old' instead of against "25px serif"
+      ctx.save();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.font, old, "ctx.font", "old");
+      ctx.restore();
+      
+  }
+</script>
+
+<div class="test"
+  id="test_27_content"
+  data-contexts="1"
+  data-id="27"
+  data-name="2d.state.saverestore.font"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.font (save()/restore() works for font)">&nbsp;</div><br />
+
+<div id="test_27_status">&nbsp;</div>
+
+[<a href="?runTests=27&noCleanup#27" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="26" href="#26"\>26</a>: 2d.state.saverestore.globalCompositeOperation (save()/restore() works for globalCompositeOperation)</p>
+
+<script>
+  async function test_26_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          // Test that restore() undoes any modifications
+      var old = ctx.globalCompositeOperation;
+      ctx.save();
+      ctx.globalCompositeOperation = "copy";
+      ctx.restore();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalCompositeOperation, old, "ctx.globalCompositeOperation", "old");
+      
+      // Also test that save() doesn't modify the values
+      ctx.globalCompositeOperation = "copy";
+      old = ctx.globalCompositeOperation;
+          // we're not interested in failures caused by get(set(x)) != x (e.g.
+          // from rounding), so compare against 'old' instead of against "copy"
+      ctx.save();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalCompositeOperation, old, "ctx.globalCompositeOperation", "old");
+      ctx.restore();
+      
+  }
+</script>
+
+<div class="test"
+  id="test_26_content"
+  data-contexts="1"
+  data-id="26"
+  data-name="2d.state.saverestore.globalCompositeOperation"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.globalCompositeOperation (save()/restore() works for globalCompositeOperation)">&nbsp;</div><br />
+
+<div id="test_26_status">&nbsp;</div>
+
+[<a href="?runTests=26&noCleanup#26" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="25" href="#25"\>25</a>: 2d.state.saverestore.shadowColor (save()/restore() works for shadowColor)</p>
+
+<script>
+  async function test_25_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          // Test that restore() undoes any modifications
+      var old = ctx.shadowColor;
+      ctx.save();
+      ctx.shadowColor = "#ff0000";
+      ctx.restore();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowColor, old, "ctx.shadowColor", "old");
+      
+      // Also test that save() doesn't modify the values
+      ctx.shadowColor = "#ff0000";
+      old = ctx.shadowColor;
+          // we're not interested in failures caused by get(set(x)) != x (e.g.
+          // from rounding), so compare against 'old' instead of against "#ff0000"
+      ctx.save();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowColor, old, "ctx.shadowColor", "old");
+      ctx.restore();
+      
+  }
+</script>
+
+<div class="test"
+  id="test_25_content"
+  data-contexts="1"
+  data-id="25"
+  data-name="2d.state.saverestore.shadowColor"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.shadowColor (save()/restore() works for shadowColor)">&nbsp;</div><br />
+
+<div id="test_25_status">&nbsp;</div>
+
+[<a href="?runTests=25&noCleanup#25" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="15" href="#15"\>15</a>: 2d.state.saverestore.strokeStyle (save()/restore() works for strokeStyle)</p>
+
+<script>
+  async function test_15_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          // Test that restore() undoes any modifications
+      var old = ctx.strokeStyle;
+      ctx.save();
+      ctx.strokeStyle = "#ff0000";
+      ctx.restore();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.strokeStyle, old, "ctx.strokeStyle", "old");
+      
+      // Also test that save() doesn't modify the values
+      ctx.strokeStyle = "#ff0000";
+      old = ctx.strokeStyle;
+          // we're not interested in failures caused by get(set(x)) != x (e.g.
+          // from rounding), so compare against 'old' instead of against "#ff0000"
+      ctx.save();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.strokeStyle, old, "ctx.strokeStyle", "old");
+      ctx.restore();
+      
+  }
+</script>
+
+<div class="test"
+  id="test_15_content"
+  data-contexts="1"
+  data-id="15"
+  data-name="2d.state.saverestore.strokeStyle"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.strokeStyle (save()/restore() works for strokeStyle)">&nbsp;</div><br />
+
+<div id="test_15_status">&nbsp;</div>
+
+[<a href="?runTests=15&noCleanup#15" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="19" href="#19"\>19</a>: 2d.state.saverestore.lineCap (save()/restore() works for lineCap)</p>
+
+<script>
+  async function test_19_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          // Test that restore() undoes any modifications
+      var old = ctx.lineCap;
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.restore();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineCap, old, "ctx.lineCap", "old");
+      
+      // Also test that save() doesn't modify the values
+      ctx.lineCap = "round";
+      old = ctx.lineCap;
+          // we're not interested in failures caused by get(set(x)) != x (e.g.
+          // from rounding), so compare against 'old' instead of against "round"
+      ctx.save();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineCap, old, "ctx.lineCap", "old");
+      ctx.restore();
+      
+  }
+</script>
+
+<div class="test"
+  id="test_19_content"
+  data-contexts="1"
+  data-id="19"
+  data-name="2d.state.saverestore.lineCap"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.lineCap (save()/restore() works for lineCap)">&nbsp;</div><br />
+
+<div id="test_19_status">&nbsp;</div>
+
+[<a href="?runTests=19&noCleanup#19" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="16" href="#16"\>16</a>: 2d.state.saverestore.fillStyle (save()/restore() works for fillStyle)</p>
+
+<script>
+  async function test_16_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          // Test that restore() undoes any modifications
+      var old = ctx.fillStyle;
+      ctx.save();
+      ctx.fillStyle = "#ff0000";
+      ctx.restore();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.fillStyle, old, "ctx.fillStyle", "old");
+      
+      // Also test that save() doesn't modify the values
+      ctx.fillStyle = "#ff0000";
+      old = ctx.fillStyle;
+          // we're not interested in failures caused by get(set(x)) != x (e.g.
+          // from rounding), so compare against 'old' instead of against "#ff0000"
+      ctx.save();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.fillStyle, old, "ctx.fillStyle", "old");
+      ctx.restore();
+      
+  }
+</script>
+
+<div class="test"
+  id="test_16_content"
+  data-contexts="1"
+  data-id="16"
+  data-name="2d.state.saverestore.fillStyle"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.fillStyle (save()/restore() works for fillStyle)">&nbsp;</div><br />
+
+<div id="test_16_status">&nbsp;</div>
+
+[<a href="?runTests=16&noCleanup#16" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="24" href="#24"\>24</a>: 2d.state.saverestore.shadowBlur (save()/restore() works for shadowBlur)</p>
+
+<script>
+  async function test_24_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          // Test that restore() undoes any modifications
+      var old = ctx.shadowBlur;
+      ctx.save();
+      ctx.shadowBlur = 5;
+      ctx.restore();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowBlur, old, "ctx.shadowBlur", "old");
+      
+      // Also test that save() doesn't modify the values
+      ctx.shadowBlur = 5;
+      old = ctx.shadowBlur;
+          // we're not interested in failures caused by get(set(x)) != x (e.g.
+          // from rounding), so compare against 'old' instead of against 5
+      ctx.save();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowBlur, old, "ctx.shadowBlur", "old");
+      ctx.restore();
+      
+  }
+</script>
+
+<div class="test"
+  id="test_24_content"
+  data-contexts="1"
+  data-id="24"
+  data-name="2d.state.saverestore.shadowBlur"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.shadowBlur (save()/restore() works for shadowBlur)">&nbsp;</div><br />
+
+<div id="test_24_status">&nbsp;</div>
+
+[<a href="?runTests=24&noCleanup#24" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="21" href="#21"\>21</a>: 2d.state.saverestore.miterLimit (save()/restore() works for miterLimit)</p>
+
+<script>
+  async function test_21_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          // Test that restore() undoes any modifications
+      var old = ctx.miterLimit;
+      ctx.save();
+      ctx.miterLimit = 0.5;
+      ctx.restore();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.miterLimit, old, "ctx.miterLimit", "old");
+      
+      // Also test that save() doesn't modify the values
+      ctx.miterLimit = 0.5;
+      old = ctx.miterLimit;
+          // we're not interested in failures caused by get(set(x)) != x (e.g.
+          // from rounding), so compare against 'old' instead of against 0.5
+      ctx.save();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.miterLimit, old, "ctx.miterLimit", "old");
+      ctx.restore();
+      
+  }
+</script>
+
+<div class="test"
+  id="test_21_content"
+  data-contexts="1"
+  data-id="21"
+  data-name="2d.state.saverestore.miterLimit"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.miterLimit (save()/restore() works for miterLimit)">&nbsp;</div><br />
+
+<div id="test_21_status">&nbsp;</div>
+
+[<a href="?runTests=21&noCleanup#21" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="20" href="#20"\>20</a>: 2d.state.saverestore.lineJoin (save()/restore() works for lineJoin)</p>
+
+<script>
+  async function test_20_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          // Test that restore() undoes any modifications
+      var old = ctx.lineJoin;
+      ctx.save();
+      ctx.lineJoin = "round";
+      ctx.restore();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineJoin, old, "ctx.lineJoin", "old");
+      
+      // Also test that save() doesn't modify the values
+      ctx.lineJoin = "round";
+      old = ctx.lineJoin;
+          // we're not interested in failures caused by get(set(x)) != x (e.g.
+          // from rounding), so compare against 'old' instead of against "round"
+      ctx.save();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineJoin, old, "ctx.lineJoin", "old");
+      ctx.restore();
+      
+  }
+</script>
+
+<div class="test"
+  id="test_20_content"
+  data-contexts="1"
+  data-id="20"
+  data-name="2d.state.saverestore.lineJoin"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.lineJoin (save()/restore() works for lineJoin)">&nbsp;</div><br />
+
+<div id="test_20_status">&nbsp;</div>
+
+[<a href="?runTests=20&noCleanup#20" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="36" href="#36"\>36</a>: 2d.state.saverestore.stackdepth (save()/restore() stack depth is not unreasonably limited)</p>
+
+<script>
+  async function test_36_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var limit = 512;
+      for (var i = 1; i < limit; ++i)
+      {
+          ctx.save();
+          ctx.lineWidth = i;
+      }
+      for (var i = limit-1; i > 0; --i)
+      {
+          ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineWidth, i, "ctx.lineWidth", "i");
+          ctx.restore();
+      }
+      
+  }
+</script>
+
+<div class="test"
+  id="test_36_content"
+  data-contexts="1"
+  data-id="36"
+  data-name="2d.state.saverestore.stackdepth"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.stackdepth (save()/restore() stack depth is not unreasonably limited)">&nbsp;</div><br />
+
+<div id="test_36_status">&nbsp;</div>
+
+[<a href="?runTests=36&noCleanup#36" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="37" href="#37"\>37</a>: 2d.state.saverestore.underflow (restore() with an empty stack has no effect)</p>
+
+<script>
+  async function test_37_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          for (var i = 0; i < 16; ++i)
+          ctx.restore();
+      ctx.lineWidth = 0.5;
+      ctx.restore();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineWidth, 0.5, "ctx.lineWidth", "0.5");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_37_content"
+  data-contexts="1"
+  data-id="37"
+  data-name="2d.state.saverestore.underflow"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.underflow (restore() with an empty stack has no effect)">&nbsp;</div><br />
+
+<div id="test_37_status">&nbsp;</div>
+
+[<a href="?runTests=37&noCleanup#37" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="28" href="#28"\>28</a>: 2d.state.saverestore.textAlign (save()/restore() works for textAlign)</p>
+
+<script>
+  async function test_28_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          // Test that restore() undoes any modifications
+      var old = ctx.textAlign;
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.restore();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.textAlign, old, "ctx.textAlign", "old");
+      
+      // Also test that save() doesn't modify the values
+      ctx.textAlign = "center";
+      old = ctx.textAlign;
+          // we're not interested in failures caused by get(set(x)) != x (e.g.
+          // from rounding), so compare against 'old' instead of against "center"
+      ctx.save();
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.textAlign, old, "ctx.textAlign", "old");
+      ctx.restore();
+      
+  }
+</script>
+
+<div class="test"
+  id="test_28_content"
+  data-contexts="1"
+  data-id="28"
+  data-name="2d.state.saverestore.textAlign"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.textAlign (save()/restore() works for textAlign)">&nbsp;</div><br />
+
+<div id="test_28_status">&nbsp;</div>
+
+[<a href="?runTests=28&noCleanup#28" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="32" href="#32"\>32</a>: 2d.state.saverestore.clip (save()/restore() affects the clipping path)</p>
+
+<script>
+  async function test_32_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.save();
+      ctx.rect(0, 0, 1, 1);
+      ctx.clip();
+      ctx.restore();
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_32_content"
+  data-contexts="1"
+  data-id="32"
+  data-name="2d.state.saverestore.clip"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.clip (save()/restore() affects the clipping path)">&nbsp;</div><br />
+
+<div id="test_32_status">&nbsp;</div>
+
+[<a href="?runTests=32&noCleanup#32" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="31" href="#31"\>31</a>: 2d.state.saverestore.transformation (save()/restore() affects the current transformation matrix)</p>
+
+<script>
+  async function test_31_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.save();
+      ctx.translate(200, 0);
+      ctx.restore();
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(-200, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_31_content"
+  data-contexts="1"
+  data-id="31"
+  data-name="2d.state.saverestore.transformation"
+  data-width="100"
+  data-height="50"
+  data-description="2d.state.saverestore.transformation (save()/restore() affects the current transformation matrix)">&nbsp;</div><br />
+
+<div id="test_31_status">&nbsp;</div>
+
+[<a href="?runTests=31&noCleanup#31" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+
+<br /><br />
+&lt;3
+
+</body>
+</html>

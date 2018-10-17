@@ -1,0 +1,634 @@
+<html>
+
+<head>
+<title>2d.clearRect // WebGL2DContext conformance</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<style>
+  div {
+    padding: 5px;
+  }
+  canvas {
+    border: 1px black solid;
+  }
+  .progress {
+    font: 100% monospace;
+  }
+  .failure {
+    background-color: red;
+    color: white;
+    font: 100% sans-serif;
+  }
+  .success {
+    background-color: #88FF88;
+    font: 100% sans-serif;
+  }
+  .failure a:link {
+    color: white
+  }
+  .failure a:visited {
+    color: white
+  }
+</style>
+
+<script type="text/javascript" src="bundle.js"></script>
+<script type="text/javascript" src="assets.js"></script>
+<script type="text/javascript" src="asserts.js"></script>
+
+<script type="text/javascript">
+    async function getAsset(name) {
+      return new Promise((resolve, reject) => {
+        let img = document.createElement("IMG")
+        img.onload = () => resolve(img)
+        img.onerror = reject
+        img.src = rawImageAssets[name]
+      })
+    }
+
+    function bootCanvas(container, id, width, height) {
+        var canvas = document.createElement("CANVAS")
+        canvas.setAttribute("id", id)
+        canvas.setAttribute("width", width)
+        canvas.setAttribute("height", height)
+
+        container.appendChild(canvas)
+
+        var gl = canvas.getContext("webgl2", {
+          stencil: 8,
+          preserveDrawingBuffer: true
+        });
+        gl.viewportWidth = canvas.width;
+        gl.viewportHeight = canvas.height;
+        if (!gl) {
+            console.log("Could not initialise WebGL, sorry :-(")
+            return null;
+        }
+
+        gl.clearColor(1.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        /* TODO: figure out how to pass some gradient tests that need
+         * more grad stops: */
+        let ctx = new Expo2DContext.default(gl, maxGradStops=50)
+        ctx.getContext = () => {return ctx;}
+        
+        return [canvas, gl, ctx]
+    }
+
+    function spinner_graphic(i) {
+      let anim = ["/","&ndash;","\\","|","/","&ndash;","\\", "|"]
+      return anim[i%anim.length]
+    }
+
+    var testContexts = {};
+
+    function focusTest (num) {
+      window.ctx = testContexts[num][0]
+    }
+    window.onhashchange = () => {
+      var url = new URL(window.location)
+      var hashVal = url.hash.substr(1)
+      if (hashVal in testContexts) {
+        focusTest(hashVal)
+      }
+    }
+
+    async function runTests() {
+
+      // TODO: assets??
+
+      if (!window.testComplete) {
+        window.testComplete = (testResults, completedTests, totalTests) =>
+          { /* PUPPETEER STUB */ };
+      }
+
+      testContexts = {};
+
+      var tests = document.getElementsByClassName("test")
+
+      var url = new URL(window.location)
+      if (url.searchParams.get("runTests") != null) {
+        selected_test_ids = url.searchParams.get("runTests").split(",").map((x) => parseInt(x))
+        tests = selected_test_ids.map((x) => document.getElementById("test_"+x+"_content")) 
+      }
+
+      var cleanUp = url.searchParams.get("noCleanup") == null
+
+      let suite_status = document.getElementById("suite_status")
+
+      var failures = new Set();
+      var failureSummaryHTML = "Failed:<ul>"
+
+      let i = 0;
+
+      var testIteration = async (i) => {
+
+        if (i >= tests.length) {
+          finishTests();
+          return;
+        }
+
+        let test_area = tests[i]
+        let test = test_area.dataset
+    
+        // TODO: how to un-convert-from-string numbers in dataset
+        
+        let allCanvases = []
+        let allWebGLContexts = []
+        let allContexts = []
+        
+        let failureMessages = []
+
+        for (let j=0; j<parseInt(test.contexts); j++) {
+          let [canvas, gl, ctx] = bootCanvas(
+            test_area,
+            "canvas_"+test.id+"_"+j,
+            parseInt(test.width),
+            parseInt(test.height)
+          )
+          // Install fake getContext wrapper to allow context objects to be
+          // used in place of canvas objects for our tests:
+          ctx.getContext = (unused) => {return ctx};
+          allCanvases.push(canvas)
+          allWebGLContexts.push(gl)
+          allContexts.push(ctx)
+        }
+
+        let onFail = TriggerObject((message) => {
+          let status_box = document.getElementById("test_"+test.id+"_status")
+
+          status_box.setAttribute("class","failure")
+          status_box.innerHTML += message + "<br />";
+          failureMessages.push(message)
+
+          if (!failures.has(test.id)) {
+            failureSummaryHTML += "<li><a href='#"+test.id+"'>"+test.id+": "+test.description+"</a></li>"
+            failures.add(test.id);
+          }
+        })
+
+        try {
+          let test_fn = eval("test_"+test.id+"_body");
+          await test_fn(onFail, allCanvases, allContexts);
+        } catch (err) {
+          onFail.trigger(false, err.toString());
+        }
+
+        if (cleanUp) {
+          // Copy the resulting drawings out of the original canvas and
+          // safely trash the old gl context, to free up resources:
+          for (let j=0; j<parseInt(test.contexts); j++) {
+            let canvas_clone = allCanvases[j].cloneNode(true);
+            let clone_ctx = canvas_clone.getContext('2d');
+            clone_ctx.drawImage(allCanvases[j], 0, 0);
+
+            allCanvases[j].replaceWith(canvas_clone);
+
+            allWebGLContexts[j].getExtension('WEBGL_lose_context').loseContext();
+            allWebGLContexts[j] = null;
+          }
+        } else {
+          testContexts[test.id] = allContexts
+        }
+
+        suite_status.innerHTML = "["+ spinner_graphic(i) + "] Tests run: " + (i+1) + " / " + tests.length;
+
+        window.testComplete(
+          Object.assign({
+            "failureMessages": failureMessages
+          }, test), i+1, tests.length);
+
+        setTimeout(() => { testIteration(i+1) }, 1);
+      }
+
+      var finishTests = () => {
+        if (failures.size > 0) {
+          failureSummaryHTML += "</ul><br />"
+          suite_status.setAttribute("class","failure")
+          suite_status.innerHTML = failureSummaryHTML
+        } else {
+          suite_status.setAttribute("class","success")
+          suite_status.innerHTML = "[:)] All tests pass !" 
+        }
+
+        if (!cleanUp && tests.length==1){
+          focusTest(tests[0].dataset.id)
+        } else {
+          window.onhashchange()
+        }
+      };
+
+      testIteration(0);
+
+    }
+
+</script>
+</head>
+<body onload="runTests();">
+<h1> 2d.clearRect </h1>
+<div id="suite_status" class="progress">&nbsp;</div>
+<hr />
+
+<p><a id="475" href="#475"\>475</a>: 2d.clearRect.globalalpha (clearRect is not affected by globalAlpha)</p>
+
+<script>
+  async function test_475_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalAlpha = 0.1;
+      ctx.clearRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_475_content"
+  data-contexts="1"
+  data-id="475"
+  data-name="2d.clearRect.globalalpha"
+  data-width="100"
+  data-height="50"
+  data-description="2d.clearRect.globalalpha (clearRect is not affected by globalAlpha)">&nbsp;</div><br />
+
+<div id="test_475_status">&nbsp;</div>
+
+[<a href="?runTests=475&noCleanup#475" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="471" href="#471"\>471</a>: 2d.clearRect.path (clearRect does not affect the current path)</p>
+
+<script>
+  async function test_471_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.beginPath();
+      ctx.rect(0, 0, 100, 50);
+      ctx.clearRect(0, 0, 16, 16);
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_471_content"
+  data-contexts="1"
+  data-id="471"
+  data-name="2d.clearRect.path"
+  data-width="100"
+  data-height="50"
+  data-description="2d.clearRect.path (clearRect does not affect the current path)">&nbsp;</div><br />
+
+<div id="test_471_status">&nbsp;</div>
+
+[<a href="?runTests=471&noCleanup#471" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="474" href="#474"\>474</a>: 2d.clearRect.transform (clearRect is affected by transforms)</p>
+
+<script>
+  async function test_474_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.scale(10, 10);
+      ctx.translate(0, 5);
+      ctx.clearRect(0, -5, 10, 5);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_474_content"
+  data-contexts="1"
+  data-id="474"
+  data-name="2d.clearRect.transform"
+  data-width="100"
+  data-height="50"
+  data-description="2d.clearRect.transform (clearRect is affected by transforms)">&nbsp;</div><br />
+
+<div id="test_474_status">&nbsp;</div>
+
+[<a href="?runTests=474&noCleanup#474" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="477" href="#477"\>477</a>: 2d.clearRect.clip (clearRect is affected by clipping regions)</p>
+
+<script>
+  async function test_477_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.beginPath();
+      ctx.rect(0, 0, 16, 16);
+      ctx.clip();
+      
+      ctx.clearRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 16, 16);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_477_content"
+  data-contexts="1"
+  data-id="477"
+  data-name="2d.clearRect.clip"
+  data-width="100"
+  data-height="50"
+  data-description="2d.clearRect.clip (clearRect is affected by clipping regions)">&nbsp;</div><br />
+
+<div id="test_477_status">&nbsp;</div>
+
+[<a href="?runTests=477&noCleanup#477" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="473" href="#473"\>473</a>: 2d.clearRect.negative (clearRect of negative sizes works)</p>
+
+<script>
+  async function test_473_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.clearRect(0, 0, 50, 25);
+      ctx.clearRect(100, 0, -50, 25);
+      ctx.clearRect(0, 50, 50, -25);
+      ctx.clearRect(100, 50, -50, -25);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,12, 0,0,0,0, "25,12", "0,0,0,0");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,12, 0,0,0,0, "75,12", "0,0,0,0");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,37, 0,0,0,0, "25,37", "0,0,0,0");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,37, 0,0,0,0, "75,37", "0,0,0,0");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_473_content"
+  data-contexts="1"
+  data-id="473"
+  data-name="2d.clearRect.negative"
+  data-width="100"
+  data-height="50"
+  data-description="2d.clearRect.negative (clearRect of negative sizes works)">&nbsp;</div><br />
+
+<div id="test_473_status">&nbsp;</div>
+
+[<a href="?runTests=473&noCleanup#473" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="478" href="#478"\>478</a>: 2d.clearRect.shadow (clearRect does not draw shadows)</p>
+
+<script>
+  async function test_478_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowColor = '#f00';
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 50;
+      ctx.clearRect(0, -50, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_478_content"
+  data-contexts="1"
+  data-id="478"
+  data-name="2d.clearRect.shadow"
+  data-width="100"
+  data-height="50"
+  data-description="2d.clearRect.shadow (clearRect does not draw shadows)">&nbsp;</div><br />
+
+<div id="test_478_status">&nbsp;</div>
+
+[<a href="?runTests=478&noCleanup#478" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="470" href="#470"\>470</a>: 2d.clearRect.basic (clearRect clears to transparent black)</p>
+
+<script>
+  async function test_470_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.clearRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_470_content"
+  data-contexts="1"
+  data-id="470"
+  data-name="2d.clearRect.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.clearRect.basic (clearRect clears to transparent black)">&nbsp;</div><br />
+
+<div id="test_470_status">&nbsp;</div>
+
+[<a href="?runTests=470&noCleanup#470" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="476" href="#476"\>476</a>: 2d.clearRect.globalcomposite (clearRect is not affected by globalCompositeOperation)</p>
+
+<script>
+  async function test_476_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-atop';
+      ctx.clearRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_476_content"
+  data-contexts="1"
+  data-id="476"
+  data-name="2d.clearRect.globalcomposite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.clearRect.globalcomposite (clearRect is not affected by globalCompositeOperation)">&nbsp;</div><br />
+
+<div id="test_476_status">&nbsp;</div>
+
+[<a href="?runTests=476&noCleanup#476" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="472" href="#472"\>472</a>: 2d.clearRect.zero (clearRect of zero pixels has no effect)</p>
+
+<script>
+  async function test_472_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.clearRect(0, 0, 100, 0);
+      ctx.clearRect(0, 0, 0, 50);
+      ctx.clearRect(0, 0, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_472_content"
+  data-contexts="1"
+  data-id="472"
+  data-name="2d.clearRect.zero"
+  data-width="100"
+  data-height="50"
+  data-description="2d.clearRect.zero (clearRect of zero pixels has no effect)">&nbsp;</div><br />
+
+<div id="test_472_status">&nbsp;</div>
+
+[<a href="?runTests=472&noCleanup#472" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="479" href="#479"\>479</a>: 2d.clearRect.nonfinite (clearRect() with Infinity/NaN is ignored)</p>
+
+<script>
+  async function test_479_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.clearRect(Infinity, 0, 100, 50);
+      ctx.clearRect(-Infinity, 0, 100, 50);
+      ctx.clearRect(NaN, 0, 100, 50);
+      ctx.clearRect(0, Infinity, 100, 50);
+      ctx.clearRect(0, -Infinity, 100, 50);
+      ctx.clearRect(0, NaN, 100, 50);
+      ctx.clearRect(0, 0, Infinity, 50);
+      ctx.clearRect(0, 0, -Infinity, 50);
+      ctx.clearRect(0, 0, NaN, 50);
+      ctx.clearRect(0, 0, 100, Infinity);
+      ctx.clearRect(0, 0, 100, -Infinity);
+      ctx.clearRect(0, 0, 100, NaN);
+      ctx.clearRect(Infinity, Infinity, 100, 50);
+      ctx.clearRect(Infinity, Infinity, Infinity, 50);
+      ctx.clearRect(Infinity, Infinity, Infinity, Infinity);
+      ctx.clearRect(Infinity, Infinity, 100, Infinity);
+      ctx.clearRect(Infinity, 0, Infinity, 50);
+      ctx.clearRect(Infinity, 0, Infinity, Infinity);
+      ctx.clearRect(Infinity, 0, 100, Infinity);
+      ctx.clearRect(0, Infinity, Infinity, 50);
+      ctx.clearRect(0, Infinity, Infinity, Infinity);
+      ctx.clearRect(0, Infinity, 100, Infinity);
+      ctx.clearRect(0, 0, Infinity, Infinity);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_479_content"
+  data-contexts="1"
+  data-id="479"
+  data-name="2d.clearRect.nonfinite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.clearRect.nonfinite (clearRect() with Infinity/NaN is ignored)">&nbsp;</div><br />
+
+<div id="test_479_status">&nbsp;</div>
+
+[<a href="?runTests=479&noCleanup#479" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+
+<br /><br />
+&lt;3
+
+</body>
+</html>

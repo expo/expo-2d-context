@@ -1,0 +1,4062 @@
+<html>
+
+<head>
+<title>2d.composite // WebGL2DContext conformance</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<style>
+  div {
+    padding: 5px;
+  }
+  canvas {
+    border: 1px black solid;
+  }
+  .progress {
+    font: 100% monospace;
+  }
+  .failure {
+    background-color: red;
+    color: white;
+    font: 100% sans-serif;
+  }
+  .success {
+    background-color: #88FF88;
+    font: 100% sans-serif;
+  }
+  .failure a:link {
+    color: white
+  }
+  .failure a:visited {
+    color: white
+  }
+</style>
+
+<script type="text/javascript" src="bundle.js"></script>
+<script type="text/javascript" src="assets.js"></script>
+<script type="text/javascript" src="asserts.js"></script>
+
+<script type="text/javascript">
+    async function getAsset(name) {
+      return new Promise((resolve, reject) => {
+        let img = document.createElement("IMG")
+        img.onload = () => resolve(img)
+        img.onerror = reject
+        img.src = rawImageAssets[name]
+      })
+    }
+
+    function bootCanvas(container, id, width, height) {
+        var canvas = document.createElement("CANVAS")
+        canvas.setAttribute("id", id)
+        canvas.setAttribute("width", width)
+        canvas.setAttribute("height", height)
+
+        container.appendChild(canvas)
+
+        var gl = canvas.getContext("webgl2", {
+          stencil: 8,
+          preserveDrawingBuffer: true
+        });
+        gl.viewportWidth = canvas.width;
+        gl.viewportHeight = canvas.height;
+        if (!gl) {
+            console.log("Could not initialise WebGL, sorry :-(")
+            return null;
+        }
+
+        gl.clearColor(1.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        /* TODO: figure out how to pass some gradient tests that need
+         * more grad stops: */
+        let ctx = new Expo2DContext.default(gl, maxGradStops=50)
+        ctx.getContext = () => {return ctx;}
+        
+        return [canvas, gl, ctx]
+    }
+
+    function spinner_graphic(i) {
+      let anim = ["/","&ndash;","\\","|","/","&ndash;","\\", "|"]
+      return anim[i%anim.length]
+    }
+
+    var testContexts = {};
+
+    function focusTest (num) {
+      window.ctx = testContexts[num][0]
+    }
+    window.onhashchange = () => {
+      var url = new URL(window.location)
+      var hashVal = url.hash.substr(1)
+      if (hashVal in testContexts) {
+        focusTest(hashVal)
+      }
+    }
+
+    async function runTests() {
+
+      // TODO: assets??
+
+      if (!window.testComplete) {
+        window.testComplete = (testResults, completedTests, totalTests) =>
+          { /* PUPPETEER STUB */ };
+      }
+
+      testContexts = {};
+
+      var tests = document.getElementsByClassName("test")
+
+      var url = new URL(window.location)
+      if (url.searchParams.get("runTests") != null) {
+        selected_test_ids = url.searchParams.get("runTests").split(",").map((x) => parseInt(x))
+        tests = selected_test_ids.map((x) => document.getElementById("test_"+x+"_content")) 
+      }
+
+      var cleanUp = url.searchParams.get("noCleanup") == null
+
+      let suite_status = document.getElementById("suite_status")
+
+      var failures = new Set();
+      var failureSummaryHTML = "Failed:<ul>"
+
+      let i = 0;
+
+      var testIteration = async (i) => {
+
+        if (i >= tests.length) {
+          finishTests();
+          return;
+        }
+
+        let test_area = tests[i]
+        let test = test_area.dataset
+    
+        // TODO: how to un-convert-from-string numbers in dataset
+        
+        let allCanvases = []
+        let allWebGLContexts = []
+        let allContexts = []
+        
+        let failureMessages = []
+
+        for (let j=0; j<parseInt(test.contexts); j++) {
+          let [canvas, gl, ctx] = bootCanvas(
+            test_area,
+            "canvas_"+test.id+"_"+j,
+            parseInt(test.width),
+            parseInt(test.height)
+          )
+          // Install fake getContext wrapper to allow context objects to be
+          // used in place of canvas objects for our tests:
+          ctx.getContext = (unused) => {return ctx};
+          allCanvases.push(canvas)
+          allWebGLContexts.push(gl)
+          allContexts.push(ctx)
+        }
+
+        let onFail = TriggerObject((message) => {
+          let status_box = document.getElementById("test_"+test.id+"_status")
+
+          status_box.setAttribute("class","failure")
+          status_box.innerHTML += message + "<br />";
+          failureMessages.push(message)
+
+          if (!failures.has(test.id)) {
+            failureSummaryHTML += "<li><a href='#"+test.id+"'>"+test.id+": "+test.description+"</a></li>"
+            failures.add(test.id);
+          }
+        })
+
+        try {
+          let test_fn = eval("test_"+test.id+"_body");
+          await test_fn(onFail, allCanvases, allContexts);
+        } catch (err) {
+          onFail.trigger(false, err.toString());
+        }
+
+        if (cleanUp) {
+          // Copy the resulting drawings out of the original canvas and
+          // safely trash the old gl context, to free up resources:
+          for (let j=0; j<parseInt(test.contexts); j++) {
+            let canvas_clone = allCanvases[j].cloneNode(true);
+            let clone_ctx = canvas_clone.getContext('2d');
+            clone_ctx.drawImage(allCanvases[j], 0, 0);
+
+            allCanvases[j].replaceWith(canvas_clone);
+
+            allWebGLContexts[j].getExtension('WEBGL_lose_context').loseContext();
+            allWebGLContexts[j] = null;
+          }
+        } else {
+          testContexts[test.id] = allContexts
+        }
+
+        suite_status.innerHTML = "["+ spinner_graphic(i) + "] Tests run: " + (i+1) + " / " + tests.length;
+
+        window.testComplete(
+          Object.assign({
+            "failureMessages": failureMessages
+          }, test), i+1, tests.length);
+
+        setTimeout(() => { testIteration(i+1) }, 1);
+      }
+
+      var finishTests = () => {
+        if (failures.size > 0) {
+          failureSummaryHTML += "</ul><br />"
+          suite_status.setAttribute("class","failure")
+          suite_status.innerHTML = failureSummaryHTML
+        } else {
+          suite_status.setAttribute("class","success")
+          suite_status.innerHTML = "[:)] All tests pass !" 
+        }
+
+        if (!cleanUp && tests.length==1){
+          focusTest(tests[0].dataset.id)
+        } else {
+          window.onhashchange()
+        }
+      };
+
+      testIteration(0);
+
+    }
+
+</script>
+</head>
+<body onload="runTests();">
+<h1> 2d.composite </h1>
+<div id="suite_status" class="progress">&nbsp;</div>
+<hr />
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="97" href="#97"\>97</a>: 2d.composite.image.source-atop</p>
+
+<script>
+  async function test_97_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.drawImage(_AssetRef0, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 191,255,64,128, "50,25", "191,255,64,128", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_97_content"
+  data-contexts="1"
+  data-id="97"
+  data-name="2d.composite.image.source-atop"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.image.source-atop">&nbsp;</div><br />
+
+<div id="test_97_status">&nbsp;</div>
+
+[<a href="?runTests=97&noCleanup#97" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="101" href="#101"\>101</a>: 2d.composite.image.lighter</p>
+
+<script>
+  async function test_101_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.drawImage(_AssetRef0, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 191,255,128,255, "50,25", "191,255,128,255", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_101_content"
+  data-contexts="1"
+  data-id="101"
+  data-name="2d.composite.image.lighter"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.image.lighter">&nbsp;</div><br />
+
+<div id="test_101_status">&nbsp;</div>
+
+[<a href="?runTests=101&noCleanup#101" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="69" href="#69"\>69</a>: 2d.composite.solid.source-over</p>
+
+<script>
+  async function test_69_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 255, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = 'rgba(255, 255, 0, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 255,255,0,255, "50,25", "255,255,0,255", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_69_content"
+  data-contexts="1"
+  data-id="69"
+  data-name="2d.composite.solid.source-over"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.solid.source-over">&nbsp;</div><br />
+
+<div id="test_69_status">&nbsp;</div>
+
+[<a href="?runTests=69&noCleanup#69" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="74" href="#74"\>74</a>: 2d.composite.solid.destination-out</p>
+
+<script>
+  async function test_74_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 255, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = 'rgba(255, 255, 0, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_74_content"
+  data-contexts="1"
+  data-id="74"
+  data-name="2d.composite.solid.destination-out"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.solid.destination-out">&nbsp;</div><br />
+
+<div id="test_74_status">&nbsp;</div>
+
+[<a href="?runTests=74&noCleanup#74" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="144" href="#144"\>144</a>: 2d.composite.operation.get</p>
+
+<script>
+  async function test_144_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var modes = ['source-atop', 'source-in', 'source-out', 'source-over',
+          'destination-atop', 'destination-in', 'destination-out', 'destination-over',
+          'lighter', 'copy', 'xor'];
+      for (var i = 0; i < modes.length; ++i)
+      {
+          ctx.globalCompositeOperation = modes[i];
+          ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalCompositeOperation, modes[i], "ctx.globalCompositeOperation", "modes[\""+(i)+"\"]");
+      }
+      
+  }
+</script>
+
+<div class="test"
+  id="test_144_content"
+  data-contexts="1"
+  data-id="144"
+  data-name="2d.composite.operation.get"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.operation.get">&nbsp;</div><br />
+
+<div id="test_144_status">&nbsp;</div>
+
+[<a href="?runTests=144&noCleanup#144" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="148" href="#148"\>148</a>: 2d.composite.operation.clear</p>
+
+<script>
+  async function test_148_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.globalCompositeOperation = 'xor';
+      ctx.globalCompositeOperation = 'clear';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalCompositeOperation, 'clear', "ctx.globalCompositeOperation", "'clear'");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_148_content"
+  data-contexts="1"
+  data-id="148"
+  data-name="2d.composite.operation.clear"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.operation.clear">&nbsp;</div><br />
+
+<div id="test_148_status">&nbsp;</div>
+
+[<a href="?runTests=148&noCleanup#148" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="84" href="#84"\>84</a>: 2d.composite.transparent.source-out</p>
+
+<script>
+  async function test_84_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-out';
+      ctx.fillStyle = 'rgba(0, 0, 255, 0.75)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,255,96, "50,25", "0,0,255,96", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_84_content"
+  data-contexts="1"
+  data-id="84"
+  data-name="2d.composite.transparent.source-out"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.transparent.source-out">&nbsp;</div><br />
+
+<div id="test_84_status">&nbsp;</div>
+
+[<a href="?runTests=84&noCleanup#84" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="83" href="#83"\>83</a>: 2d.composite.transparent.destination-in</p>
+
+<script>
+  async function test_83_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-in';
+      ctx.fillStyle = 'rgba(0, 0, 255, 0.75)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,96, "50,25", "0,255,0,96", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_83_content"
+  data-contexts="1"
+  data-id="83"
+  data-name="2d.composite.transparent.destination-in"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.transparent.destination-in">&nbsp;</div><br />
+
+<div id="test_83_status">&nbsp;</div>
+
+[<a href="?runTests=83&noCleanup#83" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="109" href="#109"\>109</a>: 2d.composite.canvas.destination-atop</p>
+
+<script>
+  async function test_109_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      var canvas2 = allContexts[1];
+      canvas2.width = canvas.width;
+      canvas2.height = canvas.height;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.drawImage(_AssetRef0, 0, 0);
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-atop';
+      ctx.drawImage(canvas2, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 128,255,128,191, "50,25", "128,255,128,191", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_109_content"
+  data-contexts="2"
+  data-id="109"
+  data-name="2d.composite.canvas.destination-atop"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.canvas.destination-atop">&nbsp;</div><br />
+
+<div id="test_109_status">&nbsp;</div>
+
+[<a href="?runTests=109&noCleanup#109" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="115" href="#115"\>115</a>: 2d.composite.uncovered.fill.source-out (fill() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)</p>
+
+<script>
+  async function test_115_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-out';
+      ctx.fillStyle = 'rgba(0, 0, 255, 0.75)';
+      ctx.translate(0, 25);
+      ctx.fillRect(0, 50, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_115_content"
+  data-contexts="1"
+  data-id="115"
+  data-name="2d.composite.uncovered.fill.source-out"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.uncovered.fill.source-out (fill() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)">&nbsp;</div><br />
+
+<div id="test_115_status">&nbsp;</div>
+
+[<a href="?runTests=115&noCleanup#115" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="143" href="#143"\>143</a>: 2d.composite.clip.lighter (fill() does not affect pixels outside the clip region.)</p>
+
+<script>
+  async function test_143_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.rect(-20, -20, 10, 10);
+      ctx.clip();
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_143_content"
+  data-contexts="1"
+  data-id="143"
+  data-name="2d.composite.clip.lighter"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.clip.lighter (fill() does not affect pixels outside the clip region.)">&nbsp;</div><br />
+
+<div id="test_143_status">&nbsp;</div>
+
+[<a href="?runTests=143&noCleanup#143" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="63" href="#63"\>63</a>: 2d.composite.globalAlpha.fill</p>
+
+<script>
+  async function test_63_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalAlpha = 0.01; // avoid any potential alpha=0 optimisations
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 2,253,0,255, "50,25", "2,253,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_63_content"
+  data-contexts="1"
+  data-id="63"
+  data-name="2d.composite.globalAlpha.fill"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.globalAlpha.fill">&nbsp;</div><br />
+
+<div id="test_63_status">&nbsp;</div>
+
+[<a href="?runTests=63&noCleanup#63" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="136" href="#136"\>136</a>: 2d.composite.clip.destination-in (fill() does not affect pixels outside the clip region.)</p>
+
+<script>
+  async function test_136_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-in';
+      ctx.rect(-20, -20, 10, 10);
+      ctx.clip();
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_136_content"
+  data-contexts="1"
+  data-id="136"
+  data-name="2d.composite.clip.destination-in"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.clip.destination-in (fill() does not affect pixels outside the clip region.)">&nbsp;</div><br />
+
+<div id="test_136_status">&nbsp;</div>
+
+[<a href="?runTests=136&noCleanup#136" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="133" href="#133"\>133</a>: 2d.composite.clip.source-over (fill() does not affect pixels outside the clip region.)</p>
+
+<script>
+  async function test_133_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.rect(-20, -20, 10, 10);
+      ctx.clip();
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_133_content"
+  data-contexts="1"
+  data-id="133"
+  data-name="2d.composite.clip.source-over"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.clip.source-over (fill() does not affect pixels outside the clip region.)">&nbsp;</div><br />
+
+<div id="test_133_status">&nbsp;</div>
+
+[<a href="?runTests=133&noCleanup#133" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="78" href="#78"\>78</a>: 2d.composite.solid.copy</p>
+
+<script>
+  async function test_78_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 255, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'copy';
+      ctx.fillStyle = 'rgba(255, 255, 0, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 255,255,0,255, "50,25", "255,255,0,255", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_78_content"
+  data-contexts="1"
+  data-id="78"
+  data-name="2d.composite.solid.copy"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.solid.copy">&nbsp;</div><br />
+
+<div id="test_78_status">&nbsp;</div>
+
+[<a href="?runTests=78&noCleanup#78" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="151" href="#151"\>151</a>: 2d.composite.operation.casesensitive</p>
+
+<script>
+  async function test_151_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.globalCompositeOperation = 'xor';
+      ctx.globalCompositeOperation = 'Source-over';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalCompositeOperation, 'xor', "ctx.globalCompositeOperation", "'xor'");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_151_content"
+  data-contexts="1"
+  data-id="151"
+  data-name="2d.composite.operation.casesensitive"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.operation.casesensitive">&nbsp;</div><br />
+
+<div id="test_151_status">&nbsp;</div>
+
+[<a href="?runTests=151&noCleanup#151" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="90" href="#90"\>90</a>: 2d.composite.transparent.lighter</p>
+
+<script>
+  async function test_90_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = 'rgba(0, 0, 255, 0.75)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,128,191,255, "50,25", "0,128,191,255", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_90_content"
+  data-contexts="1"
+  data-id="90"
+  data-name="2d.composite.transparent.lighter"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.transparent.lighter">&nbsp;</div><br />
+
+<div id="test_90_status">&nbsp;</div>
+
+[<a href="?runTests=90&noCleanup#90" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="142" href="#142"\>142</a>: 2d.composite.clip.copy (fill() does not affect pixels outside the clip region.)</p>
+
+<script>
+  async function test_142_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'copy';
+      ctx.rect(-20, -20, 10, 10);
+      ctx.clip();
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_142_content"
+  data-contexts="1"
+  data-id="142"
+  data-name="2d.composite.clip.copy"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.clip.copy (fill() does not affect pixels outside the clip region.)">&nbsp;</div><br />
+
+<div id="test_142_status">&nbsp;</div>
+
+[<a href="?runTests=142&noCleanup#142" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="149" href="#149"\>149</a>: 2d.composite.operation.highlight</p>
+
+<script>
+  async function test_149_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.globalCompositeOperation = 'xor';
+      ctx.globalCompositeOperation = 'highlight';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalCompositeOperation, 'xor', "ctx.globalCompositeOperation", "'xor'");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_149_content"
+  data-contexts="1"
+  data-id="149"
+  data-name="2d.composite.operation.highlight"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.operation.highlight">&nbsp;</div><br />
+
+<div id="test_149_status">&nbsp;</div>
+
+[<a href="?runTests=149&noCleanup#149" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="118" href="#118"\>118</a>: 2d.composite.uncovered.image.source-in (drawImage() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)</p>
+
+<script>
+  async function test_118_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-in';
+      ctx.drawImage(_AssetRef0, 40, 40, 10, 10, 40, 50, 10, 10);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 15,15, 0,0,0,0, "15,15", "0,0,0,0", 5);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_118_content"
+  data-contexts="1"
+  data-id="118"
+  data-name="2d.composite.uncovered.image.source-in"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.uncovered.image.source-in (drawImage() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)">&nbsp;</div><br />
+
+<div id="test_118_status">&nbsp;</div>
+
+[<a href="?runTests=118&noCleanup#118" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="111" href="#111"\>111</a>: 2d.composite.canvas.copy</p>
+
+<script>
+  async function test_111_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      var canvas2 = allContexts[1];
+      canvas2.width = canvas.width;
+      canvas2.height = canvas.height;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.drawImage(_AssetRef0, 0, 0);
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'copy';
+      ctx.drawImage(canvas2, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 255,255,0,191, "50,25", "255,255,0,191", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_111_content"
+  data-contexts="2"
+  data-id="111"
+  data-name="2d.composite.canvas.copy"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.canvas.copy">&nbsp;</div><br />
+
+<div id="test_111_status">&nbsp;</div>
+
+[<a href="?runTests=111&noCleanup#111" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="99" href="#99"\>99</a>: 2d.composite.image.xor</p>
+
+<script>
+  async function test_99_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'xor';
+      ctx.drawImage(_AssetRef0, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 191,255,64,128, "50,25", "191,255,64,128", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_99_content"
+  data-contexts="1"
+  data-id="99"
+  data-name="2d.composite.image.xor"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.image.xor">&nbsp;</div><br />
+
+<div id="test_99_status">&nbsp;</div>
+
+[<a href="?runTests=99&noCleanup#99" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="62" href="#62"\>62</a>: 2d.composite.globalAlpha.default</p>
+
+<script>
+  async function test_62_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalAlpha, 1.0, "ctx.globalAlpha", "1.0");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_62_content"
+  data-contexts="1"
+  data-id="62"
+  data-name="2d.composite.globalAlpha.default"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.globalAlpha.default">&nbsp;</div><br />
+
+<div id="test_62_status">&nbsp;</div>
+
+[<a href="?runTests=62&noCleanup#62" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="128" href="#128"\>128</a>: 2d.composite.uncovered.pattern.source-in (Pattern fill() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)</p>
+
+<script>
+  async function test_128_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-in';
+      ctx.fillStyle = ctx.createPattern(_AssetRef0, 'no-repeat');
+      ctx.fillRect(0, 50, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_128_content"
+  data-contexts="1"
+  data-id="128"
+  data-name="2d.composite.uncovered.pattern.source-in"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.uncovered.pattern.source-in (Pattern fill() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)">&nbsp;</div><br />
+
+<div id="test_128_status">&nbsp;</div>
+
+[<a href="?runTests=128&noCleanup#128" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="122" href="#122"\>122</a>: 2d.composite.uncovered.image.copy (drawImage() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)</p>
+
+<script>
+  async function test_122_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'copy';
+      ctx.drawImage(_AssetRef0, 40, 40, 10, 10, 40, 50, 10, 10);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 15,15, 0,0,0,0, "15,15", "0,0,0,0", 5);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_122_content"
+  data-contexts="1"
+  data-id="122"
+  data-name="2d.composite.uncovered.image.copy"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.uncovered.image.copy (drawImage() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)">&nbsp;</div><br />
+
+<div id="test_122_status">&nbsp;</div>
+
+[<a href="?runTests=122&noCleanup#122" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="147" href="#147"\>147</a>: 2d.composite.operation.over</p>
+
+<script>
+  async function test_147_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.globalCompositeOperation = 'xor';
+      ctx.globalCompositeOperation = 'over';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalCompositeOperation, 'xor', "ctx.globalCompositeOperation", "'xor'");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_147_content"
+  data-contexts="1"
+  data-id="147"
+  data-name="2d.composite.operation.over"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.operation.over">&nbsp;</div><br />
+
+<div id="test_147_status">&nbsp;</div>
+
+[<a href="?runTests=147&noCleanup#147" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="77" href="#77"\>77</a>: 2d.composite.solid.xor</p>
+
+<script>
+  async function test_77_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 255, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'xor';
+      ctx.fillStyle = 'rgba(255, 255, 0, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_77_content"
+  data-contexts="1"
+  data-id="77"
+  data-name="2d.composite.solid.xor"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.solid.xor">&nbsp;</div><br />
+
+<div id="test_77_status">&nbsp;</div>
+
+[<a href="?runTests=77&noCleanup#77" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="137" href="#137"\>137</a>: 2d.composite.clip.source-out (fill() does not affect pixels outside the clip region.)</p>
+
+<script>
+  async function test_137_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-out';
+      ctx.rect(-20, -20, 10, 10);
+      ctx.clip();
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_137_content"
+  data-contexts="1"
+  data-id="137"
+  data-name="2d.composite.clip.source-out"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.clip.source-out (fill() does not affect pixels outside the clip region.)">&nbsp;</div><br />
+
+<div id="test_137_status">&nbsp;</div>
+
+[<a href="?runTests=137&noCleanup#137" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="129" href="#129"\>129</a>: 2d.composite.uncovered.pattern.destination-in (Pattern fill() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)</p>
+
+<script>
+  async function test_129_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-in';
+      ctx.fillStyle = ctx.createPattern(_AssetRef0, 'no-repeat');
+      ctx.fillRect(0, 50, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_129_content"
+  data-contexts="1"
+  data-id="129"
+  data-name="2d.composite.uncovered.pattern.destination-in"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.uncovered.pattern.destination-in (Pattern fill() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)">&nbsp;</div><br />
+
+<div id="test_129_status">&nbsp;</div>
+
+[<a href="?runTests=129&noCleanup#129" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="71" href="#71"\>71</a>: 2d.composite.solid.source-in</p>
+
+<script>
+  async function test_71_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 255, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-in';
+      ctx.fillStyle = 'rgba(255, 255, 0, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 255,255,0,255, "50,25", "255,255,0,255", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_71_content"
+  data-contexts="1"
+  data-id="71"
+  data-name="2d.composite.solid.source-in"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.solid.source-in">&nbsp;</div><br />
+
+<div id="test_71_status">&nbsp;</div>
+
+[<a href="?runTests=71&noCleanup#71" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="152" href="#152"\>152</a>: 2d.composite.operation.default</p>
+
+<script>
+  async function test_152_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalCompositeOperation, 'source-over', "ctx.globalCompositeOperation", "'source-over'");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_152_content"
+  data-contexts="1"
+  data-id="152"
+  data-name="2d.composite.operation.default"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.operation.default">&nbsp;</div><br />
+
+<div id="test_152_status">&nbsp;</div>
+
+[<a href="?runTests=152&noCleanup#152" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="113" href="#113"\>113</a>: 2d.composite.uncovered.fill.source-in (fill() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)</p>
+
+<script>
+  async function test_113_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-in';
+      ctx.fillStyle = 'rgba(0, 0, 255, 0.75)';
+      ctx.translate(0, 25);
+      ctx.fillRect(0, 50, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_113_content"
+  data-contexts="1"
+  data-id="113"
+  data-name="2d.composite.uncovered.fill.source-in"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.uncovered.fill.source-in (fill() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)">&nbsp;</div><br />
+
+<div id="test_113_status">&nbsp;</div>
+
+[<a href="?runTests=113&noCleanup#113" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="104" href="#104"\>104</a>: 2d.composite.canvas.source-in</p>
+
+<script>
+  async function test_104_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      var canvas2 = allContexts[1];
+      canvas2.width = canvas.width;
+      canvas2.height = canvas.height;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.drawImage(_AssetRef0, 0, 0);
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-in';
+      ctx.drawImage(canvas2, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 255,255,0,96, "50,25", "255,255,0,96", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_104_content"
+  data-contexts="2"
+  data-id="104"
+  data-name="2d.composite.canvas.source-in"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.canvas.source-in">&nbsp;</div><br />
+
+<div id="test_104_status">&nbsp;</div>
+
+[<a href="?runTests=104&noCleanup#104" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="131" href="#131"\>131</a>: 2d.composite.uncovered.pattern.destination-atop (Pattern fill() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)</p>
+
+<script>
+  async function test_131_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-atop';
+      ctx.fillStyle = ctx.createPattern(_AssetRef0, 'no-repeat');
+      ctx.fillRect(0, 50, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_131_content"
+  data-contexts="1"
+  data-id="131"
+  data-name="2d.composite.uncovered.pattern.destination-atop"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.uncovered.pattern.destination-atop (Pattern fill() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)">&nbsp;</div><br />
+
+<div id="test_131_status">&nbsp;</div>
+
+[<a href="?runTests=131&noCleanup#131" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="92" href="#92"\>92</a>: 2d.composite.image.destination-over</p>
+
+<script>
+  async function test_92_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-over';
+      ctx.drawImage(_AssetRef0, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 109,255,146,223, "50,25", "109,255,146,223", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_92_content"
+  data-contexts="1"
+  data-id="92"
+  data-name="2d.composite.image.destination-over"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.image.destination-over">&nbsp;</div><br />
+
+<div id="test_92_status">&nbsp;</div>
+
+[<a href="?runTests=92&noCleanup#92" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="96" href="#96"\>96</a>: 2d.composite.image.destination-out</p>
+
+<script>
+  async function test_96_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.drawImage(_AssetRef0, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,255,32, "50,25", "0,255,255,32", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_96_content"
+  data-contexts="1"
+  data-id="96"
+  data-name="2d.composite.image.destination-out"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.image.destination-out">&nbsp;</div><br />
+
+<div id="test_96_status">&nbsp;</div>
+
+[<a href="?runTests=96&noCleanup#96" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="145" href="#145"\>145</a>: 2d.composite.operation.unrecognised</p>
+
+<script>
+  async function test_145_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.globalCompositeOperation = 'xor';
+      ctx.globalCompositeOperation = 'nonexistent';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalCompositeOperation, 'xor', "ctx.globalCompositeOperation", "'xor'");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_145_content"
+  data-contexts="1"
+  data-id="145"
+  data-name="2d.composite.operation.unrecognised"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.operation.unrecognised">&nbsp;</div><br />
+
+<div id="test_145_status">&nbsp;</div>
+
+[<a href="?runTests=145&noCleanup#145" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="85" href="#85"\>85</a>: 2d.composite.transparent.destination-out</p>
+
+<script>
+  async function test_85_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = 'rgba(0, 0, 255, 0.75)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,32, "50,25", "0,255,0,32", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_85_content"
+  data-contexts="1"
+  data-id="85"
+  data-name="2d.composite.transparent.destination-out"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.transparent.destination-out">&nbsp;</div><br />
+
+<div id="test_85_status">&nbsp;</div>
+
+[<a href="?runTests=85&noCleanup#85" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="81" href="#81"\>81</a>: 2d.composite.transparent.destination-over</p>
+
+<script>
+  async function test_81_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-over';
+      ctx.fillStyle = 'rgba(0, 0, 255, 0.75)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,146,109,223, "50,25", "0,146,109,223", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_81_content"
+  data-contexts="1"
+  data-id="81"
+  data-name="2d.composite.transparent.destination-over"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.transparent.destination-over">&nbsp;</div><br />
+
+<div id="test_81_status">&nbsp;</div>
+
+[<a href="?runTests=81&noCleanup#81" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="130" href="#130"\>130</a>: 2d.composite.uncovered.pattern.source-out (Pattern fill() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)</p>
+
+<script>
+  async function test_130_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-out';
+      ctx.fillStyle = ctx.createPattern(_AssetRef0, 'no-repeat');
+      ctx.fillRect(0, 50, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_130_content"
+  data-contexts="1"
+  data-id="130"
+  data-name="2d.composite.uncovered.pattern.source-out"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.uncovered.pattern.source-out (Pattern fill() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)">&nbsp;</div><br />
+
+<div id="test_130_status">&nbsp;</div>
+
+[<a href="?runTests=130&noCleanup#130" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="80" href="#80"\>80</a>: 2d.composite.transparent.source-over</p>
+
+<script>
+  async function test_80_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = 'rgba(0, 0, 255, 0.75)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,36,219,223, "50,25", "0,36,219,223", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_80_content"
+  data-contexts="1"
+  data-id="80"
+  data-name="2d.composite.transparent.source-over"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.transparent.source-over">&nbsp;</div><br />
+
+<div id="test_80_status">&nbsp;</div>
+
+[<a href="?runTests=80&noCleanup#80" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="123" href="#123"\>123</a>: 2d.composite.uncovered.nocontext.source-in (drawImage() of a canvas with no context draws pixels as (0,0,0,0), and does not leave the pixels unchanged.)</p>
+
+<script>
+  async function test_123_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-in';
+      var canvas2 = allContexts[1];
+      ctx.drawImage(canvas2, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_123_content"
+  data-contexts="2"
+  data-id="123"
+  data-name="2d.composite.uncovered.nocontext.source-in"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.uncovered.nocontext.source-in (drawImage() of a canvas with no context draws pixels as (0,0,0,0), and does not leave the pixels unchanged.)">&nbsp;</div><br />
+
+<div id="test_123_status">&nbsp;</div>
+
+[<a href="?runTests=123&noCleanup#123" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="114" href="#114"\>114</a>: 2d.composite.uncovered.fill.destination-in (fill() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)</p>
+
+<script>
+  async function test_114_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-in';
+      ctx.fillStyle = 'rgba(0, 0, 255, 0.75)';
+      ctx.translate(0, 25);
+      ctx.fillRect(0, 50, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_114_content"
+  data-contexts="1"
+  data-id="114"
+  data-name="2d.composite.uncovered.fill.destination-in"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.uncovered.fill.destination-in (fill() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)">&nbsp;</div><br />
+
+<div id="test_114_status">&nbsp;</div>
+
+[<a href="?runTests=114&noCleanup#114" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="150" href="#150"\>150</a>: 2d.composite.operation.nullsuffix</p>
+
+<script>
+  async function test_150_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.globalCompositeOperation = 'xor';
+      ctx.globalCompositeOperation = 'source-over\0';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalCompositeOperation, 'xor', "ctx.globalCompositeOperation", "'xor'");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_150_content"
+  data-contexts="1"
+  data-id="150"
+  data-name="2d.composite.operation.nullsuffix"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.operation.nullsuffix">&nbsp;</div><br />
+
+<div id="test_150_status">&nbsp;</div>
+
+[<a href="?runTests=150&noCleanup#150" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="117" href="#117"\>117</a>: 2d.composite.uncovered.fill.copy (fill() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)</p>
+
+<script>
+  async function test_117_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'copy';
+      ctx.fillStyle = 'rgba(0, 0, 255, 0.75)';
+      ctx.translate(0, 25);
+      ctx.fillRect(0, 50, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_117_content"
+  data-contexts="1"
+  data-id="117"
+  data-name="2d.composite.uncovered.fill.copy"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.uncovered.fill.copy (fill() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)">&nbsp;</div><br />
+
+<div id="test_117_status">&nbsp;</div>
+
+[<a href="?runTests=117&noCleanup#117" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="108" href="#108"\>108</a>: 2d.composite.canvas.source-atop</p>
+
+<script>
+  async function test_108_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      var canvas2 = allContexts[1];
+      canvas2.width = canvas.width;
+      canvas2.height = canvas.height;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.drawImage(_AssetRef0, 0, 0);
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.drawImage(canvas2, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 191,255,64,128, "50,25", "191,255,64,128", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_108_content"
+  data-contexts="2"
+  data-id="108"
+  data-name="2d.composite.canvas.source-atop"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.canvas.source-atop">&nbsp;</div><br />
+
+<div id="test_108_status">&nbsp;</div>
+
+[<a href="?runTests=108&noCleanup#108" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="76" href="#76"\>76</a>: 2d.composite.solid.destination-atop</p>
+
+<script>
+  async function test_76_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 255, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-atop';
+      ctx.fillStyle = 'rgba(255, 255, 0, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,255,255, "50,25", "0,255,255,255", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_76_content"
+  data-contexts="1"
+  data-id="76"
+  data-name="2d.composite.solid.destination-atop"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.solid.destination-atop">&nbsp;</div><br />
+
+<div id="test_76_status">&nbsp;</div>
+
+[<a href="?runTests=76&noCleanup#76" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="112" href="#112"\>112</a>: 2d.composite.canvas.lighter</p>
+
+<script>
+  async function test_112_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      var canvas2 = allContexts[1];
+      canvas2.width = canvas.width;
+      canvas2.height = canvas.height;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.drawImage(_AssetRef0, 0, 0);
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.drawImage(canvas2, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 191,255,128,255, "50,25", "191,255,128,255", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_112_content"
+  data-contexts="2"
+  data-id="112"
+  data-name="2d.composite.canvas.lighter"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.canvas.lighter">&nbsp;</div><br />
+
+<div id="test_112_status">&nbsp;</div>
+
+[<a href="?runTests=112&noCleanup#112" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="105" href="#105"\>105</a>: 2d.composite.canvas.destination-in</p>
+
+<script>
+  async function test_105_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      var canvas2 = allContexts[1];
+      canvas2.width = canvas.width;
+      canvas2.height = canvas.height;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.drawImage(_AssetRef0, 0, 0);
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-in';
+      ctx.drawImage(canvas2, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,255,96, "50,25", "0,255,255,96", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_105_content"
+  data-contexts="2"
+  data-id="105"
+  data-name="2d.composite.canvas.destination-in"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.canvas.destination-in">&nbsp;</div><br />
+
+<div id="test_105_status">&nbsp;</div>
+
+[<a href="?runTests=105&noCleanup#105" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="61" href="#61"\>61</a>: 2d.composite.globalAlpha.invalid</p>
+
+<script>
+  async function test_61_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.globalAlpha = 0.5;
+      var a = ctx.globalAlpha; // might not be exactly 0.5, if it is rounded/quantised, so remember for future comparisons
+      ctx.globalAlpha = Infinity;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalAlpha, a, "ctx.globalAlpha", "a");
+      ctx.globalAlpha = -Infinity;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalAlpha, a, "ctx.globalAlpha", "a");
+      ctx.globalAlpha = NaN;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalAlpha, a, "ctx.globalAlpha", "a");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_61_content"
+  data-contexts="1"
+  data-id="61"
+  data-name="2d.composite.globalAlpha.invalid"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.globalAlpha.invalid">&nbsp;</div><br />
+
+<div id="test_61_status">&nbsp;</div>
+
+[<a href="?runTests=61&noCleanup#61" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="95" href="#95"\>95</a>: 2d.composite.image.source-out</p>
+
+<script>
+  async function test_95_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-out';
+      ctx.drawImage(_AssetRef0, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 255,255,0,96, "50,25", "255,255,0,96", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_95_content"
+  data-contexts="1"
+  data-id="95"
+  data-name="2d.composite.image.source-out"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.image.source-out">&nbsp;</div><br />
+
+<div id="test_95_status">&nbsp;</div>
+
+[<a href="?runTests=95&noCleanup#95" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="93" href="#93"\>93</a>: 2d.composite.image.source-in</p>
+
+<script>
+  async function test_93_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-in';
+      ctx.drawImage(_AssetRef0, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 255,255,0,96, "50,25", "255,255,0,96", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_93_content"
+  data-contexts="1"
+  data-id="93"
+  data-name="2d.composite.image.source-in"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.image.source-in">&nbsp;</div><br />
+
+<div id="test_93_status">&nbsp;</div>
+
+[<a href="?runTests=93&noCleanup#93" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="86" href="#86"\>86</a>: 2d.composite.transparent.source-atop</p>
+
+<script>
+  async function test_86_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.fillStyle = 'rgba(0, 0, 255, 0.75)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,64,191,128, "50,25", "0,64,191,128", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_86_content"
+  data-contexts="1"
+  data-id="86"
+  data-name="2d.composite.transparent.source-atop"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.transparent.source-atop">&nbsp;</div><br />
+
+<div id="test_86_status">&nbsp;</div>
+
+[<a href="?runTests=86&noCleanup#86" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="103" href="#103"\>103</a>: 2d.composite.canvas.destination-over</p>
+
+<script>
+  async function test_103_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      var canvas2 = allContexts[1];
+      canvas2.width = canvas.width;
+      canvas2.height = canvas.height;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.drawImage(_AssetRef0, 0, 0);
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-over';
+      ctx.drawImage(canvas2, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 109,255,146,223, "50,25", "109,255,146,223", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_103_content"
+  data-contexts="2"
+  data-id="103"
+  data-name="2d.composite.canvas.destination-over"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.canvas.destination-over">&nbsp;</div><br />
+
+<div id="test_103_status">&nbsp;</div>
+
+[<a href="?runTests=103&noCleanup#103" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="70" href="#70"\>70</a>: 2d.composite.solid.destination-over</p>
+
+<script>
+  async function test_70_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 255, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-over';
+      ctx.fillStyle = 'rgba(255, 255, 0, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,255,255, "50,25", "0,255,255,255", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_70_content"
+  data-contexts="1"
+  data-id="70"
+  data-name="2d.composite.solid.destination-over"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.solid.destination-over">&nbsp;</div><br />
+
+<div id="test_70_status">&nbsp;</div>
+
+[<a href="?runTests=70&noCleanup#70" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="68" href="#68"\>68</a>: 2d.composite.globalAlpha.canvascopy</p>
+
+<script>
+  async function test_68_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var canvas2 = allContexts[1];
+      canvas2.width = 100;
+      canvas2.height = 50;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.fillStyle = '#0f0';
+      ctx2.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.globalCompositeOperation = 'copy'
+      ctx.globalAlpha = 0.51;
+      ctx.drawImage(canvas2, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,130, "50,25", "0,255,0,130", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_68_content"
+  data-contexts="2"
+  data-id="68"
+  data-name="2d.composite.globalAlpha.canvascopy"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.globalAlpha.canvascopy">&nbsp;</div><br />
+
+<div id="test_68_status">&nbsp;</div>
+
+[<a href="?runTests=68&noCleanup#68" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="64" href="#64"\>64</a>: 2d.composite.globalAlpha.image</p>
+
+<script>
+  async function test_64_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalAlpha = 0.01; // avoid any potential alpha=0 optimisations
+      ctx.drawImage(_AssetRef0, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 2,253,0,255, "50,25", "2,253,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_64_content"
+  data-contexts="1"
+  data-id="64"
+  data-name="2d.composite.globalAlpha.image"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.globalAlpha.image">&nbsp;</div><br />
+
+<div id="test_64_status">&nbsp;</div>
+
+[<a href="?runTests=64&noCleanup#64" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="88" href="#88"\>88</a>: 2d.composite.transparent.xor</p>
+
+<script>
+  async function test_88_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'xor';
+      ctx.fillStyle = 'rgba(0, 0, 255, 0.75)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,64,191,128, "50,25", "0,64,191,128", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_88_content"
+  data-contexts="1"
+  data-id="88"
+  data-name="2d.composite.transparent.xor"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.transparent.xor">&nbsp;</div><br />
+
+<div id="test_88_status">&nbsp;</div>
+
+[<a href="?runTests=88&noCleanup#88" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="140" href="#140"\>140</a>: 2d.composite.clip.destination-atop (fill() does not affect pixels outside the clip region.)</p>
+
+<script>
+  async function test_140_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-atop';
+      ctx.rect(-20, -20, 10, 10);
+      ctx.clip();
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_140_content"
+  data-contexts="1"
+  data-id="140"
+  data-name="2d.composite.clip.destination-atop"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.clip.destination-atop (fill() does not affect pixels outside the clip region.)">&nbsp;</div><br />
+
+<div id="test_140_status">&nbsp;</div>
+
+[<a href="?runTests=140&noCleanup#140" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="89" href="#89"\>89</a>: 2d.composite.transparent.copy</p>
+
+<script>
+  async function test_89_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'copy';
+      ctx.fillStyle = 'rgba(0, 0, 255, 0.75)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,255,191, "50,25", "0,0,255,191", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_89_content"
+  data-contexts="1"
+  data-id="89"
+  data-name="2d.composite.transparent.copy"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.transparent.copy">&nbsp;</div><br />
+
+<div id="test_89_status">&nbsp;</div>
+
+[<a href="?runTests=89&noCleanup#89" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="87" href="#87"\>87</a>: 2d.composite.transparent.destination-atop</p>
+
+<script>
+  async function test_87_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-atop';
+      ctx.fillStyle = 'rgba(0, 0, 255, 0.75)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,128,128,191, "50,25", "0,128,128,191", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_87_content"
+  data-contexts="1"
+  data-id="87"
+  data-name="2d.composite.transparent.destination-atop"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.transparent.destination-atop">&nbsp;</div><br />
+
+<div id="test_87_status">&nbsp;</div>
+
+[<a href="?runTests=87&noCleanup#87" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="116" href="#116"\>116</a>: 2d.composite.uncovered.fill.destination-atop (fill() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)</p>
+
+<script>
+  async function test_116_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-atop';
+      ctx.fillStyle = 'rgba(0, 0, 255, 0.75)';
+      ctx.translate(0, 25);
+      ctx.fillRect(0, 50, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_116_content"
+  data-contexts="1"
+  data-id="116"
+  data-name="2d.composite.uncovered.fill.destination-atop"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.uncovered.fill.destination-atop (fill() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)">&nbsp;</div><br />
+
+<div id="test_116_status">&nbsp;</div>
+
+[<a href="?runTests=116&noCleanup#116" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="100" href="#100"\>100</a>: 2d.composite.image.copy</p>
+
+<script>
+  async function test_100_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'copy';
+      ctx.drawImage(_AssetRef0, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 255,255,0,191, "50,25", "255,255,0,191", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_100_content"
+  data-contexts="1"
+  data-id="100"
+  data-name="2d.composite.image.copy"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.image.copy">&nbsp;</div><br />
+
+<div id="test_100_status">&nbsp;</div>
+
+[<a href="?runTests=100&noCleanup#100" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="119" href="#119"\>119</a>: 2d.composite.uncovered.image.destination-in (drawImage() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)</p>
+
+<script>
+  async function test_119_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-in';
+      ctx.drawImage(_AssetRef0, 40, 40, 10, 10, 40, 50, 10, 10);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 15,15, 0,0,0,0, "15,15", "0,0,0,0", 5);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_119_content"
+  data-contexts="1"
+  data-id="119"
+  data-name="2d.composite.uncovered.image.destination-in"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.uncovered.image.destination-in (drawImage() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)">&nbsp;</div><br />
+
+<div id="test_119_status">&nbsp;</div>
+
+[<a href="?runTests=119&noCleanup#119" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="60" href="#60"\>60</a>: 2d.composite.globalAlpha.range</p>
+
+<script>
+  async function test_60_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.globalAlpha = 0.5;
+      var a = ctx.globalAlpha; // might not be exactly 0.5, if it is rounded/quantised, so remember for future comparisons
+      ctx.globalAlpha = 1.1;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalAlpha, a, "ctx.globalAlpha", "a");
+      ctx.globalAlpha = -0.1;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalAlpha, a, "ctx.globalAlpha", "a");
+      ctx.globalAlpha = 0;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalAlpha, 0, "ctx.globalAlpha", "0");
+      ctx.globalAlpha = 1;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalAlpha, 1, "ctx.globalAlpha", "1");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_60_content"
+  data-contexts="1"
+  data-id="60"
+  data-name="2d.composite.globalAlpha.range"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.globalAlpha.range">&nbsp;</div><br />
+
+<div id="test_60_status">&nbsp;</div>
+
+[<a href="?runTests=60&noCleanup#60" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="141" href="#141"\>141</a>: 2d.composite.clip.xor (fill() does not affect pixels outside the clip region.)</p>
+
+<script>
+  async function test_141_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'xor';
+      ctx.rect(-20, -20, 10, 10);
+      ctx.clip();
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_141_content"
+  data-contexts="1"
+  data-id="141"
+  data-name="2d.composite.clip.xor"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.clip.xor (fill() does not affect pixels outside the clip region.)">&nbsp;</div><br />
+
+<div id="test_141_status">&nbsp;</div>
+
+[<a href="?runTests=141&noCleanup#141" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="125" href="#125"\>125</a>: 2d.composite.uncovered.nocontext.source-out (drawImage() of a canvas with no context draws pixels as (0,0,0,0), and does not leave the pixels unchanged.)</p>
+
+<script>
+  async function test_125_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-out';
+      var canvas2 = allContexts[1];
+      ctx.drawImage(canvas2, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_125_content"
+  data-contexts="2"
+  data-id="125"
+  data-name="2d.composite.uncovered.nocontext.source-out"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.uncovered.nocontext.source-out (drawImage() of a canvas with no context draws pixels as (0,0,0,0), and does not leave the pixels unchanged.)">&nbsp;</div><br />
+
+<div id="test_125_status">&nbsp;</div>
+
+[<a href="?runTests=125&noCleanup#125" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="66" href="#66"\>66</a>: 2d.composite.globalAlpha.imagepattern</p>
+
+<script>
+  async function test_66_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = ctx.createPattern(_AssetRef0, 'no-repeat');
+      ctx.globalAlpha = 0.01; // avoid any potential alpha=0 optimisations
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 2,253,0,255, "50,25", "2,253,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_66_content"
+  data-contexts="1"
+  data-id="66"
+  data-name="2d.composite.globalAlpha.imagepattern"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.globalAlpha.imagepattern">&nbsp;</div><br />
+
+<div id="test_66_status">&nbsp;</div>
+
+[<a href="?runTests=66&noCleanup#66" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="121" href="#121"\>121</a>: 2d.composite.uncovered.image.destination-atop (drawImage() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)</p>
+
+<script>
+  async function test_121_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-atop';
+      ctx.drawImage(_AssetRef0, 40, 40, 10, 10, 40, 50, 10, 10);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 15,15, 0,0,0,0, "15,15", "0,0,0,0", 5);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_121_content"
+  data-contexts="1"
+  data-id="121"
+  data-name="2d.composite.uncovered.image.destination-atop"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.uncovered.image.destination-atop (drawImage() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)">&nbsp;</div><br />
+
+<div id="test_121_status">&nbsp;</div>
+
+[<a href="?runTests=121&noCleanup#121" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="132" href="#132"\>132</a>: 2d.composite.uncovered.pattern.copy (Pattern fill() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)</p>
+
+<script>
+  async function test_132_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'copy';
+      ctx.fillStyle = ctx.createPattern(_AssetRef0, 'no-repeat');
+      ctx.fillRect(0, 50, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_132_content"
+  data-contexts="1"
+  data-id="132"
+  data-name="2d.composite.uncovered.pattern.copy"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.uncovered.pattern.copy (Pattern fill() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)">&nbsp;</div><br />
+
+<div id="test_132_status">&nbsp;</div>
+
+[<a href="?runTests=132&noCleanup#132" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="79" href="#79"\>79</a>: 2d.composite.solid.lighter</p>
+
+<script>
+  async function test_79_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 255, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = 'rgba(255, 255, 0, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 255,255,255,255, "50,25", "255,255,255,255", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_79_content"
+  data-contexts="1"
+  data-id="79"
+  data-name="2d.composite.solid.lighter"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.solid.lighter">&nbsp;</div><br />
+
+<div id="test_79_status">&nbsp;</div>
+
+[<a href="?runTests=79&noCleanup#79" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="94" href="#94"\>94</a>: 2d.composite.image.destination-in</p>
+
+<script>
+  async function test_94_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-in';
+      ctx.drawImage(_AssetRef0, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,255,96, "50,25", "0,255,255,96", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_94_content"
+  data-contexts="1"
+  data-id="94"
+  data-name="2d.composite.image.destination-in"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.image.destination-in">&nbsp;</div><br />
+
+<div id="test_94_status">&nbsp;</div>
+
+[<a href="?runTests=94&noCleanup#94" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="124" href="#124"\>124</a>: 2d.composite.uncovered.nocontext.destination-in (drawImage() of a canvas with no context draws pixels as (0,0,0,0), and does not leave the pixels unchanged.)</p>
+
+<script>
+  async function test_124_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-in';
+      var canvas2 = allContexts[1];
+      ctx.drawImage(canvas2, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_124_content"
+  data-contexts="2"
+  data-id="124"
+  data-name="2d.composite.uncovered.nocontext.destination-in"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.uncovered.nocontext.destination-in (drawImage() of a canvas with no context draws pixels as (0,0,0,0), and does not leave the pixels unchanged.)">&nbsp;</div><br />
+
+<div id="test_124_status">&nbsp;</div>
+
+[<a href="?runTests=124&noCleanup#124" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="82" href="#82"\>82</a>: 2d.composite.transparent.source-in</p>
+
+<script>
+  async function test_82_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-in';
+      ctx.fillStyle = 'rgba(0, 0, 255, 0.75)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,255,96, "50,25", "0,0,255,96", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_82_content"
+  data-contexts="1"
+  data-id="82"
+  data-name="2d.composite.transparent.source-in"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.transparent.source-in">&nbsp;</div><br />
+
+<div id="test_82_status">&nbsp;</div>
+
+[<a href="?runTests=82&noCleanup#82" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="75" href="#75"\>75</a>: 2d.composite.solid.source-atop</p>
+
+<script>
+  async function test_75_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 255, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.fillStyle = 'rgba(255, 255, 0, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 255,255,0,255, "50,25", "255,255,0,255", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_75_content"
+  data-contexts="1"
+  data-id="75"
+  data-name="2d.composite.solid.source-atop"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.solid.source-atop">&nbsp;</div><br />
+
+<div id="test_75_status">&nbsp;</div>
+
+[<a href="?runTests=75&noCleanup#75" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="72" href="#72"\>72</a>: 2d.composite.solid.destination-in</p>
+
+<script>
+  async function test_72_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 255, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-in';
+      ctx.fillStyle = 'rgba(255, 255, 0, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,255,255, "50,25", "0,255,255,255", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_72_content"
+  data-contexts="1"
+  data-id="72"
+  data-name="2d.composite.solid.destination-in"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.solid.destination-in">&nbsp;</div><br />
+
+<div id="test_72_status">&nbsp;</div>
+
+[<a href="?runTests=72&noCleanup#72" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="146" href="#146"\>146</a>: 2d.composite.operation.darker</p>
+
+<script>
+  async function test_146_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.globalCompositeOperation = 'xor';
+      ctx.globalCompositeOperation = 'darker';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalCompositeOperation, 'xor', "ctx.globalCompositeOperation", "'xor'");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_146_content"
+  data-contexts="1"
+  data-id="146"
+  data-name="2d.composite.operation.darker"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.operation.darker">&nbsp;</div><br />
+
+<div id="test_146_status">&nbsp;</div>
+
+[<a href="?runTests=146&noCleanup#146" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="127" href="#127"\>127</a>: 2d.composite.uncovered.nocontext.copy (drawImage() of a canvas with no context draws pixels as (0,0,0,0), and does not leave the pixels unchanged.)</p>
+
+<script>
+  async function test_127_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'copy';
+      var canvas2 = allContexts[1];
+      ctx.drawImage(canvas2, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_127_content"
+  data-contexts="2"
+  data-id="127"
+  data-name="2d.composite.uncovered.nocontext.copy"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.uncovered.nocontext.copy (drawImage() of a canvas with no context draws pixels as (0,0,0,0), and does not leave the pixels unchanged.)">&nbsp;</div><br />
+
+<div id="test_127_status">&nbsp;</div>
+
+[<a href="?runTests=127&noCleanup#127" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="107" href="#107"\>107</a>: 2d.composite.canvas.destination-out</p>
+
+<script>
+  async function test_107_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      var canvas2 = allContexts[1];
+      canvas2.width = canvas.width;
+      canvas2.height = canvas.height;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.drawImage(_AssetRef0, 0, 0);
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.drawImage(canvas2, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,255,32, "50,25", "0,255,255,32", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_107_content"
+  data-contexts="2"
+  data-id="107"
+  data-name="2d.composite.canvas.destination-out"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.canvas.destination-out">&nbsp;</div><br />
+
+<div id="test_107_status">&nbsp;</div>
+
+[<a href="?runTests=107&noCleanup#107" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="106" href="#106"\>106</a>: 2d.composite.canvas.source-out</p>
+
+<script>
+  async function test_106_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      var canvas2 = allContexts[1];
+      canvas2.width = canvas.width;
+      canvas2.height = canvas.height;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.drawImage(_AssetRef0, 0, 0);
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-out';
+      ctx.drawImage(canvas2, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 255,255,0,96, "50,25", "255,255,0,96", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_106_content"
+  data-contexts="2"
+  data-id="106"
+  data-name="2d.composite.canvas.source-out"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.canvas.source-out">&nbsp;</div><br />
+
+<div id="test_106_status">&nbsp;</div>
+
+[<a href="?runTests=106&noCleanup#106" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="120" href="#120"\>120</a>: 2d.composite.uncovered.image.source-out (drawImage() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)</p>
+
+<script>
+  async function test_120_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-out';
+      ctx.drawImage(_AssetRef0, 40, 40, 10, 10, 40, 50, 10, 10);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 15,15, 0,0,0,0, "15,15", "0,0,0,0", 5);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_120_content"
+  data-contexts="1"
+  data-id="120"
+  data-name="2d.composite.uncovered.image.source-out"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.uncovered.image.source-out (drawImage() draws pixels not covered by the source object as (0,0,0,0), and does not leave the pixels unchanged.)">&nbsp;</div><br />
+
+<div id="test_120_status">&nbsp;</div>
+
+[<a href="?runTests=120&noCleanup#120" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="139" href="#139"\>139</a>: 2d.composite.clip.source-atop (fill() does not affect pixels outside the clip region.)</p>
+
+<script>
+  async function test_139_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.rect(-20, -20, 10, 10);
+      ctx.clip();
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_139_content"
+  data-contexts="1"
+  data-id="139"
+  data-name="2d.composite.clip.source-atop"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.clip.source-atop (fill() does not affect pixels outside the clip region.)">&nbsp;</div><br />
+
+<div id="test_139_status">&nbsp;</div>
+
+[<a href="?runTests=139&noCleanup#139" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="135" href="#135"\>135</a>: 2d.composite.clip.source-in (fill() does not affect pixels outside the clip region.)</p>
+
+<script>
+  async function test_135_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-in';
+      ctx.rect(-20, -20, 10, 10);
+      ctx.clip();
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_135_content"
+  data-contexts="1"
+  data-id="135"
+  data-name="2d.composite.clip.source-in"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.clip.source-in (fill() does not affect pixels outside the clip region.)">&nbsp;</div><br />
+
+<div id="test_135_status">&nbsp;</div>
+
+[<a href="?runTests=135&noCleanup#135" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="98" href="#98"\>98</a>: 2d.composite.image.destination-atop</p>
+
+<script>
+  async function test_98_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-atop';
+      ctx.drawImage(_AssetRef0, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 128,255,128,191, "50,25", "128,255,128,191", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_98_content"
+  data-contexts="1"
+  data-id="98"
+  data-name="2d.composite.image.destination-atop"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.image.destination-atop">&nbsp;</div><br />
+
+<div id="test_98_status">&nbsp;</div>
+
+[<a href="?runTests=98&noCleanup#98" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="134" href="#134"\>134</a>: 2d.composite.clip.destination-over (fill() does not affect pixels outside the clip region.)</p>
+
+<script>
+  async function test_134_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-over';
+      ctx.rect(-20, -20, 10, 10);
+      ctx.clip();
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_134_content"
+  data-contexts="1"
+  data-id="134"
+  data-name="2d.composite.clip.destination-over"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.clip.destination-over (fill() does not affect pixels outside the clip region.)">&nbsp;</div><br />
+
+<div id="test_134_status">&nbsp;</div>
+
+[<a href="?runTests=134&noCleanup#134" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="126" href="#126"\>126</a>: 2d.composite.uncovered.nocontext.destination-atop (drawImage() of a canvas with no context draws pixels as (0,0,0,0), and does not leave the pixels unchanged.)</p>
+
+<script>
+  async function test_126_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-atop';
+      var canvas2 = allContexts[1];
+      ctx.drawImage(canvas2, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_126_content"
+  data-contexts="2"
+  data-id="126"
+  data-name="2d.composite.uncovered.nocontext.destination-atop"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.uncovered.nocontext.destination-atop (drawImage() of a canvas with no context draws pixels as (0,0,0,0), and does not leave the pixels unchanged.)">&nbsp;</div><br />
+
+<div id="test_126_status">&nbsp;</div>
+
+[<a href="?runTests=126&noCleanup#126" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="102" href="#102"\>102</a>: 2d.composite.canvas.source-over</p>
+
+<script>
+  async function test_102_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      var canvas2 = allContexts[1];
+      canvas2.width = canvas.width;
+      canvas2.height = canvas.height;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.drawImage(_AssetRef0, 0, 0);
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.drawImage(canvas2, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 219,255,36,223, "50,25", "219,255,36,223", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_102_content"
+  data-contexts="2"
+  data-id="102"
+  data-name="2d.composite.canvas.source-over"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.canvas.source-over">&nbsp;</div><br />
+
+<div id="test_102_status">&nbsp;</div>
+
+[<a href="?runTests=102&noCleanup#102" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="73" href="#73"\>73</a>: 2d.composite.solid.source-out</p>
+
+<script>
+  async function test_73_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = 'rgba(0, 255, 255, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-out';
+      ctx.fillStyle = 'rgba(255, 255, 0, 1.0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_73_content"
+  data-contexts="1"
+  data-id="73"
+  data-name="2d.composite.solid.source-out"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.solid.source-out">&nbsp;</div><br />
+
+<div id="test_73_status">&nbsp;</div>
+
+[<a href="?runTests=73&noCleanup#73" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="65" href="#65"\>65</a>: 2d.composite.globalAlpha.canvas</p>
+
+<script>
+  async function test_65_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var canvas2 = allContexts[1];
+      canvas2.width = 100;
+      canvas2.height = 50;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.fillStyle = '#f00';
+      ctx2.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalAlpha = 0.01; // avoid any potential alpha=0 optimisations
+      ctx.drawImage(canvas2, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 2,253,0,255, "50,25", "2,253,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_65_content"
+  data-contexts="2"
+  data-id="65"
+  data-name="2d.composite.globalAlpha.canvas"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.globalAlpha.canvas">&nbsp;</div><br />
+
+<div id="test_65_status">&nbsp;</div>
+
+[<a href="?runTests=65&noCleanup#65" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="91" href="#91"\>91</a>: 2d.composite.image.source-over</p>
+
+<script>
+  async function test_91_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.drawImage(_AssetRef0, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 219,255,36,223, "50,25", "219,255,36,223", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_91_content"
+  data-contexts="1"
+  data-id="91"
+  data-name="2d.composite.image.source-over"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.image.source-over">&nbsp;</div><br />
+
+<div id="test_91_status">&nbsp;</div>
+
+[<a href="?runTests=91&noCleanup#91" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="67" href="#67"\>67</a>: 2d.composite.globalAlpha.canvaspattern</p>
+
+<script>
+  async function test_67_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var canvas2 = allContexts[1];
+      canvas2.width = 100;
+      canvas2.height = 50;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.fillStyle = '#f00';
+      ctx2.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = ctx.createPattern(canvas2, 'no-repeat');
+      ctx.globalAlpha = 0.01; // avoid any potential alpha=0 optimisations
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 2,253,0,255, "50,25", "2,253,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_67_content"
+  data-contexts="2"
+  data-id="67"
+  data-name="2d.composite.globalAlpha.canvaspattern"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.globalAlpha.canvaspattern">&nbsp;</div><br />
+
+<div id="test_67_status">&nbsp;</div>
+
+[<a href="?runTests=67&noCleanup#67" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="110" href="#110"\>110</a>: 2d.composite.canvas.xor</p>
+
+<script>
+  async function test_110_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow75.png')
+      
+      var canvas2 = allContexts[1];
+      canvas2.width = canvas.width;
+      canvas2.height = canvas.height;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.drawImage(_AssetRef0, 0, 0);
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'xor';
+      ctx.drawImage(canvas2, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 191,255,64,128, "50,25", "191,255,64,128", 5);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_110_content"
+  data-contexts="2"
+  data-id="110"
+  data-name="2d.composite.canvas.xor"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.canvas.xor">&nbsp;</div><br />
+
+<div id="test_110_status">&nbsp;</div>
+
+[<a href="?runTests=110&noCleanup#110" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="138" href="#138"\>138</a>: 2d.composite.clip.destination-out (fill() does not affect pixels outside the clip region.)</p>
+
+<script>
+  async function test_138_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.rect(-20, -20, 10, 10);
+      ctx.clip();
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_138_content"
+  data-contexts="1"
+  data-id="138"
+  data-name="2d.composite.clip.destination-out"
+  data-width="100"
+  data-height="50"
+  data-description="2d.composite.clip.destination-out (fill() does not affect pixels outside the clip region.)">&nbsp;</div><br />
+
+<div id="test_138_status">&nbsp;</div>
+
+[<a href="?runTests=138&noCleanup#138" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+
+<br /><br />
+&lt;3
+
+</body>
+</html>

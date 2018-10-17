@@ -1,0 +1,2032 @@
+<html>
+
+<head>
+<title>2d.drawImage // WebGL2DContext conformance</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<style>
+  div {
+    padding: 5px;
+  }
+  canvas {
+    border: 1px black solid;
+  }
+  .progress {
+    font: 100% monospace;
+  }
+  .failure {
+    background-color: red;
+    color: white;
+    font: 100% sans-serif;
+  }
+  .success {
+    background-color: #88FF88;
+    font: 100% sans-serif;
+  }
+  .failure a:link {
+    color: white
+  }
+  .failure a:visited {
+    color: white
+  }
+</style>
+
+<script type="text/javascript" src="bundle.js"></script>
+<script type="text/javascript" src="assets.js"></script>
+<script type="text/javascript" src="asserts.js"></script>
+
+<script type="text/javascript">
+    async function getAsset(name) {
+      return new Promise((resolve, reject) => {
+        let img = document.createElement("IMG")
+        img.onload = () => resolve(img)
+        img.onerror = reject
+        img.src = rawImageAssets[name]
+      })
+    }
+
+    function bootCanvas(container, id, width, height) {
+        var canvas = document.createElement("CANVAS")
+        canvas.setAttribute("id", id)
+        canvas.setAttribute("width", width)
+        canvas.setAttribute("height", height)
+
+        container.appendChild(canvas)
+
+        var gl = canvas.getContext("webgl2", {
+          stencil: 8,
+          preserveDrawingBuffer: true
+        });
+        gl.viewportWidth = canvas.width;
+        gl.viewportHeight = canvas.height;
+        if (!gl) {
+            console.log("Could not initialise WebGL, sorry :-(")
+            return null;
+        }
+
+        gl.clearColor(1.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        /* TODO: figure out how to pass some gradient tests that need
+         * more grad stops: */
+        let ctx = new Expo2DContext.default(gl, maxGradStops=50)
+        ctx.getContext = () => {return ctx;}
+        
+        return [canvas, gl, ctx]
+    }
+
+    function spinner_graphic(i) {
+      let anim = ["/","&ndash;","\\","|","/","&ndash;","\\", "|"]
+      return anim[i%anim.length]
+    }
+
+    var testContexts = {};
+
+    function focusTest (num) {
+      window.ctx = testContexts[num][0]
+    }
+    window.onhashchange = () => {
+      var url = new URL(window.location)
+      var hashVal = url.hash.substr(1)
+      if (hashVal in testContexts) {
+        focusTest(hashVal)
+      }
+    }
+
+    async function runTests() {
+
+      // TODO: assets??
+
+      if (!window.testComplete) {
+        window.testComplete = (testResults, completedTests, totalTests) =>
+          { /* PUPPETEER STUB */ };
+      }
+
+      testContexts = {};
+
+      var tests = document.getElementsByClassName("test")
+
+      var url = new URL(window.location)
+      if (url.searchParams.get("runTests") != null) {
+        selected_test_ids = url.searchParams.get("runTests").split(",").map((x) => parseInt(x))
+        tests = selected_test_ids.map((x) => document.getElementById("test_"+x+"_content")) 
+      }
+
+      var cleanUp = url.searchParams.get("noCleanup") == null
+
+      let suite_status = document.getElementById("suite_status")
+
+      var failures = new Set();
+      var failureSummaryHTML = "Failed:<ul>"
+
+      let i = 0;
+
+      var testIteration = async (i) => {
+
+        if (i >= tests.length) {
+          finishTests();
+          return;
+        }
+
+        let test_area = tests[i]
+        let test = test_area.dataset
+    
+        // TODO: how to un-convert-from-string numbers in dataset
+        
+        let allCanvases = []
+        let allWebGLContexts = []
+        let allContexts = []
+        
+        let failureMessages = []
+
+        for (let j=0; j<parseInt(test.contexts); j++) {
+          let [canvas, gl, ctx] = bootCanvas(
+            test_area,
+            "canvas_"+test.id+"_"+j,
+            parseInt(test.width),
+            parseInt(test.height)
+          )
+          // Install fake getContext wrapper to allow context objects to be
+          // used in place of canvas objects for our tests:
+          ctx.getContext = (unused) => {return ctx};
+          allCanvases.push(canvas)
+          allWebGLContexts.push(gl)
+          allContexts.push(ctx)
+        }
+
+        let onFail = TriggerObject((message) => {
+          let status_box = document.getElementById("test_"+test.id+"_status")
+
+          status_box.setAttribute("class","failure")
+          status_box.innerHTML += message + "<br />";
+          failureMessages.push(message)
+
+          if (!failures.has(test.id)) {
+            failureSummaryHTML += "<li><a href='#"+test.id+"'>"+test.id+": "+test.description+"</a></li>"
+            failures.add(test.id);
+          }
+        })
+
+        try {
+          let test_fn = eval("test_"+test.id+"_body");
+          await test_fn(onFail, allCanvases, allContexts);
+        } catch (err) {
+          onFail.trigger(false, err.toString());
+        }
+
+        if (cleanUp) {
+          // Copy the resulting drawings out of the original canvas and
+          // safely trash the old gl context, to free up resources:
+          for (let j=0; j<parseInt(test.contexts); j++) {
+            let canvas_clone = allCanvases[j].cloneNode(true);
+            let clone_ctx = canvas_clone.getContext('2d');
+            clone_ctx.drawImage(allCanvases[j], 0, 0);
+
+            allCanvases[j].replaceWith(canvas_clone);
+
+            allWebGLContexts[j].getExtension('WEBGL_lose_context').loseContext();
+            allWebGLContexts[j] = null;
+          }
+        } else {
+          testContexts[test.id] = allContexts
+        }
+
+        suite_status.innerHTML = "["+ spinner_graphic(i) + "] Tests run: " + (i+1) + " / " + tests.length;
+
+        window.testComplete(
+          Object.assign({
+            "failureMessages": failureMessages
+          }, test), i+1, tests.length);
+
+        setTimeout(() => { testIteration(i+1) }, 1);
+      }
+
+      var finishTests = () => {
+        if (failures.size > 0) {
+          failureSummaryHTML += "</ul><br />"
+          suite_status.setAttribute("class","failure")
+          suite_status.innerHTML = failureSummaryHTML
+        } else {
+          suite_status.setAttribute("class","success")
+          suite_status.innerHTML = "[:)] All tests pass !" 
+        }
+
+        if (!cleanUp && tests.length==1){
+          focusTest(tests[0].dataset.id)
+        } else {
+          window.onhashchange()
+        }
+      };
+
+      testIteration(0);
+
+    }
+
+</script>
+</head>
+<body onload="runTests();">
+<h1> 2d.drawImage </h1>
+<div id="suite_status" class="progress">&nbsp;</div>
+<hr />
+
+<p><a id="638" href="#638"\>638</a>: 2d.drawImage.9arg.sourcepos</p>
+
+<script>
+  async function test_638_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('rgrg-256x256.png')
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.drawImage(_AssetRef0, 140, 20, 100, 50, 0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 0,0, 0,255,0,255, "0,0", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,0, 0,255,0,255, "99,0", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 0,49, 0,255,0,255, "0,49", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,49, 0,255,0,255, "99,49", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_638_content"
+  data-contexts="1"
+  data-id="638"
+  data-name="2d.drawImage.9arg.sourcepos"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.9arg.sourcepos">&nbsp;</div><br />
+
+<div id="test_638_status">&nbsp;</div>
+
+[<a href="?runTests=638&noCleanup#638" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="659" href="#659"\>659</a>: 2d.drawImage.zerocanvas (drawImage with zero-sized canvas as the source shoud throw exception)</p>
+
+<script>
+  async function test_659_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var canvas2 = allContexts[1];
+      canvas2.width = 0;
+      canvas2.height = 50;
+      ctx.flush()
+      webAssert.assert_throws(t, "INVALID_STATE_ERR", function() { ctx.drawImage(canvas2, 0, 0); });
+      
+      canvas2.width = 50;
+      canvas2.height = 0;
+      ctx.flush()
+      webAssert.assert_throws(t, "INVALID_STATE_ERR", function() { ctx.drawImage(canvas2, 0, 0); });
+      
+      canvas2.width = 0;
+      canvas2.height = 0;
+      ctx.flush()
+      webAssert.assert_throws(t, "INVALID_STATE_ERR", function() { ctx.drawImage(canvas2, 0, 0); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_659_content"
+  data-contexts="2"
+  data-id="659"
+  data-name="2d.drawImage.zerocanvas"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.zerocanvas (drawImage with zero-sized canvas as the source shoud throw exception)">&nbsp;</div><br />
+
+<div id="test_659_status">&nbsp;</div>
+
+[<a href="?runTests=659&noCleanup#659" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="650" href="#650"\>650</a>: 2d.drawImage.negativesource (Negative source width/height represents the correct rectangle)</p>
+
+<script>
+  async function test_650_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('ggrr-256x256.png')
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.drawImage(_AssetRef0, 100, 78, -100, 50, 0, 0, 50, 50);
+      ctx.drawImage(_AssetRef0, 100, 128, -100, -50, 50, 0, 50, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 48,1, 0,255,0,255, "48,1", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 48,48, 0,255,0,255, "48,48", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 51,1, 0,255,0,255, "51,1", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 51,48, 0,255,0,255, "51,48", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_650_content"
+  data-contexts="1"
+  data-id="650"
+  data-name="2d.drawImage.negativesource"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.negativesource (Negative source width/height represents the correct rectangle)">&nbsp;</div><br />
+
+<div id="test_650_status">&nbsp;</div>
+
+[<a href="?runTests=650&noCleanup#650" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: TODO implement compositing
+<p><a id="668" href="#668"\>668</a>: 2d.drawImage.composite</p>
+
+<script>
+  async function test_668_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-over';
+      ctx.drawImage(_AssetRef0, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_668_content"
+  data-contexts="1"
+  data-id="668"
+  data-name="2d.drawImage.composite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.composite">&nbsp;</div><br />
+
+<div id="test_668_status">&nbsp;</div>
+
+[<a href="?runTests=668&noCleanup#668" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: Animated assets aren't supported and probably never will be
+<p><a id="661" href="#661"\>661</a>: 2d.drawImage.animated.gif (drawImage() of an animated GIF draws the first frame)</p>
+
+<script>
+  async function test_661_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('anim-gr.gif')
+      
+       {
+          ctx.drawImage(_AssetRef0, 0, 0);
+          ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      }), 500);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_661_content"
+  data-contexts="1"
+  data-id="661"
+  data-name="2d.drawImage.animated.gif"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.animated.gif (drawImage() of an animated GIF draws the first frame)">&nbsp;</div><br />
+
+<div id="test_661_status">&nbsp;</div>
+
+[<a href="?runTests=661&noCleanup#661" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="670" href="#670"\>670</a>: 2d.drawImage.nonfinite (drawImage() with Infinity/NaN is ignored)</p>
+
+<script>
+  async function test_670_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      var red = _AssetRef0;
+      ctx.drawImage(red, Infinity, 0);
+      ctx.drawImage(red, -Infinity, 0);
+      ctx.drawImage(red, NaN, 0);
+      ctx.drawImage(red, 0, Infinity);
+      ctx.drawImage(red, 0, -Infinity);
+      ctx.drawImage(red, 0, NaN);
+      ctx.drawImage(red, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, 0, 100, 50);
+      ctx.drawImage(red, -Infinity, 0, 100, 50);
+      ctx.drawImage(red, NaN, 0, 100, 50);
+      ctx.drawImage(red, 0, Infinity, 100, 50);
+      ctx.drawImage(red, 0, -Infinity, 100, 50);
+      ctx.drawImage(red, 0, NaN, 100, 50);
+      ctx.drawImage(red, 0, 0, Infinity, 50);
+      ctx.drawImage(red, 0, 0, -Infinity, 50);
+      ctx.drawImage(red, 0, 0, NaN, 50);
+      ctx.drawImage(red, 0, 0, 100, Infinity);
+      ctx.drawImage(red, 0, 0, 100, -Infinity);
+      ctx.drawImage(red, 0, 0, 100, NaN);
+      ctx.drawImage(red, Infinity, Infinity, 100, 50);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, 50);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, 100, Infinity);
+      ctx.drawImage(red, Infinity, 0, Infinity, 50);
+      ctx.drawImage(red, Infinity, 0, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, 0, 100, Infinity);
+      ctx.drawImage(red, 0, Infinity, Infinity, 50);
+      ctx.drawImage(red, 0, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, 0, Infinity, 100, Infinity);
+      ctx.drawImage(red, 0, 0, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, 0, 100, 50, 0, 0, 100, 50);
+      ctx.drawImage(red, -Infinity, 0, 100, 50, 0, 0, 100, 50);
+      ctx.drawImage(red, NaN, 0, 100, 50, 0, 0, 100, 50);
+      ctx.drawImage(red, 0, Infinity, 100, 50, 0, 0, 100, 50);
+      ctx.drawImage(red, 0, -Infinity, 100, 50, 0, 0, 100, 50);
+      ctx.drawImage(red, 0, NaN, 100, 50, 0, 0, 100, 50);
+      ctx.drawImage(red, 0, 0, Infinity, 50, 0, 0, 100, 50);
+      ctx.drawImage(red, 0, 0, -Infinity, 50, 0, 0, 100, 50);
+      ctx.drawImage(red, 0, 0, NaN, 50, 0, 0, 100, 50);
+      ctx.drawImage(red, 0, 0, 100, Infinity, 0, 0, 100, 50);
+      ctx.drawImage(red, 0, 0, 100, -Infinity, 0, 0, 100, 50);
+      ctx.drawImage(red, 0, 0, 100, NaN, 0, 0, 100, 50);
+      ctx.drawImage(red, 0, 0, 100, 50, Infinity, 0, 100, 50);
+      ctx.drawImage(red, 0, 0, 100, 50, -Infinity, 0, 100, 50);
+      ctx.drawImage(red, 0, 0, 100, 50, NaN, 0, 100, 50);
+      ctx.drawImage(red, 0, 0, 100, 50, 0, Infinity, 100, 50);
+      ctx.drawImage(red, 0, 0, 100, 50, 0, -Infinity, 100, 50);
+      ctx.drawImage(red, 0, 0, 100, 50, 0, NaN, 100, 50);
+      ctx.drawImage(red, 0, 0, 100, 50, 0, 0, Infinity, 50);
+      ctx.drawImage(red, 0, 0, 100, 50, 0, 0, -Infinity, 50);
+      ctx.drawImage(red, 0, 0, 100, 50, 0, 0, NaN, 50);
+      ctx.drawImage(red, 0, 0, 100, 50, 0, 0, 100, Infinity);
+      ctx.drawImage(red, 0, 0, 100, 50, 0, 0, 100, -Infinity);
+      ctx.drawImage(red, 0, 0, 100, 50, 0, 0, 100, NaN);
+      ctx.drawImage(red, Infinity, Infinity, 100, 50, 0, 0, 100, 50);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, 50, 0, 0, 100, 50);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, Infinity, 0, 0, 100, 50);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, Infinity, Infinity, 0, 100, 50);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, Infinity, Infinity, Infinity, 100, 50);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, Infinity, Infinity, Infinity, Infinity, 50);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, Infinity, Infinity, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, Infinity, Infinity, Infinity, 100, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, Infinity, Infinity, 0, Infinity, 50);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, Infinity, Infinity, 0, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, Infinity, Infinity, 0, 100, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, Infinity, 0, Infinity, 100, 50);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, Infinity, 0, Infinity, Infinity, 50);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, Infinity, 0, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, Infinity, 0, Infinity, 100, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, Infinity, 0, 0, Infinity, 50);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, Infinity, 0, 0, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, Infinity, 0, 0, 100, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, 50, Infinity, 0, 100, 50);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, 50, Infinity, Infinity, 100, 50);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, 50, Infinity, Infinity, Infinity, 50);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, 50, Infinity, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, 50, Infinity, Infinity, 100, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, 50, Infinity, 0, Infinity, 50);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, 50, Infinity, 0, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, 50, Infinity, 0, 100, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, 50, 0, Infinity, 100, 50);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, 50, 0, Infinity, Infinity, 50);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, 50, 0, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, 50, 0, Infinity, 100, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, 50, 0, 0, Infinity, 50);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, 50, 0, 0, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, Infinity, 50, 0, 0, 100, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, 100, Infinity, 0, 0, 100, 50);
+      ctx.drawImage(red, Infinity, Infinity, 100, Infinity, Infinity, 0, 100, 50);
+      ctx.drawImage(red, Infinity, Infinity, 100, Infinity, Infinity, Infinity, 100, 50);
+      ctx.drawImage(red, Infinity, Infinity, 100, Infinity, Infinity, Infinity, Infinity, 50);
+      ctx.drawImage(red, Infinity, Infinity, 100, Infinity, Infinity, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, 100, Infinity, Infinity, Infinity, 100, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, 100, Infinity, Infinity, 0, Infinity, 50);
+      ctx.drawImage(red, Infinity, Infinity, 100, Infinity, Infinity, 0, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, 100, Infinity, Infinity, 0, 100, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, 100, Infinity, 0, Infinity, 100, 50);
+      ctx.drawImage(red, Infinity, Infinity, 100, Infinity, 0, Infinity, Infinity, 50);
+      ctx.drawImage(red, Infinity, Infinity, 100, Infinity, 0, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, 100, Infinity, 0, Infinity, 100, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, 100, Infinity, 0, 0, Infinity, 50);
+      ctx.drawImage(red, Infinity, Infinity, 100, Infinity, 0, 0, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, 100, Infinity, 0, 0, 100, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, 100, 50, Infinity, 0, 100, 50);
+      ctx.drawImage(red, Infinity, Infinity, 100, 50, Infinity, Infinity, 100, 50);
+      ctx.drawImage(red, Infinity, Infinity, 100, 50, Infinity, Infinity, Infinity, 50);
+      ctx.drawImage(red, Infinity, Infinity, 100, 50, Infinity, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, 100, 50, Infinity, Infinity, 100, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, 100, 50, Infinity, 0, Infinity, 50);
+      ctx.drawImage(red, Infinity, Infinity, 100, 50, Infinity, 0, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, 100, 50, Infinity, 0, 100, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, 100, 50, 0, Infinity, 100, 50);
+      ctx.drawImage(red, Infinity, Infinity, 100, 50, 0, Infinity, Infinity, 50);
+      ctx.drawImage(red, Infinity, Infinity, 100, 50, 0, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, 100, 50, 0, Infinity, 100, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, 100, 50, 0, 0, Infinity, 50);
+      ctx.drawImage(red, Infinity, Infinity, 100, 50, 0, 0, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, Infinity, 100, 50, 0, 0, 100, Infinity);
+      ctx.drawImage(red, Infinity, 0, Infinity, 50, 0, 0, 100, 50);
+      ctx.drawImage(red, Infinity, 0, Infinity, Infinity, 0, 0, 100, 50);
+      ctx.drawImage(red, Infinity, 0, Infinity, Infinity, Infinity, 0, 100, 50);
+      ctx.drawImage(red, Infinity, 0, Infinity, Infinity, Infinity, Infinity, 100, 50);
+      ctx.drawImage(red, Infinity, 0, Infinity, Infinity, Infinity, Infinity, Infinity, 50);
+      ctx.drawImage(red, Infinity, 0, Infinity, Infinity, Infinity, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, 0, Infinity, Infinity, Infinity, Infinity, 100, Infinity);
+      ctx.drawImage(red, Infinity, 0, Infinity, Infinity, Infinity, 0, Infinity, 50);
+      ctx.drawImage(red, Infinity, 0, Infinity, Infinity, Infinity, 0, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, 0, Infinity, Infinity, Infinity, 0, 100, Infinity);
+      ctx.drawImage(red, Infinity, 0, Infinity, Infinity, 0, Infinity, 100, 50);
+      ctx.drawImage(red, Infinity, 0, Infinity, Infinity, 0, Infinity, Infinity, 50);
+      ctx.drawImage(red, Infinity, 0, Infinity, Infinity, 0, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, 0, Infinity, Infinity, 0, Infinity, 100, Infinity);
+      ctx.drawImage(red, Infinity, 0, Infinity, Infinity, 0, 0, Infinity, 50);
+      ctx.drawImage(red, Infinity, 0, Infinity, Infinity, 0, 0, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, 0, Infinity, Infinity, 0, 0, 100, Infinity);
+      ctx.drawImage(red, Infinity, 0, Infinity, 50, Infinity, 0, 100, 50);
+      ctx.drawImage(red, Infinity, 0, Infinity, 50, Infinity, Infinity, 100, 50);
+      ctx.drawImage(red, Infinity, 0, Infinity, 50, Infinity, Infinity, Infinity, 50);
+      ctx.drawImage(red, Infinity, 0, Infinity, 50, Infinity, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, 0, Infinity, 50, Infinity, Infinity, 100, Infinity);
+      ctx.drawImage(red, Infinity, 0, Infinity, 50, Infinity, 0, Infinity, 50);
+      ctx.drawImage(red, Infinity, 0, Infinity, 50, Infinity, 0, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, 0, Infinity, 50, Infinity, 0, 100, Infinity);
+      ctx.drawImage(red, Infinity, 0, Infinity, 50, 0, Infinity, 100, 50);
+      ctx.drawImage(red, Infinity, 0, Infinity, 50, 0, Infinity, Infinity, 50);
+      ctx.drawImage(red, Infinity, 0, Infinity, 50, 0, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, 0, Infinity, 50, 0, Infinity, 100, Infinity);
+      ctx.drawImage(red, Infinity, 0, Infinity, 50, 0, 0, Infinity, 50);
+      ctx.drawImage(red, Infinity, 0, Infinity, 50, 0, 0, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, 0, Infinity, 50, 0, 0, 100, Infinity);
+      ctx.drawImage(red, Infinity, 0, 100, Infinity, 0, 0, 100, 50);
+      ctx.drawImage(red, Infinity, 0, 100, Infinity, Infinity, 0, 100, 50);
+      ctx.drawImage(red, Infinity, 0, 100, Infinity, Infinity, Infinity, 100, 50);
+      ctx.drawImage(red, Infinity, 0, 100, Infinity, Infinity, Infinity, Infinity, 50);
+      ctx.drawImage(red, Infinity, 0, 100, Infinity, Infinity, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, 0, 100, Infinity, Infinity, Infinity, 100, Infinity);
+      ctx.drawImage(red, Infinity, 0, 100, Infinity, Infinity, 0, Infinity, 50);
+      ctx.drawImage(red, Infinity, 0, 100, Infinity, Infinity, 0, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, 0, 100, Infinity, Infinity, 0, 100, Infinity);
+      ctx.drawImage(red, Infinity, 0, 100, Infinity, 0, Infinity, 100, 50);
+      ctx.drawImage(red, Infinity, 0, 100, Infinity, 0, Infinity, Infinity, 50);
+      ctx.drawImage(red, Infinity, 0, 100, Infinity, 0, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, 0, 100, Infinity, 0, Infinity, 100, Infinity);
+      ctx.drawImage(red, Infinity, 0, 100, Infinity, 0, 0, Infinity, 50);
+      ctx.drawImage(red, Infinity, 0, 100, Infinity, 0, 0, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, 0, 100, Infinity, 0, 0, 100, Infinity);
+      ctx.drawImage(red, Infinity, 0, 100, 50, Infinity, 0, 100, 50);
+      ctx.drawImage(red, Infinity, 0, 100, 50, Infinity, Infinity, 100, 50);
+      ctx.drawImage(red, Infinity, 0, 100, 50, Infinity, Infinity, Infinity, 50);
+      ctx.drawImage(red, Infinity, 0, 100, 50, Infinity, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, 0, 100, 50, Infinity, Infinity, 100, Infinity);
+      ctx.drawImage(red, Infinity, 0, 100, 50, Infinity, 0, Infinity, 50);
+      ctx.drawImage(red, Infinity, 0, 100, 50, Infinity, 0, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, 0, 100, 50, Infinity, 0, 100, Infinity);
+      ctx.drawImage(red, Infinity, 0, 100, 50, 0, Infinity, 100, 50);
+      ctx.drawImage(red, Infinity, 0, 100, 50, 0, Infinity, Infinity, 50);
+      ctx.drawImage(red, Infinity, 0, 100, 50, 0, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, 0, 100, 50, 0, Infinity, 100, Infinity);
+      ctx.drawImage(red, Infinity, 0, 100, 50, 0, 0, Infinity, 50);
+      ctx.drawImage(red, Infinity, 0, 100, 50, 0, 0, Infinity, Infinity);
+      ctx.drawImage(red, Infinity, 0, 100, 50, 0, 0, 100, Infinity);
+      ctx.drawImage(red, 0, Infinity, Infinity, 50, 0, 0, 100, 50);
+      ctx.drawImage(red, 0, Infinity, Infinity, Infinity, 0, 0, 100, 50);
+      ctx.drawImage(red, 0, Infinity, Infinity, Infinity, Infinity, 0, 100, 50);
+      ctx.drawImage(red, 0, Infinity, Infinity, Infinity, Infinity, Infinity, 100, 50);
+      ctx.drawImage(red, 0, Infinity, Infinity, Infinity, Infinity, Infinity, Infinity, 50);
+      ctx.drawImage(red, 0, Infinity, Infinity, Infinity, Infinity, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, 0, Infinity, Infinity, Infinity, Infinity, Infinity, 100, Infinity);
+      ctx.drawImage(red, 0, Infinity, Infinity, Infinity, Infinity, 0, Infinity, 50);
+      ctx.drawImage(red, 0, Infinity, Infinity, Infinity, Infinity, 0, Infinity, Infinity);
+      ctx.drawImage(red, 0, Infinity, Infinity, Infinity, Infinity, 0, 100, Infinity);
+      ctx.drawImage(red, 0, Infinity, Infinity, Infinity, 0, Infinity, 100, 50);
+      ctx.drawImage(red, 0, Infinity, Infinity, Infinity, 0, Infinity, Infinity, 50);
+      ctx.drawImage(red, 0, Infinity, Infinity, Infinity, 0, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, 0, Infinity, Infinity, Infinity, 0, Infinity, 100, Infinity);
+      ctx.drawImage(red, 0, Infinity, Infinity, Infinity, 0, 0, Infinity, 50);
+      ctx.drawImage(red, 0, Infinity, Infinity, Infinity, 0, 0, Infinity, Infinity);
+      ctx.drawImage(red, 0, Infinity, Infinity, Infinity, 0, 0, 100, Infinity);
+      ctx.drawImage(red, 0, Infinity, Infinity, 50, Infinity, 0, 100, 50);
+      ctx.drawImage(red, 0, Infinity, Infinity, 50, Infinity, Infinity, 100, 50);
+      ctx.drawImage(red, 0, Infinity, Infinity, 50, Infinity, Infinity, Infinity, 50);
+      ctx.drawImage(red, 0, Infinity, Infinity, 50, Infinity, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, 0, Infinity, Infinity, 50, Infinity, Infinity, 100, Infinity);
+      ctx.drawImage(red, 0, Infinity, Infinity, 50, Infinity, 0, Infinity, 50);
+      ctx.drawImage(red, 0, Infinity, Infinity, 50, Infinity, 0, Infinity, Infinity);
+      ctx.drawImage(red, 0, Infinity, Infinity, 50, Infinity, 0, 100, Infinity);
+      ctx.drawImage(red, 0, Infinity, Infinity, 50, 0, Infinity, 100, 50);
+      ctx.drawImage(red, 0, Infinity, Infinity, 50, 0, Infinity, Infinity, 50);
+      ctx.drawImage(red, 0, Infinity, Infinity, 50, 0, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, 0, Infinity, Infinity, 50, 0, Infinity, 100, Infinity);
+      ctx.drawImage(red, 0, Infinity, Infinity, 50, 0, 0, Infinity, 50);
+      ctx.drawImage(red, 0, Infinity, Infinity, 50, 0, 0, Infinity, Infinity);
+      ctx.drawImage(red, 0, Infinity, Infinity, 50, 0, 0, 100, Infinity);
+      ctx.drawImage(red, 0, Infinity, 100, Infinity, 0, 0, 100, 50);
+      ctx.drawImage(red, 0, Infinity, 100, Infinity, Infinity, 0, 100, 50);
+      ctx.drawImage(red, 0, Infinity, 100, Infinity, Infinity, Infinity, 100, 50);
+      ctx.drawImage(red, 0, Infinity, 100, Infinity, Infinity, Infinity, Infinity, 50);
+      ctx.drawImage(red, 0, Infinity, 100, Infinity, Infinity, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, 0, Infinity, 100, Infinity, Infinity, Infinity, 100, Infinity);
+      ctx.drawImage(red, 0, Infinity, 100, Infinity, Infinity, 0, Infinity, 50);
+      ctx.drawImage(red, 0, Infinity, 100, Infinity, Infinity, 0, Infinity, Infinity);
+      ctx.drawImage(red, 0, Infinity, 100, Infinity, Infinity, 0, 100, Infinity);
+      ctx.drawImage(red, 0, Infinity, 100, Infinity, 0, Infinity, 100, 50);
+      ctx.drawImage(red, 0, Infinity, 100, Infinity, 0, Infinity, Infinity, 50);
+      ctx.drawImage(red, 0, Infinity, 100, Infinity, 0, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, 0, Infinity, 100, Infinity, 0, Infinity, 100, Infinity);
+      ctx.drawImage(red, 0, Infinity, 100, Infinity, 0, 0, Infinity, 50);
+      ctx.drawImage(red, 0, Infinity, 100, Infinity, 0, 0, Infinity, Infinity);
+      ctx.drawImage(red, 0, Infinity, 100, Infinity, 0, 0, 100, Infinity);
+      ctx.drawImage(red, 0, Infinity, 100, 50, Infinity, 0, 100, 50);
+      ctx.drawImage(red, 0, Infinity, 100, 50, Infinity, Infinity, 100, 50);
+      ctx.drawImage(red, 0, Infinity, 100, 50, Infinity, Infinity, Infinity, 50);
+      ctx.drawImage(red, 0, Infinity, 100, 50, Infinity, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, 0, Infinity, 100, 50, Infinity, Infinity, 100, Infinity);
+      ctx.drawImage(red, 0, Infinity, 100, 50, Infinity, 0, Infinity, 50);
+      ctx.drawImage(red, 0, Infinity, 100, 50, Infinity, 0, Infinity, Infinity);
+      ctx.drawImage(red, 0, Infinity, 100, 50, Infinity, 0, 100, Infinity);
+      ctx.drawImage(red, 0, Infinity, 100, 50, 0, Infinity, 100, 50);
+      ctx.drawImage(red, 0, Infinity, 100, 50, 0, Infinity, Infinity, 50);
+      ctx.drawImage(red, 0, Infinity, 100, 50, 0, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, 0, Infinity, 100, 50, 0, Infinity, 100, Infinity);
+      ctx.drawImage(red, 0, Infinity, 100, 50, 0, 0, Infinity, 50);
+      ctx.drawImage(red, 0, Infinity, 100, 50, 0, 0, Infinity, Infinity);
+      ctx.drawImage(red, 0, Infinity, 100, 50, 0, 0, 100, Infinity);
+      ctx.drawImage(red, 0, 0, Infinity, Infinity, 0, 0, 100, 50);
+      ctx.drawImage(red, 0, 0, Infinity, Infinity, Infinity, 0, 100, 50);
+      ctx.drawImage(red, 0, 0, Infinity, Infinity, Infinity, Infinity, 100, 50);
+      ctx.drawImage(red, 0, 0, Infinity, Infinity, Infinity, Infinity, Infinity, 50);
+      ctx.drawImage(red, 0, 0, Infinity, Infinity, Infinity, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, 0, 0, Infinity, Infinity, Infinity, Infinity, 100, Infinity);
+      ctx.drawImage(red, 0, 0, Infinity, Infinity, Infinity, 0, Infinity, 50);
+      ctx.drawImage(red, 0, 0, Infinity, Infinity, Infinity, 0, Infinity, Infinity);
+      ctx.drawImage(red, 0, 0, Infinity, Infinity, Infinity, 0, 100, Infinity);
+      ctx.drawImage(red, 0, 0, Infinity, Infinity, 0, Infinity, 100, 50);
+      ctx.drawImage(red, 0, 0, Infinity, Infinity, 0, Infinity, Infinity, 50);
+      ctx.drawImage(red, 0, 0, Infinity, Infinity, 0, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, 0, 0, Infinity, Infinity, 0, Infinity, 100, Infinity);
+      ctx.drawImage(red, 0, 0, Infinity, Infinity, 0, 0, Infinity, 50);
+      ctx.drawImage(red, 0, 0, Infinity, Infinity, 0, 0, Infinity, Infinity);
+      ctx.drawImage(red, 0, 0, Infinity, Infinity, 0, 0, 100, Infinity);
+      ctx.drawImage(red, 0, 0, Infinity, 50, Infinity, 0, 100, 50);
+      ctx.drawImage(red, 0, 0, Infinity, 50, Infinity, Infinity, 100, 50);
+      ctx.drawImage(red, 0, 0, Infinity, 50, Infinity, Infinity, Infinity, 50);
+      ctx.drawImage(red, 0, 0, Infinity, 50, Infinity, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, 0, 0, Infinity, 50, Infinity, Infinity, 100, Infinity);
+      ctx.drawImage(red, 0, 0, Infinity, 50, Infinity, 0, Infinity, 50);
+      ctx.drawImage(red, 0, 0, Infinity, 50, Infinity, 0, Infinity, Infinity);
+      ctx.drawImage(red, 0, 0, Infinity, 50, Infinity, 0, 100, Infinity);
+      ctx.drawImage(red, 0, 0, Infinity, 50, 0, Infinity, 100, 50);
+      ctx.drawImage(red, 0, 0, Infinity, 50, 0, Infinity, Infinity, 50);
+      ctx.drawImage(red, 0, 0, Infinity, 50, 0, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, 0, 0, Infinity, 50, 0, Infinity, 100, Infinity);
+      ctx.drawImage(red, 0, 0, Infinity, 50, 0, 0, Infinity, 50);
+      ctx.drawImage(red, 0, 0, Infinity, 50, 0, 0, Infinity, Infinity);
+      ctx.drawImage(red, 0, 0, Infinity, 50, 0, 0, 100, Infinity);
+      ctx.drawImage(red, 0, 0, 100, Infinity, Infinity, 0, 100, 50);
+      ctx.drawImage(red, 0, 0, 100, Infinity, Infinity, Infinity, 100, 50);
+      ctx.drawImage(red, 0, 0, 100, Infinity, Infinity, Infinity, Infinity, 50);
+      ctx.drawImage(red, 0, 0, 100, Infinity, Infinity, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, 0, 0, 100, Infinity, Infinity, Infinity, 100, Infinity);
+      ctx.drawImage(red, 0, 0, 100, Infinity, Infinity, 0, Infinity, 50);
+      ctx.drawImage(red, 0, 0, 100, Infinity, Infinity, 0, Infinity, Infinity);
+      ctx.drawImage(red, 0, 0, 100, Infinity, Infinity, 0, 100, Infinity);
+      ctx.drawImage(red, 0, 0, 100, Infinity, 0, Infinity, 100, 50);
+      ctx.drawImage(red, 0, 0, 100, Infinity, 0, Infinity, Infinity, 50);
+      ctx.drawImage(red, 0, 0, 100, Infinity, 0, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, 0, 0, 100, Infinity, 0, Infinity, 100, Infinity);
+      ctx.drawImage(red, 0, 0, 100, Infinity, 0, 0, Infinity, 50);
+      ctx.drawImage(red, 0, 0, 100, Infinity, 0, 0, Infinity, Infinity);
+      ctx.drawImage(red, 0, 0, 100, Infinity, 0, 0, 100, Infinity);
+      ctx.drawImage(red, 0, 0, 100, 50, Infinity, Infinity, 100, 50);
+      ctx.drawImage(red, 0, 0, 100, 50, Infinity, Infinity, Infinity, 50);
+      ctx.drawImage(red, 0, 0, 100, 50, Infinity, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, 0, 0, 100, 50, Infinity, Infinity, 100, Infinity);
+      ctx.drawImage(red, 0, 0, 100, 50, Infinity, 0, Infinity, 50);
+      ctx.drawImage(red, 0, 0, 100, 50, Infinity, 0, Infinity, Infinity);
+      ctx.drawImage(red, 0, 0, 100, 50, Infinity, 0, 100, Infinity);
+      ctx.drawImage(red, 0, 0, 100, 50, 0, Infinity, Infinity, 50);
+      ctx.drawImage(red, 0, 0, 100, 50, 0, Infinity, Infinity, Infinity);
+      ctx.drawImage(red, 0, 0, 100, 50, 0, Infinity, 100, Infinity);
+      ctx.drawImage(red, 0, 0, 100, 50, 0, 0, Infinity, Infinity);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_670_content"
+  data-contexts="1"
+  data-id="670"
+  data-name="2d.drawImage.nonfinite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.nonfinite (drawImage() with Infinity/NaN is ignored)">&nbsp;</div><br />
+
+<div id="test_670_status">&nbsp;</div>
+
+[<a href="?runTests=670&noCleanup#670" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: Animated assets aren't supported and probably never will be
+<p><a id="663" href="#663"\>663</a>: 2d.drawImage.animated.poster (drawImage() of an APNG draws the poster frame)</p>
+
+<script>
+  async function test_663_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('anim-poster-gr.png')
+      ctx.drawImage(_AssetRef0, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_663_content"
+  data-contexts="1"
+  data-id="663"
+  data-name="2d.drawImage.animated.poster"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.animated.poster (drawImage() of an APNG draws the poster frame)">&nbsp;</div><br />
+
+<div id="test_663_status">&nbsp;</div>
+
+[<a href="?runTests=663&noCleanup#663" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: Images aren't HTML img objects
+<p><a id="655" href="#655"\>655</a>: 2d.drawImage.incomplete.reload</p>
+
+<script>
+  async function test_655_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('yellow.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      var img = _AssetRef0;
+      img.src = '../images/red.png';
+      // This triggers the "update the image data" algorithm,
+      // and resets the image to the "unavailable" state.
+      // The image will not go to the "completely available" state
+      // until a fetch task in the networking task source is processed,
+      // so the image must not be fully decodable yet:
+      ctx.drawImage(img, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_655_content"
+  data-contexts="1"
+  data-id="655"
+  data-name="2d.drawImage.incomplete.reload"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.incomplete.reload">&nbsp;</div><br />
+
+<div id="test_655_status">&nbsp;</div>
+
+[<a href="?runTests=655&noCleanup#655" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: Images aren't HTML img objects
+<p><a id="656" href="#656"\>656</a>: 2d.drawImage.incomplete.emptysrc</p>
+
+<script>
+  async function test_656_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      var img = _AssetRef0;
+      img.src = "";
+      ctx.drawImage(img, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_656_content"
+  data-contexts="1"
+  data-id="656"
+  data-name="2d.drawImage.incomplete.emptysrc"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.incomplete.emptysrc">&nbsp;</div><br />
+
+<div id="test_656_status">&nbsp;</div>
+
+[<a href="?runTests=656&noCleanup#656" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: Images aren't HTML img objects
+<p><a id="653" href="#653"\>653</a>: 2d.drawImage.incomplete.nosrc</p>
+
+<script>
+  async function test_653_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      var img = new Image();
+      ctx.drawImage(img, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_653_content"
+  data-contexts="1"
+  data-id="653"
+  data-name="2d.drawImage.incomplete.nosrc"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.incomplete.nosrc">&nbsp;</div><br />
+
+<div id="test_653_status">&nbsp;</div>
+
+[<a href="?runTests=653&noCleanup#653" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="665" href="#665"\>665</a>: 2d.drawImage.transform</p>
+
+<script>
+  async function test_665_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.translate(100, 0);
+      ctx.drawImage(_AssetRef0, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_665_content"
+  data-contexts="1"
+  data-id="665"
+  data-name="2d.drawImage.transform"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.transform">&nbsp;</div><br />
+
+<div id="test_665_status">&nbsp;</div>
+
+[<a href="?runTests=665&noCleanup#665" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: TODO svg files aren't supported as assets right now? (or are they??)
+<p><a id="660" href="#660"\>660</a>: 2d.drawImage.svg (drawImage() of an SVG image)</p>
+
+<script>
+  async function test_660_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('green.svg')
+      ctx.drawImage(_AssetRef0, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_660_content"
+  data-contexts="1"
+  data-id="660"
+  data-name="2d.drawImage.svg"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.svg (drawImage() of an SVG image)">&nbsp;</div><br />
+
+<div id="test_660_status">&nbsp;</div>
+
+[<a href="?runTests=660&noCleanup#660" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: Animated assets aren't supported and probably never will be
+<p><a id="662" href="#662"\>662</a>: 2d.drawImage.animated.apng (drawImage() of an APNG with no poster frame draws the first frame)</p>
+
+<script>
+  async function test_662_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('anim-gr.png')
+      
+       {
+          ctx.drawImage(_AssetRef0, 0, 0);
+          ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      }), 500);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_662_content"
+  data-contexts="1"
+  data-id="662"
+  data-name="2d.drawImage.animated.apng"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.animated.apng (drawImage() of an APNG with no poster frame draws the first frame)">&nbsp;</div><br />
+
+<div id="test_662_status">&nbsp;</div>
+
+[<a href="?runTests=662&noCleanup#662" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="641" href="#641"\>641</a>: 2d.drawImage.9arg.destsize</p>
+
+<script>
+  async function test_641_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef1 = await getAsset('green.png')
+      let _AssetRef0 = await getAsset('red.png')
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.drawImage(_AssetRef1, 1, 1, 1, 1, 0, 0, 100, 50);
+      ctx.drawImage(_AssetRef0, 0, 0, 100, 50, -50, 0, 50, 50);
+      ctx.drawImage(_AssetRef0, 0, 0, 100, 50, 100, 0, 50, 50);
+      ctx.drawImage(_AssetRef0, 0, 0, 100, 50, 0, -25, 100, 25);
+      ctx.drawImage(_AssetRef0, 0, 0, 100, 50, 0, 50, 100, 25);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 0,0, 0,255,0,255, "0,0", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,0, 0,255,0,255, "99,0", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 0,49, 0,255,0,255, "0,49", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,49, 0,255,0,255, "99,49", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_641_content"
+  data-contexts="1"
+  data-id="641"
+  data-name="2d.drawImage.9arg.destsize"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.9arg.destsize">&nbsp;</div><br />
+
+<div id="test_641_status">&nbsp;</div>
+
+[<a href="?runTests=641&noCleanup#641" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="645" href="#645"\>645</a>: 2d.drawImage.null</p>
+
+<script>
+  async function test_645_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.drawImage(null, 0, 0); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_645_content"
+  data-contexts="1"
+  data-id="645"
+  data-name="2d.drawImage.null"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.null">&nbsp;</div><br />
+
+<div id="test_645_status">&nbsp;</div>
+
+[<a href="?runTests=645&noCleanup#645" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="642" href="#642"\>642</a>: 2d.drawImage.canvas</p>
+
+<script>
+  async function test_642_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var canvas2 = allContexts[1];
+      canvas2.width = 100;
+      canvas2.height = 50;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.fillStyle = '#0f0';
+      ctx2.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#f00';
+      ctx.drawImage(canvas2, 0, 0);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 0,0, 0,255,0,255, "0,0", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,0, 0,255,0,255, "99,0", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 0,49, 0,255,0,255, "0,49", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,49, 0,255,0,255, "99,49", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_642_content"
+  data-contexts="2"
+  data-id="642"
+  data-name="2d.drawImage.canvas"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.canvas">&nbsp;</div><br />
+
+<div id="test_642_status">&nbsp;</div>
+
+[<a href="?runTests=642&noCleanup#642" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="669" href="#669"\>669</a>: 2d.drawImage.nowrap (Stretched images do not get pixels wrapping around the edges)</p>
+
+<script>
+  async function test_669_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('redtransparent.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.drawImage(_AssetRef0, -1950, 0, 2000, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 45,25, 0,255,0,255, "45,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 55,25, 0,255,0,255, "55,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_669_content"
+  data-contexts="1"
+  data-id="669"
+  data-name="2d.drawImage.nowrap"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.nowrap (Stretched images do not get pixels wrapping around the edges)">&nbsp;</div><br />
+
+<div id="test_669_status">&nbsp;</div>
+
+[<a href="?runTests=669&noCleanup#669" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="652" href="#652"\>652</a>: 2d.drawImage.negativedir (Negative dimensions do not affect the direction of the image)</p>
+
+<script>
+  async function test_652_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('ggrr-256x256.png')
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.drawImage(_AssetRef0, 0, 178, 50, -100, 0, 0, 50, 100);
+      ctx.drawImage(_AssetRef0, 0, 78, 50, 100, 50, 100, 50, -100);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 48,1, 0,255,0,255, "48,1", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 48,48, 0,255,0,255, "48,48", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 51,1, 0,255,0,255, "51,1", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 51,48, 0,255,0,255, "51,48", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_652_content"
+  data-contexts="1"
+  data-id="652"
+  data-name="2d.drawImage.negativedir"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.negativedir (Negative dimensions do not affect the direction of the image)">&nbsp;</div><br />
+
+<div id="test_652_status">&nbsp;</div>
+
+[<a href="?runTests=652&noCleanup#652" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="647" href="#647"\>647</a>: 2d.drawImage.floatsource</p>
+
+<script>
+  async function test_647_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('green.png')
+      ctx.drawImage(_AssetRef0, 10.1, 10.1, 0.1, 0.1, 0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_647_content"
+  data-contexts="1"
+  data-id="647"
+  data-name="2d.drawImage.floatsource"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.floatsource">&nbsp;</div><br />
+
+<div id="test_647_status">&nbsp;</div>
+
+[<a href="?runTests=647&noCleanup#647" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: broken image loading fails long before we can get it as an asset to the 2d context
+<p><a id="658" href="#658"\>658</a>: 2d.drawImage.broken</p>
+
+<script>
+  async function test_658_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('broken.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      var img = _AssetRef0;
+      ctx.drawImage(img, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_658_content"
+  data-contexts="1"
+  data-id="658"
+  data-name="2d.drawImage.broken"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.broken">&nbsp;</div><br />
+
+<div id="test_658_status">&nbsp;</div>
+
+[<a href="?runTests=658&noCleanup#658" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="666" href="#666"\>666</a>: 2d.drawImage.alpha</p>
+
+<script>
+  async function test_666_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalAlpha = 0;
+      ctx.drawImage(_AssetRef0, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_666_content"
+  data-contexts="1"
+  data-id="666"
+  data-name="2d.drawImage.alpha"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.alpha">&nbsp;</div><br />
+
+<div id="test_666_status">&nbsp;</div>
+
+[<a href="?runTests=666&noCleanup#666" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="637" href="#637"\>637</a>: 2d.drawImage.9arg.basic</p>
+
+<script>
+  async function test_637_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('green.png')
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.drawImage(_AssetRef0, 0, 0, 100, 50, 0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 0,0, 0,255,0,255, "0,0", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,0, 0,255,0,255, "99,0", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 0,49, 0,255,0,255, "0,49", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,49, 0,255,0,255, "99,49", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_637_content"
+  data-contexts="1"
+  data-id="637"
+  data-name="2d.drawImage.9arg.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.9arg.basic">&nbsp;</div><br />
+
+<div id="test_637_status">&nbsp;</div>
+
+[<a href="?runTests=637&noCleanup#637" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="636" href="#636"\>636</a>: 2d.drawImage.5arg</p>
+
+<script>
+  async function test_636_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef1 = await getAsset('green.png')
+      let _AssetRef0 = await getAsset('red.png')
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.drawImage(_AssetRef1, 50, 0, 50, 50);
+      ctx.drawImage(_AssetRef0, 0, 0, 50, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 50, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 0,0, 0,255,0,255, "0,0", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,0, 0,255,0,255, "99,0", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 0,49, 0,255,0,255, "0,49", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,49, 0,255,0,255, "99,49", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_636_content"
+  data-contexts="1"
+  data-id="636"
+  data-name="2d.drawImage.5arg"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.5arg">&nbsp;</div><br />
+
+<div id="test_636_status">&nbsp;</div>
+
+[<a href="?runTests=636&noCleanup#636" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="639" href="#639"\>639</a>: 2d.drawImage.9arg.sourcesize</p>
+
+<script>
+  async function test_639_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('rgrg-256x256.png')
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.drawImage(_AssetRef0, 0, 0, 256, 256, 0, 0, 100, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 51, 26);
+      ctx.fillRect(49, 24, 51, 26);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 0,0, 0,255,0,255, "0,0", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,0, 0,255,0,255, "99,0", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 0,49, 0,255,0,255, "0,49", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,49, 0,255,0,255, "99,49", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 20,20, 0,255,0,255, "20,20", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 80,20, 0,255,0,255, "80,20", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 20,30, 0,255,0,255, "20,30", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 80,30, 0,255,0,255, "80,30", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_639_content"
+  data-contexts="1"
+  data-id="639"
+  data-name="2d.drawImage.9arg.sourcesize"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.9arg.sourcesize">&nbsp;</div><br />
+
+<div id="test_639_status">&nbsp;</div>
+
+[<a href="?runTests=639&noCleanup#639" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: Images aren't HTML img objects
+<p><a id="657" href="#657"\>657</a>: 2d.drawImage.incomplete.removedsrc</p>
+
+<script>
+  async function test_657_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      var img = _AssetRef0;
+      img.removeAttribute('src');
+      ctx.drawImage(img, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_657_content"
+  data-contexts="1"
+  data-id="657"
+  data-name="2d.drawImage.incomplete.removedsrc"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.incomplete.removedsrc">&nbsp;</div><br />
+
+<div id="test_657_status">&nbsp;</div>
+
+[<a href="?runTests=657&noCleanup#657" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="649" href="#649"\>649</a>: 2d.drawImage.zerosource.image (drawImage with zero-sized source rectangle from image throws INDEX_SIZE_ERR)</p>
+
+<script>
+  async function test_649_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef2 = await getAsset('red-zeroheight.svg')
+      let _AssetRef1 = await getAsset('red-zerosize.svg')
+      let _AssetRef0 = await getAsset('red-zerowidth.svg')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { ctx.drawImage(_AssetRef0, 0, 0, 100, 50); });
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { ctx.drawImage(_AssetRef2, 0, 0, 100, 50); });
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { ctx.drawImage(_AssetRef1, 0, 0, 100, 50); });
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_649_content"
+  data-contexts="1"
+  data-id="649"
+  data-name="2d.drawImage.zerosource.image"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.zerosource.image (drawImage with zero-sized source rectangle from image throws INDEX_SIZE_ERR)">&nbsp;</div><br />
+
+<div id="test_649_status">&nbsp;</div>
+
+[<a href="?runTests=649&noCleanup#649" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="640" href="#640"\>640</a>: 2d.drawImage.9arg.destpos</p>
+
+<script>
+  async function test_640_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef1 = await getAsset('green.png')
+      let _AssetRef0 = await getAsset('red.png')
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.drawImage(_AssetRef1, 0, 0, 100, 50, 0, 0, 100, 50);
+      ctx.drawImage(_AssetRef0, 0, 0, 100, 50, -100, 0, 100, 50);
+      ctx.drawImage(_AssetRef0, 0, 0, 100, 50, 100, 0, 100, 50);
+      ctx.drawImage(_AssetRef0, 0, 0, 100, 50, 0, -50, 100, 50);
+      ctx.drawImage(_AssetRef0, 0, 0, 100, 50, 0, 50, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 0,0, 0,255,0,255, "0,0", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,0, 0,255,0,255, "99,0", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 0,49, 0,255,0,255, "0,49", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,49, 0,255,0,255, "99,49", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_640_content"
+  data-contexts="1"
+  data-id="640"
+  data-name="2d.drawImage.9arg.destpos"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.9arg.destpos">&nbsp;</div><br />
+
+<div id="test_640_status">&nbsp;</div>
+
+[<a href="?runTests=640&noCleanup#640" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="635" href="#635"\>635</a>: 2d.drawImage.3arg</p>
+
+<script>
+  async function test_635_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef1 = await getAsset('green.png')
+      let _AssetRef0 = await getAsset('red.png')
+      ctx.drawImage(_AssetRef1, 0, 0);
+      ctx.drawImage(_AssetRef0, -100, 0);
+      ctx.drawImage(_AssetRef0, 100, 0);
+      ctx.drawImage(_AssetRef0, 0, -50);
+      ctx.drawImage(_AssetRef0, 0, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 0,0, 0,255,0,255, "0,0", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,0, 0,255,0,255, "99,0", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 0,49, 0,255,0,255, "0,49", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,49, 0,255,0,255, "99,49", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_635_content"
+  data-contexts="1"
+  data-id="635"
+  data-name="2d.drawImage.3arg"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.3arg">&nbsp;</div><br />
+
+<div id="test_635_status">&nbsp;</div>
+
+[<a href="?runTests=635&noCleanup#635" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="644" href="#644"\>644</a>: 2d.drawImage.self.2</p>
+
+<script>
+  async function test_644_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 1, 100, 49);
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 1);
+      ctx.drawImage(canvas, 0, 1);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 2);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 0,0, 0,255,0,255, "0,0", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,0, 0,255,0,255, "99,0", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 0,49, 0,255,0,255, "0,49", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,49, 0,255,0,255, "99,49", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_644_content"
+  data-contexts="1"
+  data-id="644"
+  data-name="2d.drawImage.self.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.self.2">&nbsp;</div><br />
+
+<div id="test_644_status">&nbsp;</div>
+
+[<a href="?runTests=644&noCleanup#644" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="646" href="#646"\>646</a>: 2d.drawImage.wrongtype (Incorrect image types in drawImage do not match any defined overloads, so WebIDL throws a TypeError)</p>
+
+<script>
+  async function test_646_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.drawImage(undefined, 0, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.drawImage(0, 0, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.drawImage("", 0, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.drawImage(document.createElement('p'), 0, 0); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_646_content"
+  data-contexts="1"
+  data-id="646"
+  data-name="2d.drawImage.wrongtype"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.wrongtype (Incorrect image types in drawImage do not match any defined overloads, so WebIDL throws a TypeError)">&nbsp;</div><br />
+
+<div id="test_646_status">&nbsp;</div>
+
+[<a href="?runTests=646&noCleanup#646" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="643" href="#643"\>643</a>: 2d.drawImage.self.1</p>
+
+<script>
+  async function test_643_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(50, 0, 50, 50);
+      ctx.drawImage(canvas, 50, 0);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 0,0, 0,255,0,255, "0,0", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,0, 0,255,0,255, "99,0", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 0,49, 0,255,0,255, "0,49", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,49, 0,255,0,255, "99,49", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_643_content"
+  data-contexts="1"
+  data-id="643"
+  data-name="2d.drawImage.self.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.self.1">&nbsp;</div><br />
+
+<div id="test_643_status">&nbsp;</div>
+
+[<a href="?runTests=643&noCleanup#643" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="651" href="#651"\>651</a>: 2d.drawImage.negativedest (Negative destination width/height represents the correct rectangle)</p>
+
+<script>
+  async function test_651_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('ggrr-256x256.png')
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.drawImage(_AssetRef0, 100, 78, 50, 50, 0, 50, 50, -50);
+      ctx.drawImage(_AssetRef0, 100, 128, 50, -50, 100, 50, -50, -50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 48,1, 0,255,0,255, "48,1", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 48,48, 0,255,0,255, "48,48", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 51,1, 0,255,0,255, "51,1", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 51,48, 0,255,0,255, "51,48", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_651_content"
+  data-contexts="1"
+  data-id="651"
+  data-name="2d.drawImage.negativedest"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.negativedest (Negative destination width/height represents the correct rectangle)">&nbsp;</div><br />
+
+<div id="test_651_status">&nbsp;</div>
+
+[<a href="?runTests=651&noCleanup#651" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: Images aren't HTML img objects
+<p><a id="654" href="#654"\>654</a>: 2d.drawImage.incomplete.immediate</p>
+
+<script>
+  async function test_654_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      var img = new Image();
+      img.src = '../images/red.png';
+      // This triggers the "update the image data" algorithm.
+      // The image will not go to the "completely available" state
+      // until a fetch task in the networking task source is processed,
+      // so the image must not be fully decodable yet:
+      ctx.drawImage(img, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_654_content"
+  data-contexts="1"
+  data-id="654"
+  data-name="2d.drawImage.incomplete.immediate"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.incomplete.immediate">&nbsp;</div><br />
+
+<div id="test_654_status">&nbsp;</div>
+
+[<a href="?runTests=654&noCleanup#654" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="667" href="#667"\>667</a>: 2d.drawImage.clip</p>
+
+<script>
+  async function test_667_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.rect(-10, -10, 1, 1);
+      ctx.clip();
+      ctx.drawImage(_AssetRef0, 0, 0);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_667_content"
+  data-contexts="1"
+  data-id="667"
+  data-name="2d.drawImage.clip"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.clip">&nbsp;</div><br />
+
+<div id="test_667_status">&nbsp;</div>
+
+[<a href="?runTests=667&noCleanup#667" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="664" href="#664"\>664</a>: 2d.drawImage.path</p>
+
+<script>
+  async function test_664_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red.png')
+      ctx.fillStyle = '#0f0';
+      ctx.rect(0, 0, 100, 50);
+      ctx.drawImage(_AssetRef0, 0, 0);
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_664_content"
+  data-contexts="1"
+  data-id="664"
+  data-name="2d.drawImage.path"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.path">&nbsp;</div><br />
+
+<div id="test_664_status">&nbsp;</div>
+
+[<a href="?runTests=664&noCleanup#664" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: TODO svg files aren't supported as assets right now? (or are they??)
+<p><a id="648" href="#648"\>648</a>: 2d.drawImage.zerosource (drawImage with zero-sized source rectangle draws nothing without exception)</p>
+
+<script>
+  async function test_648_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.drawImage(_AssetRef0, 10, 10, 0, 1, 0, 0, 100, 50);
+      ctx.drawImage(_AssetRef0, 10, 10, 1, 0, 0, 0, 100, 50);
+      ctx.drawImage(_AssetRef0, 10, 10, 0, 0, 0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_648_content"
+  data-contexts="1"
+  data-id="648"
+  data-name="2d.drawImage.zerosource"
+  data-width="100"
+  data-height="50"
+  data-description="2d.drawImage.zerosource (drawImage with zero-sized source rectangle draws nothing without exception)">&nbsp;</div><br />
+
+<div id="test_648_status">&nbsp;</div>
+
+[<a href="?runTests=648&noCleanup#648" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+
+<br /><br />
+&lt;3
+
+</body>
+</html>

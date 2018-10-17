@@ -1,0 +1,4823 @@
+<html>
+
+<head>
+<title>2d.fillStyle // WebGL2DContext conformance</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<style>
+  div {
+    padding: 5px;
+  }
+  canvas {
+    border: 1px black solid;
+  }
+  .progress {
+    font: 100% monospace;
+  }
+  .failure {
+    background-color: red;
+    color: white;
+    font: 100% sans-serif;
+  }
+  .success {
+    background-color: #88FF88;
+    font: 100% sans-serif;
+  }
+  .failure a:link {
+    color: white
+  }
+  .failure a:visited {
+    color: white
+  }
+</style>
+
+<script type="text/javascript" src="bundle.js"></script>
+<script type="text/javascript" src="assets.js"></script>
+<script type="text/javascript" src="asserts.js"></script>
+
+<script type="text/javascript">
+    async function getAsset(name) {
+      return new Promise((resolve, reject) => {
+        let img = document.createElement("IMG")
+        img.onload = () => resolve(img)
+        img.onerror = reject
+        img.src = rawImageAssets[name]
+      })
+    }
+
+    function bootCanvas(container, id, width, height) {
+        var canvas = document.createElement("CANVAS")
+        canvas.setAttribute("id", id)
+        canvas.setAttribute("width", width)
+        canvas.setAttribute("height", height)
+
+        container.appendChild(canvas)
+
+        var gl = canvas.getContext("webgl2", {
+          stencil: 8,
+          preserveDrawingBuffer: true
+        });
+        gl.viewportWidth = canvas.width;
+        gl.viewportHeight = canvas.height;
+        if (!gl) {
+            console.log("Could not initialise WebGL, sorry :-(")
+            return null;
+        }
+
+        gl.clearColor(1.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        /* TODO: figure out how to pass some gradient tests that need
+         * more grad stops: */
+        let ctx = new Expo2DContext.default(gl, maxGradStops=50)
+        ctx.getContext = () => {return ctx;}
+        
+        return [canvas, gl, ctx]
+    }
+
+    function spinner_graphic(i) {
+      let anim = ["/","&ndash;","\\","|","/","&ndash;","\\", "|"]
+      return anim[i%anim.length]
+    }
+
+    var testContexts = {};
+
+    function focusTest (num) {
+      window.ctx = testContexts[num][0]
+    }
+    window.onhashchange = () => {
+      var url = new URL(window.location)
+      var hashVal = url.hash.substr(1)
+      if (hashVal in testContexts) {
+        focusTest(hashVal)
+      }
+    }
+
+    async function runTests() {
+
+      // TODO: assets??
+
+      if (!window.testComplete) {
+        window.testComplete = (testResults, completedTests, totalTests) =>
+          { /* PUPPETEER STUB */ };
+      }
+
+      testContexts = {};
+
+      var tests = document.getElementsByClassName("test")
+
+      var url = new URL(window.location)
+      if (url.searchParams.get("runTests") != null) {
+        selected_test_ids = url.searchParams.get("runTests").split(",").map((x) => parseInt(x))
+        tests = selected_test_ids.map((x) => document.getElementById("test_"+x+"_content")) 
+      }
+
+      var cleanUp = url.searchParams.get("noCleanup") == null
+
+      let suite_status = document.getElementById("suite_status")
+
+      var failures = new Set();
+      var failureSummaryHTML = "Failed:<ul>"
+
+      let i = 0;
+
+      var testIteration = async (i) => {
+
+        if (i >= tests.length) {
+          finishTests();
+          return;
+        }
+
+        let test_area = tests[i]
+        let test = test_area.dataset
+    
+        // TODO: how to un-convert-from-string numbers in dataset
+        
+        let allCanvases = []
+        let allWebGLContexts = []
+        let allContexts = []
+        
+        let failureMessages = []
+
+        for (let j=0; j<parseInt(test.contexts); j++) {
+          let [canvas, gl, ctx] = bootCanvas(
+            test_area,
+            "canvas_"+test.id+"_"+j,
+            parseInt(test.width),
+            parseInt(test.height)
+          )
+          // Install fake getContext wrapper to allow context objects to be
+          // used in place of canvas objects for our tests:
+          ctx.getContext = (unused) => {return ctx};
+          allCanvases.push(canvas)
+          allWebGLContexts.push(gl)
+          allContexts.push(ctx)
+        }
+
+        let onFail = TriggerObject((message) => {
+          let status_box = document.getElementById("test_"+test.id+"_status")
+
+          status_box.setAttribute("class","failure")
+          status_box.innerHTML += message + "<br />";
+          failureMessages.push(message)
+
+          if (!failures.has(test.id)) {
+            failureSummaryHTML += "<li><a href='#"+test.id+"'>"+test.id+": "+test.description+"</a></li>"
+            failures.add(test.id);
+          }
+        })
+
+        try {
+          let test_fn = eval("test_"+test.id+"_body");
+          await test_fn(onFail, allCanvases, allContexts);
+        } catch (err) {
+          onFail.trigger(false, err.toString());
+        }
+
+        if (cleanUp) {
+          // Copy the resulting drawings out of the original canvas and
+          // safely trash the old gl context, to free up resources:
+          for (let j=0; j<parseInt(test.contexts); j++) {
+            let canvas_clone = allCanvases[j].cloneNode(true);
+            let clone_ctx = canvas_clone.getContext('2d');
+            clone_ctx.drawImage(allCanvases[j], 0, 0);
+
+            allCanvases[j].replaceWith(canvas_clone);
+
+            allWebGLContexts[j].getExtension('WEBGL_lose_context').loseContext();
+            allWebGLContexts[j] = null;
+          }
+        } else {
+          testContexts[test.id] = allContexts
+        }
+
+        suite_status.innerHTML = "["+ spinner_graphic(i) + "] Tests run: " + (i+1) + " / " + tests.length;
+
+        window.testComplete(
+          Object.assign({
+            "failureMessages": failureMessages
+          }, test), i+1, tests.length);
+
+        setTimeout(() => { testIteration(i+1) }, 1);
+      }
+
+      var finishTests = () => {
+        if (failures.size > 0) {
+          failureSummaryHTML += "</ul><br />"
+          suite_status.setAttribute("class","failure")
+          suite_status.innerHTML = failureSummaryHTML
+        } else {
+          suite_status.setAttribute("class","success")
+          suite_status.innerHTML = "[:)] All tests pass !" 
+        }
+
+        if (!cleanUp && tests.length==1){
+          focusTest(tests[0].dataset.id)
+        } else {
+          window.onhashchange()
+        }
+      };
+
+      testIteration(0);
+
+    }
+
+</script>
+</head>
+<body onload="runTests();">
+<h1> 2d.fillStyle </h1>
+<div id="suite_status" class="progress">&nbsp;</div>
+<hr />
+
+<p><a id="164" href="#164"\>164</a>: 2d.fillStyle.parse.rgb-percent</p>
+
+<script>
+  async function test_164_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgb(0% ,100% ,0%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_164_content"
+  data-contexts="1"
+  data-id="164"
+  data-name="2d.fillStyle.parse.rgb-percent"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.rgb-percent">&nbsp;</div><br />
+
+<div id="test_164_status">&nbsp;</div>
+
+[<a href="?runTests=164&noCleanup#164" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="217" href="#217"\>217</a>: 2d.fillStyle.parse.css-color-4-hsl-8</p>
+
+<script>
+  async function test_217_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(2.0943951024rad, 100.0%, 50.0%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_217_content"
+  data-contexts="1"
+  data-id="217"
+  data-name="2d.fillStyle.parse.css-color-4-hsl-8"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-hsl-8">&nbsp;</div><br />
+
+<div id="test_217_status">&nbsp;</div>
+
+[<a href="?runTests=217&noCleanup#217" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="218" href="#218"\>218</a>: 2d.fillStyle.parse.css-color-4-hsl-9</p>
+
+<script>
+  async function test_218_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(0.3333333333turn, 100.0%, 50.0%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_218_content"
+  data-contexts="1"
+  data-id="218"
+  data-name="2d.fillStyle.parse.css-color-4-hsl-9"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-hsl-9">&nbsp;</div><br />
+
+<div id="test_218_status">&nbsp;</div>
+
+[<a href="?runTests=218&noCleanup#218" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="215" href="#215"\>215</a>: 2d.fillStyle.parse.css-color-4-hsl-6</p>
+
+<script>
+  async function test_215_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(120deg, 100.0%, 50.0%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_215_content"
+  data-contexts="1"
+  data-id="215"
+  data-name="2d.fillStyle.parse.css-color-4-hsl-6"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-hsl-6">&nbsp;</div><br />
+
+<div id="test_215_status">&nbsp;</div>
+
+[<a href="?runTests=215&noCleanup#215" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="216" href="#216"\>216</a>: 2d.fillStyle.parse.css-color-4-hsl-7</p>
+
+<script>
+  async function test_216_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(133.33333333grad, 100.0%, 50.0%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_216_content"
+  data-contexts="1"
+  data-id="216"
+  data-name="2d.fillStyle.parse.css-color-4-hsl-7"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-hsl-7">&nbsp;</div><br />
+
+<div id="test_216_status">&nbsp;</div>
+
+[<a href="?runTests=216&noCleanup#216" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="213" href="#213"\>213</a>: 2d.fillStyle.parse.css-color-4-hsl-4</p>
+
+<script>
+  async function test_213_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(120.0, 100.0%, 50.0%, 20%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,51, "50,25", "0,255,0,51");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_213_content"
+  data-contexts="1"
+  data-id="213"
+  data-name="2d.fillStyle.parse.css-color-4-hsl-4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-hsl-4">&nbsp;</div><br />
+
+<div id="test_213_status">&nbsp;</div>
+
+[<a href="?runTests=213&noCleanup#213" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="214" href="#214"\>214</a>: 2d.fillStyle.parse.css-color-4-hsl-5</p>
+
+<script>
+  async function test_214_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(120deg, 100.0%, 50.0%, 0.2)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,51, "50,25", "0,255,0,51");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_214_content"
+  data-contexts="1"
+  data-id="214"
+  data-name="2d.fillStyle.parse.css-color-4-hsl-5"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-hsl-5">&nbsp;</div><br />
+
+<div id="test_214_status">&nbsp;</div>
+
+[<a href="?runTests=214&noCleanup#214" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="211" href="#211"\>211</a>: 2d.fillStyle.parse.css-color-4-hsl-2</p>
+
+<script>
+  async function test_211_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(120 100.0% 50.0% / 0.2)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,51, "50,25", "0,255,0,51");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_211_content"
+  data-contexts="1"
+  data-id="211"
+  data-name="2d.fillStyle.parse.css-color-4-hsl-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-hsl-2">&nbsp;</div><br />
+
+<div id="test_211_status">&nbsp;</div>
+
+[<a href="?runTests=211&noCleanup#211" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="212" href="#212"\>212</a>: 2d.fillStyle.parse.css-color-4-hsl-3</p>
+
+<script>
+  async function test_212_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(120.0, 100.0%, 50.0%, 0.2)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,51, "50,25", "0,255,0,51");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_212_content"
+  data-contexts="1"
+  data-id="212"
+  data-name="2d.fillStyle.parse.css-color-4-hsl-3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-hsl-3">&nbsp;</div><br />
+
+<div id="test_212_status">&nbsp;</div>
+
+[<a href="?runTests=212&noCleanup#212" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="210" href="#210"\>210</a>: 2d.fillStyle.parse.css-color-4-hsl-1</p>
+
+<script>
+  async function test_210_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(120 100.0% 50.0%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_210_content"
+  data-contexts="1"
+  data-id="210"
+  data-name="2d.fillStyle.parse.css-color-4-hsl-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-hsl-1">&nbsp;</div><br />
+
+<div id="test_210_status">&nbsp;</div>
+
+[<a href="?runTests=210&noCleanup#210" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="197" href="#197"\>197</a>: 2d.fillStyle.parse.svg-2</p>
+
+<script>
+  async function test_197_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'grey';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 128,128,128,255, "50,25", "128,128,128,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_197_content"
+  data-contexts="1"
+  data-id="197"
+  data-name="2d.fillStyle.parse.svg-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.svg-2">&nbsp;</div><br />
+
+<div id="test_197_status">&nbsp;</div>
+
+[<a href="?runTests=197&noCleanup#197" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="196" href="#196"\>196</a>: 2d.fillStyle.parse.svg-1</p>
+
+<script>
+  async function test_196_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'gray';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 128,128,128,255, "50,25", "128,128,128,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_196_content"
+  data-contexts="1"
+  data-id="196"
+  data-name="2d.fillStyle.parse.svg-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.svg-1">&nbsp;</div><br />
+
+<div id="test_196_status">&nbsp;</div>
+
+[<a href="?runTests=196&noCleanup#196" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="158" href="#158"\>158</a>: 2d.fillStyle.parse.rgb-num</p>
+
+<script>
+  async function test_158_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgb(0,255,0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_158_content"
+  data-contexts="1"
+  data-id="158"
+  data-name="2d.fillStyle.parse.rgb-num"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.rgb-num">&nbsp;</div><br />
+
+<div id="test_158_status">&nbsp;</div>
+
+[<a href="?runTests=158&noCleanup#158" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="177" href="#177"\>177</a>: 2d.fillStyle.parse.transparent-2</p>
+
+<script>
+  async function test_177_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'TrAnSpArEnT';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_177_content"
+  data-contexts="1"
+  data-id="177"
+  data-name="2d.fillStyle.parse.transparent-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.transparent-2">&nbsp;</div><br />
+
+<div id="test_177_status">&nbsp;</div>
+
+[<a href="?runTests=177&noCleanup#177" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="154" href="#154"\>154</a>: 2d.fillStyle.parse.hex3</p>
+
+<script>
+  async function test_154_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_154_content"
+  data-contexts="1"
+  data-id="154"
+  data-name="2d.fillStyle.parse.hex3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hex3">&nbsp;</div><br />
+
+<div id="test_154_status">&nbsp;</div>
+
+[<a href="?runTests=154&noCleanup#154" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="176" href="#176"\>176</a>: 2d.fillStyle.parse.transparent-1</p>
+
+<script>
+  async function test_176_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'transparent';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_176_content"
+  data-contexts="1"
+  data-id="176"
+  data-name="2d.fillStyle.parse.transparent-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.transparent-1">&nbsp;</div><br />
+
+<div id="test_176_status">&nbsp;</div>
+
+[<a href="?runTests=176&noCleanup#176" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="276" href="#276"\>276</a>: 2d.fillStyle.parse.current.changed (currentColor is computed when the attribute is set, not when it is painted)</p>
+
+<script>
+  async function test_276_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          canvas.setAttribute('style', 'color: #0f0');
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'currentColor';
+      canvas.setAttribute('style', 'color: #f00');
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_276_content"
+  data-contexts="1"
+  data-id="276"
+  data-name="2d.fillStyle.parse.current.changed"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.current.changed (currentColor is computed when the attribute is set, not when it is painted)">&nbsp;</div><br />
+
+<div id="test_276_status">&nbsp;</div>
+
+[<a href="?runTests=276&noCleanup#276" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="282" href="#282"\>282</a>: 2d.fillStyle.get.transparent</p>
+
+<script>
+  async function test_282_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = 'rgba(0,0,0,0)';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.fillStyle, 'rgba(0, 0, 0, 0)', "ctx.fillStyle", "'rgba(0, 0, 0, 0)'");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_282_content"
+  data-contexts="1"
+  data-id="282"
+  data-name="2d.fillStyle.get.transparent"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.get.transparent">&nbsp;</div><br />
+
+<div id="test_282_status">&nbsp;</div>
+
+[<a href="?runTests=282&noCleanup#282" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="182" href="#182"\>182</a>: 2d.fillStyle.parse.hsl-5</p>
+
+<script>
+  async function test_182_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(120.0, 100.0%, 50.0%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_182_content"
+  data-contexts="1"
+  data-id="182"
+  data-name="2d.fillStyle.parse.hsl-5"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hsl-5">&nbsp;</div><br />
+
+<div id="test_182_status">&nbsp;</div>
+
+[<a href="?runTests=182&noCleanup#182" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="181" href="#181"\>181</a>: 2d.fillStyle.parse.hsl-4</p>
+
+<script>
+  async function test_181_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(-360240, 100%, 50%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_181_content"
+  data-contexts="1"
+  data-id="181"
+  data-name="2d.fillStyle.parse.hsl-4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hsl-4">&nbsp;</div><br />
+
+<div id="test_181_status">&nbsp;</div>
+
+[<a href="?runTests=181&noCleanup#181" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="183" href="#183"\>183</a>: 2d.fillStyle.parse.hsl-6</p>
+
+<script>
+  async function test_183_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(+120, +100%, +50%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_183_content"
+  data-contexts="1"
+  data-id="183"
+  data-name="2d.fillStyle.parse.hsl-6"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hsl-6">&nbsp;</div><br />
+
+<div id="test_183_status">&nbsp;</div>
+
+[<a href="?runTests=183&noCleanup#183" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="178" href="#178"\>178</a>: 2d.fillStyle.parse.hsl-1</p>
+
+<script>
+  async function test_178_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(120, 100%, 50%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_178_content"
+  data-contexts="1"
+  data-id="178"
+  data-name="2d.fillStyle.parse.hsl-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hsl-1">&nbsp;</div><br />
+
+<div id="test_178_status">&nbsp;</div>
+
+[<a href="?runTests=178&noCleanup#178" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="180" href="#180"\>180</a>: 2d.fillStyle.parse.hsl-3</p>
+
+<script>
+  async function test_180_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(360120, 100%, 50%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_180_content"
+  data-contexts="1"
+  data-id="180"
+  data-name="2d.fillStyle.parse.hsl-3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hsl-3">&nbsp;</div><br />
+
+<div id="test_180_status">&nbsp;</div>
+
+[<a href="?runTests=180&noCleanup#180" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="179" href="#179"\>179</a>: 2d.fillStyle.parse.hsl-2</p>
+
+<script>
+  async function test_179_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl( -240 , 100% , 50% )';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_179_content"
+  data-contexts="1"
+  data-id="179"
+  data-name="2d.fillStyle.parse.hsl-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hsl-2">&nbsp;</div><br />
+
+<div id="test_179_status">&nbsp;</div>
+
+[<a href="?runTests=179&noCleanup#179" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="255" href="#255"\>255</a>: 2d.fillStyle.parse.invalid.name-3</p>
+
+<script>
+  async function test_255_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'red blue'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_255_content"
+  data-contexts="1"
+  data-id="255"
+  data-name="2d.fillStyle.parse.invalid.name-3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.name-3">&nbsp;</div><br />
+
+<div id="test_255_status">&nbsp;</div>
+
+[<a href="?runTests=255&noCleanup#255" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="254" href="#254"\>254</a>: 2d.fillStyle.parse.invalid.name-2</p>
+
+<script>
+  async function test_254_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'firebrick1'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_254_content"
+  data-contexts="1"
+  data-id="254"
+  data-name="2d.fillStyle.parse.invalid.name-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.name-2">&nbsp;</div><br />
+
+<div id="test_254_status">&nbsp;</div>
+
+[<a href="?runTests=254&noCleanup#254" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="253" href="#253"\>253</a>: 2d.fillStyle.parse.invalid.name-1</p>
+
+<script>
+  async function test_253_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'darkbrown'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_253_content"
+  data-contexts="1"
+  data-id="253"
+  data-name="2d.fillStyle.parse.invalid.name-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.name-1">&nbsp;</div><br />
+
+<div id="test_253_status">&nbsp;</div>
+
+[<a href="?runTests=253&noCleanup#253" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="257" href="#257"\>257</a>: 2d.fillStyle.parse.invalid.name-5</p>
+
+<script>
+  async function test_257_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = '"red'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_257_content"
+  data-contexts="1"
+  data-id="257"
+  data-name="2d.fillStyle.parse.invalid.name-5"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.name-5">&nbsp;</div><br />
+
+<div id="test_257_status">&nbsp;</div>
+
+[<a href="?runTests=257&noCleanup#257" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="256" href="#256"\>256</a>: 2d.fillStyle.parse.invalid.name-4</p>
+
+<script>
+  async function test_256_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = '"red"'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_256_content"
+  data-contexts="1"
+  data-id="256"
+  data-name="2d.fillStyle.parse.invalid.name-4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.name-4">&nbsp;</div><br />
+
+<div id="test_256_status">&nbsp;</div>
+
+[<a href="?runTests=256&noCleanup#256" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="271" href="#271"\>271</a>: 2d.fillStyle.parse.invalid.css-color-4-rgb-5</p>
+
+<script>
+  async function test_271_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'rgb(0, 0, 0 /)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_271_content"
+  data-contexts="1"
+  data-id="271"
+  data-name="2d.fillStyle.parse.invalid.css-color-4-rgb-5"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.css-color-4-rgb-5">&nbsp;</div><br />
+
+<div id="test_271_status">&nbsp;</div>
+
+[<a href="?runTests=271&noCleanup#271" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="270" href="#270"\>270</a>: 2d.fillStyle.parse.invalid.css-color-4-rgb-4</p>
+
+<script>
+  async function test_270_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'rgb(0 0 0 /)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_270_content"
+  data-contexts="1"
+  data-id="270"
+  data-name="2d.fillStyle.parse.invalid.css-color-4-rgb-4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.css-color-4-rgb-4">&nbsp;</div><br />
+
+<div id="test_270_status">&nbsp;</div>
+
+[<a href="?runTests=270&noCleanup#270" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="258" href="#258"\>258</a>: 2d.fillStyle.parse.invalid.css-color-4-rgb-1</p>
+
+<script>
+  async function test_258_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'rgb(255, 0, 0 / 1)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_258_content"
+  data-contexts="1"
+  data-id="258"
+  data-name="2d.fillStyle.parse.invalid.css-color-4-rgb-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.css-color-4-rgb-1">&nbsp;</div><br />
+
+<div id="test_258_status">&nbsp;</div>
+
+[<a href="?runTests=258&noCleanup#258" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="260" href="#260"\>260</a>: 2d.fillStyle.parse.invalid.css-color-4-rgb-3</p>
+
+<script>
+  async function test_260_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'rgb(255, 0 0)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_260_content"
+  data-contexts="1"
+  data-id="260"
+  data-name="2d.fillStyle.parse.invalid.css-color-4-rgb-3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.css-color-4-rgb-3">&nbsp;</div><br />
+
+<div id="test_260_status">&nbsp;</div>
+
+[<a href="?runTests=260&noCleanup#260" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="259" href="#259"\>259</a>: 2d.fillStyle.parse.invalid.css-color-4-rgb-2</p>
+
+<script>
+  async function test_259_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'rgb(255 0 0, 1)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_259_content"
+  data-contexts="1"
+  data-id="259"
+  data-name="2d.fillStyle.parse.invalid.css-color-4-rgb-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.css-color-4-rgb-2">&nbsp;</div><br />
+
+<div id="test_259_status">&nbsp;</div>
+
+[<a href="?runTests=259&noCleanup#259" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="235" href="#235"\>235</a>: 2d.fillStyle.parse.invalid.hex8</p>
+
+<script>
+  async function test_235_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = '#fg0000ff'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_235_content"
+  data-contexts="1"
+  data-id="235"
+  data-name="2d.fillStyle.parse.invalid.hex8"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.hex8">&nbsp;</div><br />
+
+<div id="test_235_status">&nbsp;</div>
+
+[<a href="?runTests=235&noCleanup#235" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="175" href="#175"\>175</a>: 2d.fillStyle.parse.rgba-eof</p>
+
+<script>
+  async function test_175_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgba(0, 255, 0, 1';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_175_content"
+  data-contexts="1"
+  data-id="175"
+  data-name="2d.fillStyle.parse.rgba-eof"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.rgba-eof">&nbsp;</div><br />
+
+<div id="test_175_status">&nbsp;</div>
+
+[<a href="?runTests=175&noCleanup#175" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="157" href="#157"\>157</a>: 2d.fillStyle.parse.hex8</p>
+
+<script>
+  async function test_157_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = '#00ff00ff';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_157_content"
+  data-contexts="1"
+  data-id="157"
+  data-name="2d.fillStyle.parse.hex8"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hex8">&nbsp;</div><br />
+
+<div id="test_157_status">&nbsp;</div>
+
+[<a href="?runTests=157&noCleanup#157" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="229" href="#229"\>229</a>: 2d.fillStyle.parse.invalid.hex2</p>
+
+<script>
+  async function test_229_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = '#f0'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_229_content"
+  data-contexts="1"
+  data-id="229"
+  data-name="2d.fillStyle.parse.invalid.hex2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.hex2">&nbsp;</div><br />
+
+<div id="test_229_status">&nbsp;</div>
+
+[<a href="?runTests=229&noCleanup#229" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="230" href="#230"\>230</a>: 2d.fillStyle.parse.invalid.hex3</p>
+
+<script>
+  async function test_230_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = '#g00'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_230_content"
+  data-contexts="1"
+  data-id="230"
+  data-name="2d.fillStyle.parse.invalid.hex3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.hex3">&nbsp;</div><br />
+
+<div id="test_230_status">&nbsp;</div>
+
+[<a href="?runTests=230&noCleanup#230" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="228" href="#228"\>228</a>: 2d.fillStyle.parse.invalid.hex1</p>
+
+<script>
+  async function test_228_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = '#f'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_228_content"
+  data-contexts="1"
+  data-id="228"
+  data-name="2d.fillStyle.parse.invalid.hex1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.hex1">&nbsp;</div><br />
+
+<div id="test_228_status">&nbsp;</div>
+
+[<a href="?runTests=228&noCleanup#228" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="233" href="#233"\>233</a>: 2d.fillStyle.parse.invalid.hex6</p>
+
+<script>
+  async function test_233_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = '#fg0000'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_233_content"
+  data-contexts="1"
+  data-id="233"
+  data-name="2d.fillStyle.parse.invalid.hex6"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.hex6">&nbsp;</div><br />
+
+<div id="test_233_status">&nbsp;</div>
+
+[<a href="?runTests=233&noCleanup#233" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="234" href="#234"\>234</a>: 2d.fillStyle.parse.invalid.hex7</p>
+
+<script>
+  async function test_234_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = '#ff0000f'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_234_content"
+  data-contexts="1"
+  data-id="234"
+  data-name="2d.fillStyle.parse.invalid.hex7"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.hex7">&nbsp;</div><br />
+
+<div id="test_234_status">&nbsp;</div>
+
+[<a href="?runTests=234&noCleanup#234" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="231" href="#231"\>231</a>: 2d.fillStyle.parse.invalid.hex4</p>
+
+<script>
+  async function test_231_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = '#fg00'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_231_content"
+  data-contexts="1"
+  data-id="231"
+  data-name="2d.fillStyle.parse.invalid.hex4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.hex4">&nbsp;</div><br />
+
+<div id="test_231_status">&nbsp;</div>
+
+[<a href="?runTests=231&noCleanup#231" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="232" href="#232"\>232</a>: 2d.fillStyle.parse.invalid.hex5</p>
+
+<script>
+  async function test_232_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = '#ff000'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_232_content"
+  data-contexts="1"
+  data-id="232"
+  data-name="2d.fillStyle.parse.invalid.hex5"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.hex5">&nbsp;</div><br />
+
+<div id="test_232_status">&nbsp;</div>
+
+[<a href="?runTests=232&noCleanup#232" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="277" href="#277"\>277</a>: 2d.fillStyle.parse.current.removed (currentColor is solid black when the canvas element is not in a document)</p>
+
+<script>
+  async function test_277_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          // Try not to let it undetectably incorrectly pick up opaque-black
+      // from other parts of the document:
+      document.body.parentNode.setAttribute('style', 'color: #f00');
+      document.body.setAttribute('style', 'color: #f00');
+      canvas.setAttribute('style', 'color: #f00');
+      
+      var canvas2 = allContexts[1];
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.fillStyle = '#f00';
+      ctx2.fillStyle = 'currentColor';
+      ctx2.fillRect(0, 0, 100, 50);
+      ctx.drawImage(canvas2, 0, 0);
+      
+      document.body.parentNode.removeAttribute('style');
+      document.body.removeAttribute('style');
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,0,0,255, "50,25", "0,0,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_277_content"
+  data-contexts="2"
+  data-id="277"
+  data-name="2d.fillStyle.parse.current.removed"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.current.removed (currentColor is solid black when the canvas element is not in a document)">&nbsp;</div><br />
+
+<div id="test_277_status">&nbsp;</div>
+
+[<a href="?runTests=277&noCleanup#277" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="283" href="#283"\>283</a>: 2d.fillStyle.default</p>
+
+<script>
+  async function test_283_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      canvasAssert._assertSame(t, ctx.fillStyle, '#000000', "ctx.fillStyle", "'#000000'");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_283_content"
+  data-contexts="1"
+  data-id="283"
+  data-name="2d.fillStyle.default"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.default">&nbsp;</div><br />
+
+<div id="test_283_status">&nbsp;</div>
+
+[<a href="?runTests=283&noCleanup#283" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="249" href="#249"\>249</a>: 2d.fillStyle.parse.invalid.hsl-6</p>
+
+<script>
+  async function test_249_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'hsl(0, 100%, 50%,)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_249_content"
+  data-contexts="1"
+  data-id="249"
+  data-name="2d.fillStyle.parse.invalid.hsl-6"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.hsl-6">&nbsp;</div><br />
+
+<div id="test_249_status">&nbsp;</div>
+
+[<a href="?runTests=249&noCleanup#249" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="247" href="#247"\>247</a>: 2d.fillStyle.parse.invalid.hsl-4</p>
+
+<script>
+  async function test_247_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'hsl(0, 100%, 0)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_247_content"
+  data-contexts="1"
+  data-id="247"
+  data-name="2d.fillStyle.parse.invalid.hsl-4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.hsl-4">&nbsp;</div><br />
+
+<div id="test_247_status">&nbsp;</div>
+
+[<a href="?runTests=247&noCleanup#247" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="248" href="#248"\>248</a>: 2d.fillStyle.parse.invalid.hsl-5</p>
+
+<script>
+  async function test_248_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'hsl(0, 100.%, 50%)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_248_content"
+  data-contexts="1"
+  data-id="248"
+  data-name="2d.fillStyle.parse.invalid.hsl-5"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.hsl-5">&nbsp;</div><br />
+
+<div id="test_248_status">&nbsp;</div>
+
+[<a href="?runTests=248&noCleanup#248" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="245" href="#245"\>245</a>: 2d.fillStyle.parse.invalid.hsl-2</p>
+
+<script>
+  async function test_245_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'hsl(z, 100%, 50%)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_245_content"
+  data-contexts="1"
+  data-id="245"
+  data-name="2d.fillStyle.parse.invalid.hsl-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.hsl-2">&nbsp;</div><br />
+
+<div id="test_245_status">&nbsp;</div>
+
+[<a href="?runTests=245&noCleanup#245" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="246" href="#246"\>246</a>: 2d.fillStyle.parse.invalid.hsl-3</p>
+
+<script>
+  async function test_246_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'hsl(0, 0, 50%)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_246_content"
+  data-contexts="1"
+  data-id="246"
+  data-name="2d.fillStyle.parse.invalid.hsl-3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.hsl-3">&nbsp;</div><br />
+
+<div id="test_246_status">&nbsp;</div>
+
+[<a href="?runTests=246&noCleanup#246" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="244" href="#244"\>244</a>: 2d.fillStyle.parse.invalid.hsl-1</p>
+
+<script>
+  async function test_244_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'hsl(0%, 100%, 50%)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_244_content"
+  data-contexts="1"
+  data-id="244"
+  data-name="2d.fillStyle.parse.invalid.hsl-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.hsl-1">&nbsp;</div><br />
+
+<div id="test_244_status">&nbsp;</div>
+
+[<a href="?runTests=244&noCleanup#244" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="281" href="#281"\>281</a>: 2d.fillStyle.get.semitransparent</p>
+
+<script>
+  async function test_281_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = 'rgba(255,255,255,0.45)';
+      ctx.flush()
+      webAssert.assert_regexp_match(t, ctx.fillStyle, /^rgba\(255, 255, 255, 0\.4\d+\)$/);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_281_content"
+  data-contexts="1"
+  data-id="281"
+  data-name="2d.fillStyle.get.semitransparent"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.get.semitransparent">&nbsp;</div><br />
+
+<div id="test_281_status">&nbsp;</div>
+
+[<a href="?runTests=281&noCleanup#281" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="166" href="#166"\>166</a>: 2d.fillStyle.parse.rgba-solid-1</p>
+
+<script>
+  async function test_166_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgba(  0  ,  255  ,  0  ,  1  )';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_166_content"
+  data-contexts="1"
+  data-id="166"
+  data-name="2d.fillStyle.parse.rgba-solid-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.rgba-solid-1">&nbsp;</div><br />
+
+<div id="test_166_status">&nbsp;</div>
+
+[<a href="?runTests=166&noCleanup#166" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="261" href="#261"\>261</a>: 2d.fillStyle.parse.invalid.css-color-4-rgba-1</p>
+
+<script>
+  async function test_261_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'rgba(255, 0, 0 / 1)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_261_content"
+  data-contexts="1"
+  data-id="261"
+  data-name="2d.fillStyle.parse.invalid.css-color-4-rgba-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.css-color-4-rgba-1">&nbsp;</div><br />
+
+<div id="test_261_status">&nbsp;</div>
+
+[<a href="?runTests=261&noCleanup#261" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="263" href="#263"\>263</a>: 2d.fillStyle.parse.invalid.css-color-4-rgba-3</p>
+
+<script>
+  async function test_263_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'rgba(255, 0 0)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_263_content"
+  data-contexts="1"
+  data-id="263"
+  data-name="2d.fillStyle.parse.invalid.css-color-4-rgba-3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.css-color-4-rgba-3">&nbsp;</div><br />
+
+<div id="test_263_status">&nbsp;</div>
+
+[<a href="?runTests=263&noCleanup#263" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="262" href="#262"\>262</a>: 2d.fillStyle.parse.invalid.css-color-4-rgba-2</p>
+
+<script>
+  async function test_262_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'rgba(255 0 0, 1)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_262_content"
+  data-contexts="1"
+  data-id="262"
+  data-name="2d.fillStyle.parse.invalid.css-color-4-rgba-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.css-color-4-rgba-2">&nbsp;</div><br />
+
+<div id="test_262_status">&nbsp;</div>
+
+[<a href="?runTests=262&noCleanup#262" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="267" href="#267"\>267</a>: 2d.fillStyle.parse.invalid.css-color-4-hsla-1</p>
+
+<script>
+  async function test_267_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'hsla(0, 100%, 50% / 1)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_267_content"
+  data-contexts="1"
+  data-id="267"
+  data-name="2d.fillStyle.parse.invalid.css-color-4-hsla-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.css-color-4-hsla-1">&nbsp;</div><br />
+
+<div id="test_267_status">&nbsp;</div>
+
+[<a href="?runTests=267&noCleanup#267" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="269" href="#269"\>269</a>: 2d.fillStyle.parse.invalid.css-color-4-hsla-3</p>
+
+<script>
+  async function test_269_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'hsla(0, 100% 50%)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_269_content"
+  data-contexts="1"
+  data-id="269"
+  data-name="2d.fillStyle.parse.invalid.css-color-4-hsla-3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.css-color-4-hsla-3">&nbsp;</div><br />
+
+<div id="test_269_status">&nbsp;</div>
+
+[<a href="?runTests=269&noCleanup#269" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="268" href="#268"\>268</a>: 2d.fillStyle.parse.invalid.css-color-4-hsla-2</p>
+
+<script>
+  async function test_268_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'hsla(0 100% 50%, 1)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_268_content"
+  data-contexts="1"
+  data-id="268"
+  data-name="2d.fillStyle.parse.invalid.css-color-4-hsla-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.css-color-4-hsla-2">&nbsp;</div><br />
+
+<div id="test_268_status">&nbsp;</div>
+
+[<a href="?runTests=268&noCleanup#268" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="168" href="#168"\>168</a>: 2d.fillStyle.parse.rgba-solid-3</p>
+
+<script>
+  async function test_168_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgba(  0  ,  255  ,  0  , +1  )';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_168_content"
+  data-contexts="1"
+  data-id="168"
+  data-name="2d.fillStyle.parse.rgba-solid-3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.rgba-solid-3">&nbsp;</div><br />
+
+<div id="test_168_status">&nbsp;</div>
+
+[<a href="?runTests=168&noCleanup#168" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="265" href="#265"\>265</a>: 2d.fillStyle.parse.invalid.css-color-4-hsl-2</p>
+
+<script>
+  async function test_265_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'hsl(0 100% 50%, 1)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_265_content"
+  data-contexts="1"
+  data-id="265"
+  data-name="2d.fillStyle.parse.invalid.css-color-4-hsl-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.css-color-4-hsl-2">&nbsp;</div><br />
+
+<div id="test_265_status">&nbsp;</div>
+
+[<a href="?runTests=265&noCleanup#265" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="264" href="#264"\>264</a>: 2d.fillStyle.parse.invalid.css-color-4-hsl-1</p>
+
+<script>
+  async function test_264_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'hsl(0, 100%, 50% / 1)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_264_content"
+  data-contexts="1"
+  data-id="264"
+  data-name="2d.fillStyle.parse.invalid.css-color-4-hsl-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.css-color-4-hsl-1">&nbsp;</div><br />
+
+<div id="test_264_status">&nbsp;</div>
+
+[<a href="?runTests=264&noCleanup#264" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="266" href="#266"\>266</a>: 2d.fillStyle.parse.invalid.css-color-4-hsl-3</p>
+
+<script>
+  async function test_266_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'hsl(0, 100% 50%)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_266_content"
+  data-contexts="1"
+  data-id="266"
+  data-name="2d.fillStyle.parse.invalid.css-color-4-hsl-3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.css-color-4-hsl-3">&nbsp;</div><br />
+
+<div id="test_266_status">&nbsp;</div>
+
+[<a href="?runTests=266&noCleanup#266" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="167" href="#167"\>167</a>: 2d.fillStyle.parse.rgba-solid-2</p>
+
+<script>
+  async function test_167_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgba(  0  ,  255  ,  0  ,  1.0  )';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_167_content"
+  data-contexts="1"
+  data-id="167"
+  data-name="2d.fillStyle.parse.rgba-solid-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.rgba-solid-2">&nbsp;</div><br />
+
+<div id="test_167_status">&nbsp;</div>
+
+[<a href="?runTests=167&noCleanup#167" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="273" href="#273"\>273</a>: 2d.fillStyle.parse.invalid.css-color-4-hsl-5</p>
+
+<script>
+  async function test_273_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'hsl(0, 100%, 50% /)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_273_content"
+  data-contexts="1"
+  data-id="273"
+  data-name="2d.fillStyle.parse.invalid.css-color-4-hsl-5"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.css-color-4-hsl-5">&nbsp;</div><br />
+
+<div id="test_273_status">&nbsp;</div>
+
+[<a href="?runTests=273&noCleanup#273" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="272" href="#272"\>272</a>: 2d.fillStyle.parse.invalid.css-color-4-hsl-4</p>
+
+<script>
+  async function test_272_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'hsl(0 100% 50% /)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_272_content"
+  data-contexts="1"
+  data-id="272"
+  data-name="2d.fillStyle.parse.invalid.css-color-4-hsl-4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.css-color-4-hsl-4">&nbsp;</div><br />
+
+<div id="test_272_status">&nbsp;</div>
+
+[<a href="?runTests=272&noCleanup#272" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="153" href="#153"\>153</a>: 2d.fillStyle.parse.html4</p>
+
+<script>
+  async function test_153_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'limE';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_153_content"
+  data-contexts="1"
+  data-id="153"
+  data-name="2d.fillStyle.parse.html4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.html4">&nbsp;</div><br />
+
+<div id="test_153_status">&nbsp;</div>
+
+[<a href="?runTests=153&noCleanup#153" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="169" href="#169"\>169</a>: 2d.fillStyle.parse.rgba-solid-4</p>
+
+<script>
+  async function test_169_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgba( -0  ,  255  , +0  ,  1  )';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_169_content"
+  data-contexts="1"
+  data-id="169"
+  data-name="2d.fillStyle.parse.rgba-solid-4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.rgba-solid-4">&nbsp;</div><br />
+
+<div id="test_169_status">&nbsp;</div>
+
+[<a href="?runTests=169&noCleanup#169" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="172" href="#172"\>172</a>: 2d.fillStyle.parse.rgba-percent</p>
+
+<script>
+  async function test_172_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgba(0%,100%,0%,0.499)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,127, "50,25", "0,255,0,127");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_172_content"
+  data-contexts="1"
+  data-id="172"
+  data-name="2d.fillStyle.parse.rgba-percent"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.rgba-percent">&nbsp;</div><br />
+
+<div id="test_172_status">&nbsp;</div>
+
+[<a href="?runTests=172&noCleanup#172" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="171" href="#171"\>171</a>: 2d.fillStyle.parse.rgba-num-2</p>
+
+<script>
+  async function test_171_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgba(  0  ,  255  ,  0  ,  0.499  )';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,127, "50,25", "0,255,0,127");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_171_content"
+  data-contexts="1"
+  data-id="171"
+  data-name="2d.fillStyle.parse.rgba-num-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.rgba-num-2">&nbsp;</div><br />
+
+<div id="test_171_status">&nbsp;</div>
+
+[<a href="?runTests=171&noCleanup#171" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="170" href="#170"\>170</a>: 2d.fillStyle.parse.rgba-num-1</p>
+
+<script>
+  async function test_170_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgba(  0  ,  255  ,  0  ,  .499  )';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,127, "50,25", "0,255,0,127");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_170_content"
+  data-contexts="1"
+  data-id="170"
+  data-name="2d.fillStyle.parse.rgba-num-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.rgba-num-1">&nbsp;</div><br />
+
+<div id="test_170_status">&nbsp;</div>
+
+[<a href="?runTests=170&noCleanup#170" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="204" href="#204"\>204</a>: 2d.fillStyle.parse.css-color-4-rgba-1</p>
+
+<script>
+  async function test_204_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgba(0, 255.0, 0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_204_content"
+  data-contexts="1"
+  data-id="204"
+  data-name="2d.fillStyle.parse.css-color-4-rgba-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-rgba-1">&nbsp;</div><br />
+
+<div id="test_204_status">&nbsp;</div>
+
+[<a href="?runTests=204&noCleanup#204" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="205" href="#205"\>205</a>: 2d.fillStyle.parse.css-color-4-rgba-2</p>
+
+<script>
+  async function test_205_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,51, "50,25", "0,255,0,51");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_205_content"
+  data-contexts="1"
+  data-id="205"
+  data-name="2d.fillStyle.parse.css-color-4-rgba-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-rgba-2">&nbsp;</div><br />
+
+<div id="test_205_status">&nbsp;</div>
+
+[<a href="?runTests=205&noCleanup#205" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="206" href="#206"\>206</a>: 2d.fillStyle.parse.css-color-4-rgba-3</p>
+
+<script>
+  async function test_206_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgba(0, 255, 0, 20%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,51, "50,25", "0,255,0,51");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_206_content"
+  data-contexts="1"
+  data-id="206"
+  data-name="2d.fillStyle.parse.css-color-4-rgba-3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-rgba-3">&nbsp;</div><br />
+
+<div id="test_206_status">&nbsp;</div>
+
+[<a href="?runTests=206&noCleanup#206" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="207" href="#207"\>207</a>: 2d.fillStyle.parse.css-color-4-rgba-4</p>
+
+<script>
+  async function test_207_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgba(0 255 0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_207_content"
+  data-contexts="1"
+  data-id="207"
+  data-name="2d.fillStyle.parse.css-color-4-rgba-4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-rgba-4">&nbsp;</div><br />
+
+<div id="test_207_status">&nbsp;</div>
+
+[<a href="?runTests=207&noCleanup#207" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="208" href="#208"\>208</a>: 2d.fillStyle.parse.css-color-4-rgba-5</p>
+
+<script>
+  async function test_208_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgba(0 255 0 / 0.2)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,51, "50,25", "0,255,0,51");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_208_content"
+  data-contexts="1"
+  data-id="208"
+  data-name="2d.fillStyle.parse.css-color-4-rgba-5"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-rgba-5">&nbsp;</div><br />
+
+<div id="test_208_status">&nbsp;</div>
+
+[<a href="?runTests=208&noCleanup#208" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="209" href="#209"\>209</a>: 2d.fillStyle.parse.css-color-4-rgba-6</p>
+
+<script>
+  async function test_209_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgba(0 255 0 / 20%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,51, "50,25", "0,255,0,51");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_209_content"
+  data-contexts="1"
+  data-id="209"
+  data-name="2d.fillStyle.parse.css-color-4-rgba-6"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-rgba-6">&nbsp;</div><br />
+
+<div id="test_209_status">&nbsp;</div>
+
+[<a href="?runTests=209&noCleanup#209" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="222" href="#222"\>222</a>: 2d.fillStyle.parse.css-color-4-hsla-4</p>
+
+<script>
+  async function test_222_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(120.0, 100.0%, 50.0%, 20%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,51, "50,25", "0,255,0,51");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_222_content"
+  data-contexts="1"
+  data-id="222"
+  data-name="2d.fillStyle.parse.css-color-4-hsla-4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-hsla-4">&nbsp;</div><br />
+
+<div id="test_222_status">&nbsp;</div>
+
+[<a href="?runTests=222&noCleanup#222" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="223" href="#223"\>223</a>: 2d.fillStyle.parse.css-color-4-hsla-5</p>
+
+<script>
+  async function test_223_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(120deg, 100.0%, 50.0%, 0.2)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,51, "50,25", "0,255,0,51");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_223_content"
+  data-contexts="1"
+  data-id="223"
+  data-name="2d.fillStyle.parse.css-color-4-hsla-5"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-hsla-5">&nbsp;</div><br />
+
+<div id="test_223_status">&nbsp;</div>
+
+[<a href="?runTests=223&noCleanup#223" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="224" href="#224"\>224</a>: 2d.fillStyle.parse.css-color-4-hsla-6</p>
+
+<script>
+  async function test_224_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(120deg, 100.0%, 50.0%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_224_content"
+  data-contexts="1"
+  data-id="224"
+  data-name="2d.fillStyle.parse.css-color-4-hsla-6"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-hsla-6">&nbsp;</div><br />
+
+<div id="test_224_status">&nbsp;</div>
+
+[<a href="?runTests=224&noCleanup#224" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="225" href="#225"\>225</a>: 2d.fillStyle.parse.css-color-4-hsla-7</p>
+
+<script>
+  async function test_225_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(133.33333333grad, 100.0%, 50.0%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_225_content"
+  data-contexts="1"
+  data-id="225"
+  data-name="2d.fillStyle.parse.css-color-4-hsla-7"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-hsla-7">&nbsp;</div><br />
+
+<div id="test_225_status">&nbsp;</div>
+
+[<a href="?runTests=225&noCleanup#225" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="219" href="#219"\>219</a>: 2d.fillStyle.parse.css-color-4-hsla-1</p>
+
+<script>
+  async function test_219_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(120 100.0% 50.0%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_219_content"
+  data-contexts="1"
+  data-id="219"
+  data-name="2d.fillStyle.parse.css-color-4-hsla-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-hsla-1">&nbsp;</div><br />
+
+<div id="test_219_status">&nbsp;</div>
+
+[<a href="?runTests=219&noCleanup#219" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="220" href="#220"\>220</a>: 2d.fillStyle.parse.css-color-4-hsla-2</p>
+
+<script>
+  async function test_220_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(120 100.0% 50.0% / 0.2)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,51, "50,25", "0,255,0,51");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_220_content"
+  data-contexts="1"
+  data-id="220"
+  data-name="2d.fillStyle.parse.css-color-4-hsla-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-hsla-2">&nbsp;</div><br />
+
+<div id="test_220_status">&nbsp;</div>
+
+[<a href="?runTests=220&noCleanup#220" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="221" href="#221"\>221</a>: 2d.fillStyle.parse.css-color-4-hsla-3</p>
+
+<script>
+  async function test_221_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(120.0, 100.0%, 50.0%, 0.2)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,51, "50,25", "0,255,0,51");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_221_content"
+  data-contexts="1"
+  data-id="221"
+  data-name="2d.fillStyle.parse.css-color-4-hsla-3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-hsla-3">&nbsp;</div><br />
+
+<div id="test_221_status">&nbsp;</div>
+
+[<a href="?runTests=221&noCleanup#221" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="226" href="#226"\>226</a>: 2d.fillStyle.parse.css-color-4-hsla-8</p>
+
+<script>
+  async function test_226_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(2.0943951024rad, 100.0%, 50.0%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_226_content"
+  data-contexts="1"
+  data-id="226"
+  data-name="2d.fillStyle.parse.css-color-4-hsla-8"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-hsla-8">&nbsp;</div><br />
+
+<div id="test_226_status">&nbsp;</div>
+
+[<a href="?runTests=226&noCleanup#226" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="227" href="#227"\>227</a>: 2d.fillStyle.parse.css-color-4-hsla-9</p>
+
+<script>
+  async function test_227_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(0.3333333333turn, 100.0%, 50.0%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_227_content"
+  data-contexts="1"
+  data-id="227"
+  data-name="2d.fillStyle.parse.css-color-4-hsla-9"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-hsla-9">&nbsp;</div><br />
+
+<div id="test_227_status">&nbsp;</div>
+
+[<a href="?runTests=227&noCleanup#227" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="274" href="#274"\>274</a>: 2d.fillStyle.parse.system</p>
+
+<script>
+  async function test_274_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'ThreeDDarkShadow';
+      ctx.flush()
+      webAssert.assert_regexp_match(t, ctx.fillStyle, /^#(?!(FF0000|ff0000|f00)$)/); // test that it's not red
+      
+  }
+</script>
+
+<div class="test"
+  id="test_274_content"
+  data-contexts="1"
+  data-id="274"
+  data-name="2d.fillStyle.parse.system"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.system">&nbsp;</div><br />
+
+<div id="test_274_status">&nbsp;</div>
+
+[<a href="?runTests=274&noCleanup#274" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="280" href="#280"\>280</a>: 2d.fillStyle.get.solid</p>
+
+<script>
+  async function test_280_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#fa0';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.fillStyle, '#ffaa00', "ctx.fillStyle", "'#ffaa00'");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_280_content"
+  data-contexts="1"
+  data-id="280"
+  data-name="2d.fillStyle.get.solid"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.get.solid">&nbsp;</div><br />
+
+<div id="test_280_status">&nbsp;</div>
+
+[<a href="?runTests=280&noCleanup#280" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="156" href="#156"\>156</a>: 2d.fillStyle.parse.hex6</p>
+
+<script>
+  async function test_156_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = '#00fF00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_156_content"
+  data-contexts="1"
+  data-id="156"
+  data-name="2d.fillStyle.parse.hex6"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hex6">&nbsp;</div><br />
+
+<div id="test_156_status">&nbsp;</div>
+
+[<a href="?runTests=156&noCleanup#156" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="155" href="#155"\>155</a>: 2d.fillStyle.parse.hex4</p>
+
+<script>
+  async function test_155_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = '#0f0f';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_155_content"
+  data-contexts="1"
+  data-id="155"
+  data-name="2d.fillStyle.parse.hex4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hex4">&nbsp;</div><br />
+
+<div id="test_155_status">&nbsp;</div>
+
+[<a href="?runTests=155&noCleanup#155" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="194" href="#194"\>194</a>: 2d.fillStyle.parse.hsla-clamp-5</p>
+
+<script>
+  async function test_194_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsla(120, 100%, 50%, 2)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_194_content"
+  data-contexts="1"
+  data-id="194"
+  data-name="2d.fillStyle.parse.hsla-clamp-5"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hsla-clamp-5">&nbsp;</div><br />
+
+<div id="test_194_status">&nbsp;</div>
+
+[<a href="?runTests=194&noCleanup#194" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="193" href="#193"\>193</a>: 2d.fillStyle.parse.hsla-clamp-4</p>
+
+<script>
+  async function test_193_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsla(120, 100%, -200%, 1)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,0,0,255, "50,25", "0,0,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_193_content"
+  data-contexts="1"
+  data-id="193"
+  data-name="2d.fillStyle.parse.hsla-clamp-4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hsla-clamp-4">&nbsp;</div><br />
+
+<div id="test_193_status">&nbsp;</div>
+
+[<a href="?runTests=193&noCleanup#193" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="240" href="#240"\>240</a>: 2d.fillStyle.parse.invalid.rgba-2</p>
+
+<script>
+  async function test_240_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'rgba(255, 0, 0, 1. 0)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_240_content"
+  data-contexts="1"
+  data-id="240"
+  data-name="2d.fillStyle.parse.invalid.rgba-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.rgba-2">&nbsp;</div><br />
+
+<div id="test_240_status">&nbsp;</div>
+
+[<a href="?runTests=240&noCleanup#240" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="241" href="#241"\>241</a>: 2d.fillStyle.parse.invalid.rgba-3</p>
+
+<script>
+  async function test_241_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'rgba(255, 0, 0, 1.)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_241_content"
+  data-contexts="1"
+  data-id="241"
+  data-name="2d.fillStyle.parse.invalid.rgba-3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.rgba-3">&nbsp;</div><br />
+
+<div id="test_241_status">&nbsp;</div>
+
+[<a href="?runTests=241&noCleanup#241" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="242" href="#242"\>242</a>: 2d.fillStyle.parse.invalid.rgba-4</p>
+
+<script>
+  async function test_242_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'rgba(255, 0, 0, '; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_242_content"
+  data-contexts="1"
+  data-id="242"
+  data-name="2d.fillStyle.parse.invalid.rgba-4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.rgba-4">&nbsp;</div><br />
+
+<div id="test_242_status">&nbsp;</div>
+
+[<a href="?runTests=242&noCleanup#242" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="243" href="#243"\>243</a>: 2d.fillStyle.parse.invalid.rgba-5</p>
+
+<script>
+  async function test_243_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'rgba(255, 0, 0, 1,)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_243_content"
+  data-contexts="1"
+  data-id="243"
+  data-name="2d.fillStyle.parse.invalid.rgba-5"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.rgba-5">&nbsp;</div><br />
+
+<div id="test_243_status">&nbsp;</div>
+
+[<a href="?runTests=243&noCleanup#243" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="192" href="#192"\>192</a>: 2d.fillStyle.parse.hsla-clamp-3</p>
+
+<script>
+  async function test_192_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsla(120, 100%, 200%, 1)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 255,255,255,255, "50,25", "255,255,255,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_192_content"
+  data-contexts="1"
+  data-id="192"
+  data-name="2d.fillStyle.parse.hsla-clamp-3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hsla-clamp-3">&nbsp;</div><br />
+
+<div id="test_192_status">&nbsp;</div>
+
+[<a href="?runTests=192&noCleanup#192" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="191" href="#191"\>191</a>: 2d.fillStyle.parse.hsla-clamp-2</p>
+
+<script>
+  async function test_191_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsla(120, -200%, 49.9%, 1)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 127,127,127,255, "50,25", "127,127,127,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_191_content"
+  data-contexts="1"
+  data-id="191"
+  data-name="2d.fillStyle.parse.hsla-clamp-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hsla-clamp-2">&nbsp;</div><br />
+
+<div id="test_191_status">&nbsp;</div>
+
+[<a href="?runTests=191&noCleanup#191" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="173" href="#173"\>173</a>: 2d.fillStyle.parse.rgba-clamp-1</p>
+
+<script>
+  async function test_173_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgba(0, 255, 0, -2)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_173_content"
+  data-contexts="1"
+  data-id="173"
+  data-name="2d.fillStyle.parse.rgba-clamp-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.rgba-clamp-1">&nbsp;</div><br />
+
+<div id="test_173_status">&nbsp;</div>
+
+[<a href="?runTests=173&noCleanup#173" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="174" href="#174"\>174</a>: 2d.fillStyle.parse.rgba-clamp-2</p>
+
+<script>
+  async function test_174_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgba(0, 255, 0, 2)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_174_content"
+  data-contexts="1"
+  data-id="174"
+  data-name="2d.fillStyle.parse.rgba-clamp-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.rgba-clamp-2">&nbsp;</div><br />
+
+<div id="test_174_status">&nbsp;</div>
+
+[<a href="?runTests=174&noCleanup#174" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="279" href="#279"\>279</a>: 2d.fillStyle.invalidtype</p>
+
+<script>
+  async function test_279_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fillStyle = null;
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_279_content"
+  data-contexts="1"
+  data-id="279"
+  data-name="2d.fillStyle.invalidtype"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.invalidtype">&nbsp;</div><br />
+
+<div id="test_279_status">&nbsp;</div>
+
+[<a href="?runTests=279&noCleanup#279" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="195" href="#195"\>195</a>: 2d.fillStyle.parse.hsla-clamp-6</p>
+
+<script>
+  async function test_195_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsla(120, 100%, 0%, -2)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,0,0,0, "50,25", "0,0,0,0");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_195_content"
+  data-contexts="1"
+  data-id="195"
+  data-name="2d.fillStyle.parse.hsla-clamp-6"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hsla-clamp-6">&nbsp;</div><br />
+
+<div id="test_195_status">&nbsp;</div>
+
+[<a href="?runTests=195&noCleanup#195" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="275" href="#275"\>275</a>: 2d.fillStyle.parse.current.basic (currentColor is computed from the canvas element)</p>
+
+<script>
+  async function test_275_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          canvas.setAttribute('style', 'color: #0f0');
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'currentColor';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_275_content"
+  data-contexts="1"
+  data-id="275"
+  data-name="2d.fillStyle.parse.current.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.current.basic (currentColor is computed from the canvas element)">&nbsp;</div><br />
+
+<div id="test_275_status">&nbsp;</div>
+
+[<a href="?runTests=275&noCleanup#275" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="278" href="#278"\>278</a>: 2d.fillStyle.invalidstring</p>
+
+<script>
+  async function test_278_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fillStyle = 'invalid';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_278_content"
+  data-contexts="1"
+  data-id="278"
+  data-name="2d.fillStyle.invalidstring"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.invalidstring">&nbsp;</div><br />
+
+<div id="test_278_status">&nbsp;</div>
+
+[<a href="?runTests=278&noCleanup#278" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="199" href="#199"\>199</a>: 2d.fillStyle.parse.css-color-4-rgb-2</p>
+
+<script>
+  async function test_199_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgb(0, 255, 0, 0.2)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,51, "50,25", "0,255,0,51");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_199_content"
+  data-contexts="1"
+  data-id="199"
+  data-name="2d.fillStyle.parse.css-color-4-rgb-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-rgb-2">&nbsp;</div><br />
+
+<div id="test_199_status">&nbsp;</div>
+
+[<a href="?runTests=199&noCleanup#199" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="200" href="#200"\>200</a>: 2d.fillStyle.parse.css-color-4-rgb-3</p>
+
+<script>
+  async function test_200_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgb(0, 255, 0, 20%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,51, "50,25", "0,255,0,51");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_200_content"
+  data-contexts="1"
+  data-id="200"
+  data-name="2d.fillStyle.parse.css-color-4-rgb-3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-rgb-3">&nbsp;</div><br />
+
+<div id="test_200_status">&nbsp;</div>
+
+[<a href="?runTests=200&noCleanup#200" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="198" href="#198"\>198</a>: 2d.fillStyle.parse.css-color-4-rgb-1</p>
+
+<script>
+  async function test_198_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgb(0, 255.0, 0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_198_content"
+  data-contexts="1"
+  data-id="198"
+  data-name="2d.fillStyle.parse.css-color-4-rgb-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-rgb-1">&nbsp;</div><br />
+
+<div id="test_198_status">&nbsp;</div>
+
+[<a href="?runTests=198&noCleanup#198" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="203" href="#203"\>203</a>: 2d.fillStyle.parse.css-color-4-rgb-6</p>
+
+<script>
+  async function test_203_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgb(0 255 0 / 20%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,51, "50,25", "0,255,0,51");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_203_content"
+  data-contexts="1"
+  data-id="203"
+  data-name="2d.fillStyle.parse.css-color-4-rgb-6"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-rgb-6">&nbsp;</div><br />
+
+<div id="test_203_status">&nbsp;</div>
+
+[<a href="?runTests=203&noCleanup#203" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="201" href="#201"\>201</a>: 2d.fillStyle.parse.css-color-4-rgb-4</p>
+
+<script>
+  async function test_201_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgb(0 255 0)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_201_content"
+  data-contexts="1"
+  data-id="201"
+  data-name="2d.fillStyle.parse.css-color-4-rgb-4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-rgb-4">&nbsp;</div><br />
+
+<div id="test_201_status">&nbsp;</div>
+
+[<a href="?runTests=201&noCleanup#201" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="202" href="#202"\>202</a>: 2d.fillStyle.parse.css-color-4-rgb-5</p>
+
+<script>
+  async function test_202_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgb(0 255 0 / 0.2)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,51, "50,25", "0,255,0,51");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_202_content"
+  data-contexts="1"
+  data-id="202"
+  data-name="2d.fillStyle.parse.css-color-4-rgb-5"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.css-color-4-rgb-5">&nbsp;</div><br />
+
+<div id="test_202_status">&nbsp;</div>
+
+[<a href="?runTests=202&noCleanup#202" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="159" href="#159"\>159</a>: 2d.fillStyle.parse.rgb-clamp-1</p>
+
+<script>
+  async function test_159_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgb(-1000, 1000, -1000)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_159_content"
+  data-contexts="1"
+  data-id="159"
+  data-name="2d.fillStyle.parse.rgb-clamp-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.rgb-clamp-1">&nbsp;</div><br />
+
+<div id="test_159_status">&nbsp;</div>
+
+[<a href="?runTests=159&noCleanup#159" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="161" href="#161"\>161</a>: 2d.fillStyle.parse.rgb-clamp-3</p>
+
+<script>
+  async function test_161_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgb(-2147483649, 4294967298, -18446744073709551619)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_161_content"
+  data-contexts="1"
+  data-id="161"
+  data-name="2d.fillStyle.parse.rgb-clamp-3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.rgb-clamp-3">&nbsp;</div><br />
+
+<div id="test_161_status">&nbsp;</div>
+
+[<a href="?runTests=161&noCleanup#161" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="160" href="#160"\>160</a>: 2d.fillStyle.parse.rgb-clamp-2</p>
+
+<script>
+  async function test_160_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgb(-200%, 200%, -200%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_160_content"
+  data-contexts="1"
+  data-id="160"
+  data-name="2d.fillStyle.parse.rgb-clamp-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.rgb-clamp-2">&nbsp;</div><br />
+
+<div id="test_160_status">&nbsp;</div>
+
+[<a href="?runTests=160&noCleanup#160" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="163" href="#163"\>163</a>: 2d.fillStyle.parse.rgb-clamp-5</p>
+
+<script>
+  async function test_163_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgb(-10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000, 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000, -10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_163_content"
+  data-contexts="1"
+  data-id="163"
+  data-name="2d.fillStyle.parse.rgb-clamp-5"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.rgb-clamp-5">&nbsp;</div><br />
+
+<div id="test_163_status">&nbsp;</div>
+
+[<a href="?runTests=163&noCleanup#163" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="162" href="#162"\>162</a>: 2d.fillStyle.parse.rgb-clamp-4</p>
+
+<script>
+  async function test_162_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgb(-1000000000000000000000000000000000000000, 1000000000000000000000000000000000000000, -1000000000000000000000000000000000000000)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_162_content"
+  data-contexts="1"
+  data-id="162"
+  data-name="2d.fillStyle.parse.rgb-clamp-4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.rgb-clamp-4">&nbsp;</div><br />
+
+<div id="test_162_status">&nbsp;</div>
+
+[<a href="?runTests=162&noCleanup#162" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="239" href="#239"\>239</a>: 2d.fillStyle.parse.invalid.rgba-1</p>
+
+<script>
+  async function test_239_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'rgba(100%, 0, 0, 1)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_239_content"
+  data-contexts="1"
+  data-id="239"
+  data-name="2d.fillStyle.parse.invalid.rgba-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.rgba-1">&nbsp;</div><br />
+
+<div id="test_239_status">&nbsp;</div>
+
+[<a href="?runTests=239&noCleanup#239" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="250" href="#250"\>250</a>: 2d.fillStyle.parse.invalid.hsla-1</p>
+
+<script>
+  async function test_250_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'hsla(0%, 100%, 50%, 1)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_250_content"
+  data-contexts="1"
+  data-id="250"
+  data-name="2d.fillStyle.parse.invalid.hsla-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.hsla-1">&nbsp;</div><br />
+
+<div id="test_250_status">&nbsp;</div>
+
+[<a href="?runTests=250&noCleanup#250" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="237" href="#237"\>237</a>: 2d.fillStyle.parse.invalid.rgb-2</p>
+
+<script>
+  async function test_237_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'rgb(100%, 0, 0)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_237_content"
+  data-contexts="1"
+  data-id="237"
+  data-name="2d.fillStyle.parse.invalid.rgb-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.rgb-2">&nbsp;</div><br />
+
+<div id="test_237_status">&nbsp;</div>
+
+[<a href="?runTests=237&noCleanup#237" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="238" href="#238"\>238</a>: 2d.fillStyle.parse.invalid.rgb-3</p>
+
+<script>
+  async function test_238_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'rgb(255, - 1, 0)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_238_content"
+  data-contexts="1"
+  data-id="238"
+  data-name="2d.fillStyle.parse.invalid.rgb-3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.rgb-3">&nbsp;</div><br />
+
+<div id="test_238_status">&nbsp;</div>
+
+[<a href="?runTests=238&noCleanup#238" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="236" href="#236"\>236</a>: 2d.fillStyle.parse.invalid.rgb-1</p>
+
+<script>
+  async function test_236_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'rgb(255.0, 0, 0,)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_236_content"
+  data-contexts="1"
+  data-id="236"
+  data-name="2d.fillStyle.parse.invalid.rgb-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.rgb-1">&nbsp;</div><br />
+
+<div id="test_236_status">&nbsp;</div>
+
+[<a href="?runTests=236&noCleanup#236" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="190" href="#190"\>190</a>: 2d.fillStyle.parse.hsla-clamp-1</p>
+
+<script>
+  async function test_190_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsla(120, 200%, 50%, 1)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_190_content"
+  data-contexts="1"
+  data-id="190"
+  data-name="2d.fillStyle.parse.hsla-clamp-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hsla-clamp-1">&nbsp;</div><br />
+
+<div id="test_190_status">&nbsp;</div>
+
+[<a href="?runTests=190&noCleanup#190" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="188" href="#188"\>188</a>: 2d.fillStyle.parse.hsla-1</p>
+
+<script>
+  async function test_188_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsla(120, 100%, 50%, 0.499)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,127, "50,25", "0,255,0,127");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_188_content"
+  data-contexts="1"
+  data-id="188"
+  data-name="2d.fillStyle.parse.hsla-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hsla-1">&nbsp;</div><br />
+
+<div id="test_188_status">&nbsp;</div>
+
+[<a href="?runTests=188&noCleanup#188" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="189" href="#189"\>189</a>: 2d.fillStyle.parse.hsla-2</p>
+
+<script>
+  async function test_189_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsla( 120.0 , 100.0% , 50.0% , 1 )';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_189_content"
+  data-contexts="1"
+  data-id="189"
+  data-name="2d.fillStyle.parse.hsla-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hsla-2">&nbsp;</div><br />
+
+<div id="test_189_status">&nbsp;</div>
+
+[<a href="?runTests=189&noCleanup#189" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="165" href="#165"\>165</a>: 2d.fillStyle.parse.rgb-eof</p>
+
+<script>
+  async function test_165_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'rgb(0, 255, 0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_165_content"
+  data-contexts="1"
+  data-id="165"
+  data-name="2d.fillStyle.parse.rgb-eof"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.rgb-eof">&nbsp;</div><br />
+
+<div id="test_165_status">&nbsp;</div>
+
+[<a href="?runTests=165&noCleanup#165" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="251" href="#251"\>251</a>: 2d.fillStyle.parse.invalid.hsla-2</p>
+
+<script>
+  async function test_251_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'hsla(0, 0, 50%, 1)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_251_content"
+  data-contexts="1"
+  data-id="251"
+  data-name="2d.fillStyle.parse.invalid.hsla-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.hsla-2">&nbsp;</div><br />
+
+<div id="test_251_status">&nbsp;</div>
+
+[<a href="?runTests=251&noCleanup#251" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="252" href="#252"\>252</a>: 2d.fillStyle.parse.invalid.hsla-3</p>
+
+<script>
+  async function test_252_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#0f0';
+      try { ctx.fillStyle = 'hsla(0, 0, 50%, 1,)'; } catch (e) { } // this shouldn't throw, but it shouldn't matter here if it does
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_252_content"
+  data-contexts="1"
+  data-id="252"
+  data-name="2d.fillStyle.parse.invalid.hsla-3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.invalid.hsla-3">&nbsp;</div><br />
+
+<div id="test_252_status">&nbsp;</div>
+
+[<a href="?runTests=252&noCleanup#252" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="187" href="#187"\>187</a>: 2d.fillStyle.parse.hsl-clamp-4</p>
+
+<script>
+  async function test_187_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(120, 100%, -200%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,0,0,255, "50,25", "0,0,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_187_content"
+  data-contexts="1"
+  data-id="187"
+  data-name="2d.fillStyle.parse.hsl-clamp-4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hsl-clamp-4">&nbsp;</div><br />
+
+<div id="test_187_status">&nbsp;</div>
+
+[<a href="?runTests=187&noCleanup#187" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="184" href="#184"\>184</a>: 2d.fillStyle.parse.hsl-clamp-1</p>
+
+<script>
+  async function test_184_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(120, 200%, 50%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_184_content"
+  data-contexts="1"
+  data-id="184"
+  data-name="2d.fillStyle.parse.hsl-clamp-1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hsl-clamp-1">&nbsp;</div><br />
+
+<div id="test_184_status">&nbsp;</div>
+
+[<a href="?runTests=184&noCleanup#184" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="186" href="#186"\>186</a>: 2d.fillStyle.parse.hsl-clamp-3</p>
+
+<script>
+  async function test_186_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(120, 100%, 200%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 255,255,255,255, "50,25", "255,255,255,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_186_content"
+  data-contexts="1"
+  data-id="186"
+  data-name="2d.fillStyle.parse.hsl-clamp-3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hsl-clamp-3">&nbsp;</div><br />
+
+<div id="test_186_status">&nbsp;</div>
+
+[<a href="?runTests=186&noCleanup#186" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="185" href="#185"\>185</a>: 2d.fillStyle.parse.hsl-clamp-2</p>
+
+<script>
+  async function test_185_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          
+      ctx.fillStyle = '#f00';
+      ctx.fillStyle = 'hsl(120, -200%, 49.9%)';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 127,127,127,255, "50,25", "127,127,127,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_185_content"
+  data-contexts="1"
+  data-id="185"
+  data-name="2d.fillStyle.parse.hsl-clamp-2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.fillStyle.parse.hsl-clamp-2">&nbsp;</div><br />
+
+<div id="test_185_status">&nbsp;</div>
+
+[<a href="?runTests=185&noCleanup#185" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+
+<br /><br />
+&lt;3
+
+</body>
+</html>

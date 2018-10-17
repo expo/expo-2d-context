@@ -1,0 +1,6308 @@
+<html>
+
+<head>
+<title>2d.path // WebGL2DContext conformance</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<style>
+  div {
+    padding: 5px;
+  }
+  canvas {
+    border: 1px black solid;
+  }
+  .progress {
+    font: 100% monospace;
+  }
+  .failure {
+    background-color: red;
+    color: white;
+    font: 100% sans-serif;
+  }
+  .success {
+    background-color: #88FF88;
+    font: 100% sans-serif;
+  }
+  .failure a:link {
+    color: white
+  }
+  .failure a:visited {
+    color: white
+  }
+</style>
+
+<script type="text/javascript" src="bundle.js"></script>
+<script type="text/javascript" src="assets.js"></script>
+<script type="text/javascript" src="asserts.js"></script>
+
+<script type="text/javascript">
+    async function getAsset(name) {
+      return new Promise((resolve, reject) => {
+        let img = document.createElement("IMG")
+        img.onload = () => resolve(img)
+        img.onerror = reject
+        img.src = rawImageAssets[name]
+      })
+    }
+
+    function bootCanvas(container, id, width, height) {
+        var canvas = document.createElement("CANVAS")
+        canvas.setAttribute("id", id)
+        canvas.setAttribute("width", width)
+        canvas.setAttribute("height", height)
+
+        container.appendChild(canvas)
+
+        var gl = canvas.getContext("webgl2", {
+          stencil: 8,
+          preserveDrawingBuffer: true
+        });
+        gl.viewportWidth = canvas.width;
+        gl.viewportHeight = canvas.height;
+        if (!gl) {
+            console.log("Could not initialise WebGL, sorry :-(")
+            return null;
+        }
+
+        gl.clearColor(1.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        /* TODO: figure out how to pass some gradient tests that need
+         * more grad stops: */
+        let ctx = new Expo2DContext.default(gl, maxGradStops=50)
+        ctx.getContext = () => {return ctx;}
+        
+        return [canvas, gl, ctx]
+    }
+
+    function spinner_graphic(i) {
+      let anim = ["/","&ndash;","\\","|","/","&ndash;","\\", "|"]
+      return anim[i%anim.length]
+    }
+
+    var testContexts = {};
+
+    function focusTest (num) {
+      window.ctx = testContexts[num][0]
+    }
+    window.onhashchange = () => {
+      var url = new URL(window.location)
+      var hashVal = url.hash.substr(1)
+      if (hashVal in testContexts) {
+        focusTest(hashVal)
+      }
+    }
+
+    async function runTests() {
+
+      // TODO: assets??
+
+      if (!window.testComplete) {
+        window.testComplete = (testResults, completedTests, totalTests) =>
+          { /* PUPPETEER STUB */ };
+      }
+
+      testContexts = {};
+
+      var tests = document.getElementsByClassName("test")
+
+      var url = new URL(window.location)
+      if (url.searchParams.get("runTests") != null) {
+        selected_test_ids = url.searchParams.get("runTests").split(",").map((x) => parseInt(x))
+        tests = selected_test_ids.map((x) => document.getElementById("test_"+x+"_content")) 
+      }
+
+      var cleanUp = url.searchParams.get("noCleanup") == null
+
+      let suite_status = document.getElementById("suite_status")
+
+      var failures = new Set();
+      var failureSummaryHTML = "Failed:<ul>"
+
+      let i = 0;
+
+      var testIteration = async (i) => {
+
+        if (i >= tests.length) {
+          finishTests();
+          return;
+        }
+
+        let test_area = tests[i]
+        let test = test_area.dataset
+    
+        // TODO: how to un-convert-from-string numbers in dataset
+        
+        let allCanvases = []
+        let allWebGLContexts = []
+        let allContexts = []
+        
+        let failureMessages = []
+
+        for (let j=0; j<parseInt(test.contexts); j++) {
+          let [canvas, gl, ctx] = bootCanvas(
+            test_area,
+            "canvas_"+test.id+"_"+j,
+            parseInt(test.width),
+            parseInt(test.height)
+          )
+          // Install fake getContext wrapper to allow context objects to be
+          // used in place of canvas objects for our tests:
+          ctx.getContext = (unused) => {return ctx};
+          allCanvases.push(canvas)
+          allWebGLContexts.push(gl)
+          allContexts.push(ctx)
+        }
+
+        let onFail = TriggerObject((message) => {
+          let status_box = document.getElementById("test_"+test.id+"_status")
+
+          status_box.setAttribute("class","failure")
+          status_box.innerHTML += message + "<br />";
+          failureMessages.push(message)
+
+          if (!failures.has(test.id)) {
+            failureSummaryHTML += "<li><a href='#"+test.id+"'>"+test.id+": "+test.description+"</a></li>"
+            failures.add(test.id);
+          }
+        })
+
+        try {
+          let test_fn = eval("test_"+test.id+"_body");
+          await test_fn(onFail, allCanvases, allContexts);
+        } catch (err) {
+          onFail.trigger(false, err.toString());
+        }
+
+        if (cleanUp) {
+          // Copy the resulting drawings out of the original canvas and
+          // safely trash the old gl context, to free up resources:
+          for (let j=0; j<parseInt(test.contexts); j++) {
+            let canvas_clone = allCanvases[j].cloneNode(true);
+            let clone_ctx = canvas_clone.getContext('2d');
+            clone_ctx.drawImage(allCanvases[j], 0, 0);
+
+            allCanvases[j].replaceWith(canvas_clone);
+
+            allWebGLContexts[j].getExtension('WEBGL_lose_context').loseContext();
+            allWebGLContexts[j] = null;
+          }
+        } else {
+          testContexts[test.id] = allContexts
+        }
+
+        suite_status.innerHTML = "["+ spinner_graphic(i) + "] Tests run: " + (i+1) + " / " + tests.length;
+
+        window.testComplete(
+          Object.assign({
+            "failureMessages": failureMessages
+          }, test), i+1, tests.length);
+
+        setTimeout(() => { testIteration(i+1) }, 1);
+      }
+
+      var finishTests = () => {
+        if (failures.size > 0) {
+          failureSummaryHTML += "</ul><br />"
+          suite_status.setAttribute("class","failure")
+          suite_status.innerHTML = failureSummaryHTML
+        } else {
+          suite_status.setAttribute("class","success")
+          suite_status.innerHTML = "[:)] All tests pass !" 
+        }
+
+        if (!cleanUp && tests.length==1){
+          focusTest(tests[0].dataset.id)
+        } else {
+          window.onhashchange()
+        }
+      };
+
+      testIteration(0);
+
+    }
+
+</script>
+</head>
+<body onload="runTests();">
+<h1> 2d.path </h1>
+<div id="suite_status" class="progress">&nbsp;</div>
+<hr />
+
+<p><a id="602" href="#602"\>602</a>: 2d.path.stroke.empty (Empty subpaths are not stroked)</p>
+
+<script>
+  async function test_602_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.strokeStyle = '#f00';
+      ctx.lineWidth = 100;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      
+      ctx.beginPath();
+      ctx.moveTo(40, 25);
+      ctx.moveTo(60, 25);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_602_content"
+  data-contexts="1"
+  data-id="602"
+  data-name="2d.path.stroke.empty"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.stroke.empty (Empty subpaths are not stroked)">&nbsp;</div><br />
+
+<div id="test_602_status">&nbsp;</div>
+
+[<a href="?runTests=602&noCleanup#602" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="523" href="#523"\>523</a>: 2d.path.bezierCurveTo.ensuresubpath.1 (If there is no subpath, the first control point is added (and nothing is drawn up to it))</p>
+
+<script>
+  async function test_523_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#f00';
+      ctx.lineWidth = 50;
+      ctx.beginPath();
+      ctx.bezierCurveTo(100, 50, 200, 50, 200, 50);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 95,45, 0,255,0,255, "95,45", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_523_content"
+  data-contexts="1"
+  data-id="523"
+  data-name="2d.path.bezierCurveTo.ensuresubpath.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.bezierCurveTo.ensuresubpath.1 (If there is no subpath, the first control point is added (and nothing is drawn up to it))">&nbsp;</div><br />
+
+<div id="test_523_status">&nbsp;</div>
+
+[<a href="?runTests=523&noCleanup#523" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="504" href="#504"\>504</a>: 2d.path.moveTo.basic</p>
+
+<script>
+  async function test_504_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.rect(0, 0, 10, 50);
+      ctx.moveTo(100, 0);
+      ctx.lineTo(10, 0);
+      ctx.lineTo(10, 50);
+      ctx.lineTo(100, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 90,25, 0,255,0,255, "90,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_504_content"
+  data-contexts="1"
+  data-id="504"
+  data-name="2d.path.moveTo.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.moveTo.basic">&nbsp;</div><br />
+
+<div id="test_504_status">&nbsp;</div>
+
+[<a href="?runTests=504&noCleanup#504" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="574" href="#574"\>574</a>: 2d.path.rect.basic</p>
+
+<script>
+  async function test_574_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.rect(0, 0, 100, 50);
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_574_content"
+  data-contexts="1"
+  data-id="574"
+  data-name="2d.path.rect.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.rect.basic">&nbsp;</div><br />
+
+<div id="test_574_status">&nbsp;</div>
+
+[<a href="?runTests=574&noCleanup#574" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="520" href="#520"\>520</a>: 2d.path.quadraticCurveTo.shape</p>
+
+<script>
+  async function test_520_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 55;
+      ctx.beginPath();
+      ctx.moveTo(-1000, 1050);
+      ctx.quadraticCurveTo(0, -1000, 1200, 1050);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_520_content"
+  data-contexts="1"
+  data-id="520"
+  data-name="2d.path.quadraticCurveTo.shape"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.quadraticCurveTo.shape">&nbsp;</div><br />
+
+<div id="test_520_status">&nbsp;</div>
+
+[<a href="?runTests=520&noCleanup#520" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="606" href="#606"\>606</a>: 2d.path.stroke.prune.arc (Zero-length line segments from arcTo and arc are removed before stroking)</p>
+
+<script>
+  async function test_606_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.strokeStyle = '#f00';
+      ctx.lineWidth = 100;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      
+      ctx.beginPath();
+      ctx.moveTo(50, 25);
+      ctx.arcTo(50, 25, 150, 25, 10);
+      ctx.stroke();
+      
+      ctx.beginPath();
+      ctx.moveTo(60, 25);
+      ctx.arc(50, 25, 10, 0, 0, false);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_606_content"
+  data-contexts="1"
+  data-id="606"
+  data-name="2d.path.stroke.prune.arc"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.stroke.prune.arc (Zero-length line segments from arcTo and arc are removed before stroking)">&nbsp;</div><br />
+
+<div id="test_606_status">&nbsp;</div>
+
+[<a href="?runTests=606&noCleanup#606" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="615" href="#615"\>615</a>: 2d.path.clip.intersect</p>
+
+<script>
+  async function test_615_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.beginPath();
+      ctx.rect(0, 0, 50, 50);
+      ctx.clip();
+      ctx.beginPath();
+      ctx.rect(50, 0, 50, 50)
+      ctx.clip();
+      
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_615_content"
+  data-contexts="1"
+  data-id="615"
+  data-name="2d.path.clip.intersect"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.clip.intersect">&nbsp;</div><br />
+
+<div id="test_615_status">&nbsp;</div>
+
+[<a href="?runTests=615&noCleanup#615" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="593" href="#593"\>593</a>: 2d.path.fill.winding.subtract.3</p>
+
+<script>
+  async function test_593_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.moveTo(-10, -10);
+      ctx.lineTo(110, -10);
+      ctx.lineTo(110, 60);
+      ctx.lineTo(-10, 60);
+      ctx.lineTo(-10, -10);
+      ctx.lineTo(-20, -20);
+      ctx.lineTo(120, -20);
+      ctx.lineTo(120, 70);
+      ctx.lineTo(-20, 70);
+      ctx.lineTo(-20, -20);
+      ctx.lineTo(0, 0);
+      ctx.lineTo(0, 50);
+      ctx.lineTo(100, 50);
+      ctx.lineTo(100, 0);
+      ctx.fill();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_593_content"
+  data-contexts="1"
+  data-id="593"
+  data-name="2d.path.fill.winding.subtract.3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.fill.winding.subtract.3">&nbsp;</div><br />
+
+<div id="test_593_status">&nbsp;</div>
+
+[<a href="?runTests=593&noCleanup#593" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="578" href="#578"\>578</a>: 2d.path.rect.end.2</p>
+
+<script>
+  async function test_578_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 450;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'bevel';
+      ctx.rect(150, 150, 2000, 2000);
+      ctx.lineTo(160, 160);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_578_content"
+  data-contexts="1"
+  data-id="578"
+  data-name="2d.path.rect.end.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.rect.end.2">&nbsp;</div><br />
+
+<div id="test_578_status">&nbsp;</div>
+
+[<a href="?runTests=578&noCleanup#578" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="587" href="#587"\>587</a>: 2d.path.rect.selfintersect</p>
+
+<script>
+  async function test_587_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 90;
+      ctx.beginPath();
+      ctx.rect(45, 20, 10, 10);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_587_content"
+  data-contexts="1"
+  data-id="587"
+  data-name="2d.path.rect.selfintersect"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.rect.selfintersect">&nbsp;</div><br />
+
+<div id="test_587_status">&nbsp;</div>
+
+[<a href="?runTests=587&noCleanup#587" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="603" href="#603"\>603</a>: 2d.path.stroke.prune.line (Zero-length line segments from lineTo are removed before stroking)</p>
+
+<script>
+  async function test_603_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.strokeStyle = '#f00';
+      ctx.lineWidth = 100;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      
+      ctx.beginPath();
+      ctx.moveTo(50, 25);
+      ctx.lineTo(50, 25);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_603_content"
+  data-contexts="1"
+  data-id="603"
+  data-name="2d.path.stroke.prune.line"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.stroke.prune.line (Zero-length line segments from lineTo are removed before stroking)">&nbsp;</div><br />
+
+<div id="test_603_status">&nbsp;</div>
+
+[<a href="?runTests=603&noCleanup#603" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="623" href="#623"\>623</a>: 2d.path.isPointInPath.subpath (isPointInPath() uses the current path, not just the subpath)</p>
+
+<script>
+  async function test_623_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.rect(0, 0, 20, 20);
+      ctx.beginPath();
+      ctx.rect(20, 0, 20, 20);
+      ctx.closePath();
+      ctx.rect(40, 0, 20, 20);
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(10, 10), false, "ctx.isPointInPath(10, 10)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(30, 10), true, "ctx.isPointInPath(30, 10)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(50, 10), true, "ctx.isPointInPath(50, 10)", "true");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_623_content"
+  data-contexts="1"
+  data-id="623"
+  data-name="2d.path.isPointInPath.subpath"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.isPointInPath.subpath (isPointInPath() uses the current path, not just the subpath)">&nbsp;</div><br />
+
+<div id="test_623_status">&nbsp;</div>
+
+[<a href="?runTests=623&noCleanup#623" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="626" href="#626"\>626</a>: 2d.path.isPointInPath.arc (isPointInPath() works on arcs)</p>
+
+<script>
+  async function test_626_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.arc(50, 25, 10, 0, Math.PI, false);
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(50, 10), false, "ctx.isPointInPath(50, 10)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(50, 20), false, "ctx.isPointInPath(50, 20)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(50, 30), true, "ctx.isPointInPath(50, 30)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(50, 40), false, "ctx.isPointInPath(50, 40)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(30, 20), false, "ctx.isPointInPath(30, 20)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(70, 20), false, "ctx.isPointInPath(70, 20)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(30, 30), false, "ctx.isPointInPath(30, 30)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(70, 30), false, "ctx.isPointInPath(70, 30)", "false");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_626_content"
+  data-contexts="1"
+  data-id="626"
+  data-name="2d.path.isPointInPath.arc"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.isPointInPath.arc (isPointInPath() works on arcs)">&nbsp;</div><br />
+
+<div id="test_626_status">&nbsp;</div>
+
+[<a href="?runTests=626&noCleanup#626" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="517" href="#517"\>517</a>: 2d.path.quadraticCurveTo.ensuresubpath.1 (If there is no subpath, the first control point is added (and nothing is drawn up to it))</p>
+
+<script>
+  async function test_517_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#f00';
+      ctx.lineWidth = 50;
+      ctx.beginPath();
+      ctx.quadraticCurveTo(100, 50, 200, 50);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 95,45, 0,255,0,255, "95,45", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_517_content"
+  data-contexts="1"
+  data-id="517"
+  data-name="2d.path.quadraticCurveTo.ensuresubpath.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.quadraticCurveTo.ensuresubpath.1 (If there is no subpath, the first control point is added (and nothing is drawn up to it))">&nbsp;</div><br />
+
+<div id="test_517_status">&nbsp;</div>
+
+[<a href="?runTests=517&noCleanup#517" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="514" href="#514"\>514</a>: 2d.path.lineTo.nextpoint</p>
+
+<script>
+  async function test_514_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 50;
+      ctx.beginPath();
+      ctx.moveTo(-100, -100);
+      ctx.lineTo(0, 25);
+      ctx.lineTo(100, 25);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_514_content"
+  data-contexts="1"
+  data-id="514"
+  data-name="2d.path.lineTo.nextpoint"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.lineTo.nextpoint">&nbsp;</div><br />
+
+<div id="test_514_status">&nbsp;</div>
+
+[<a href="?runTests=514&noCleanup#514" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="608" href="#608"\>608</a>: 2d.path.stroke.prune.corner (Zero-length line segments are removed before stroking with miters)</p>
+
+<script>
+  async function test_608_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.strokeStyle = '#f00';
+      ctx.lineWidth = 400;
+      ctx.lineJoin = 'miter';
+      ctx.miterLimit = 1.4;
+      
+      ctx.beginPath();
+      ctx.moveTo(-1000, 200);
+      ctx.lineTo(-100, 200);
+      ctx.lineTo(-100, 200);
+      ctx.lineTo(-100, 200);
+      ctx.lineTo(-100, 1000);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_608_content"
+  data-contexts="1"
+  data-id="608"
+  data-name="2d.path.stroke.prune.corner"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.stroke.prune.corner (Zero-length line segments are removed before stroking with miters)">&nbsp;</div><br />
+
+<div id="test_608_status">&nbsp;</div>
+
+[<a href="?runTests=608&noCleanup#608" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="528" href="#528"\>528</a>: 2d.path.bezierCurveTo.nonfinite (bezierCurveTo() with Infinity/NaN is ignored)</p>
+
+<script>
+  async function test_528_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.moveTo(0, 0);
+      ctx.lineTo(100, 0);
+      ctx.bezierCurveTo(Infinity, 50, 0, 50, 0, 50);
+      ctx.bezierCurveTo(-Infinity, 50, 0, 50, 0, 50);
+      ctx.bezierCurveTo(NaN, 50, 0, 50, 0, 50);
+      ctx.bezierCurveTo(0, Infinity, 0, 50, 0, 50);
+      ctx.bezierCurveTo(0, -Infinity, 0, 50, 0, 50);
+      ctx.bezierCurveTo(0, NaN, 0, 50, 0, 50);
+      ctx.bezierCurveTo(0, 50, Infinity, 50, 0, 50);
+      ctx.bezierCurveTo(0, 50, -Infinity, 50, 0, 50);
+      ctx.bezierCurveTo(0, 50, NaN, 50, 0, 50);
+      ctx.bezierCurveTo(0, 50, 0, Infinity, 0, 50);
+      ctx.bezierCurveTo(0, 50, 0, -Infinity, 0, 50);
+      ctx.bezierCurveTo(0, 50, 0, NaN, 0, 50);
+      ctx.bezierCurveTo(0, 50, 0, 50, Infinity, 50);
+      ctx.bezierCurveTo(0, 50, 0, 50, -Infinity, 50);
+      ctx.bezierCurveTo(0, 50, 0, 50, NaN, 50);
+      ctx.bezierCurveTo(0, 50, 0, 50, 0, Infinity);
+      ctx.bezierCurveTo(0, 50, 0, 50, 0, -Infinity);
+      ctx.bezierCurveTo(0, 50, 0, 50, 0, NaN);
+      ctx.bezierCurveTo(Infinity, Infinity, 0, 50, 0, 50);
+      ctx.bezierCurveTo(Infinity, Infinity, Infinity, 50, 0, 50);
+      ctx.bezierCurveTo(Infinity, Infinity, Infinity, Infinity, 0, 50);
+      ctx.bezierCurveTo(Infinity, Infinity, Infinity, Infinity, Infinity, 50);
+      ctx.bezierCurveTo(Infinity, Infinity, Infinity, Infinity, Infinity, Infinity);
+      ctx.bezierCurveTo(Infinity, Infinity, Infinity, Infinity, 0, Infinity);
+      ctx.bezierCurveTo(Infinity, Infinity, Infinity, 50, Infinity, 50);
+      ctx.bezierCurveTo(Infinity, Infinity, Infinity, 50, Infinity, Infinity);
+      ctx.bezierCurveTo(Infinity, Infinity, Infinity, 50, 0, Infinity);
+      ctx.bezierCurveTo(Infinity, Infinity, 0, Infinity, 0, 50);
+      ctx.bezierCurveTo(Infinity, Infinity, 0, Infinity, Infinity, 50);
+      ctx.bezierCurveTo(Infinity, Infinity, 0, Infinity, Infinity, Infinity);
+      ctx.bezierCurveTo(Infinity, Infinity, 0, Infinity, 0, Infinity);
+      ctx.bezierCurveTo(Infinity, Infinity, 0, 50, Infinity, 50);
+      ctx.bezierCurveTo(Infinity, Infinity, 0, 50, Infinity, Infinity);
+      ctx.bezierCurveTo(Infinity, Infinity, 0, 50, 0, Infinity);
+      ctx.bezierCurveTo(Infinity, 50, Infinity, 50, 0, 50);
+      ctx.bezierCurveTo(Infinity, 50, Infinity, Infinity, 0, 50);
+      ctx.bezierCurveTo(Infinity, 50, Infinity, Infinity, Infinity, 50);
+      ctx.bezierCurveTo(Infinity, 50, Infinity, Infinity, Infinity, Infinity);
+      ctx.bezierCurveTo(Infinity, 50, Infinity, Infinity, 0, Infinity);
+      ctx.bezierCurveTo(Infinity, 50, Infinity, 50, Infinity, 50);
+      ctx.bezierCurveTo(Infinity, 50, Infinity, 50, Infinity, Infinity);
+      ctx.bezierCurveTo(Infinity, 50, Infinity, 50, 0, Infinity);
+      ctx.bezierCurveTo(Infinity, 50, 0, Infinity, 0, 50);
+      ctx.bezierCurveTo(Infinity, 50, 0, Infinity, Infinity, 50);
+      ctx.bezierCurveTo(Infinity, 50, 0, Infinity, Infinity, Infinity);
+      ctx.bezierCurveTo(Infinity, 50, 0, Infinity, 0, Infinity);
+      ctx.bezierCurveTo(Infinity, 50, 0, 50, Infinity, 50);
+      ctx.bezierCurveTo(Infinity, 50, 0, 50, Infinity, Infinity);
+      ctx.bezierCurveTo(Infinity, 50, 0, 50, 0, Infinity);
+      ctx.bezierCurveTo(0, Infinity, Infinity, 50, 0, 50);
+      ctx.bezierCurveTo(0, Infinity, Infinity, Infinity, 0, 50);
+      ctx.bezierCurveTo(0, Infinity, Infinity, Infinity, Infinity, 50);
+      ctx.bezierCurveTo(0, Infinity, Infinity, Infinity, Infinity, Infinity);
+      ctx.bezierCurveTo(0, Infinity, Infinity, Infinity, 0, Infinity);
+      ctx.bezierCurveTo(0, Infinity, Infinity, 50, Infinity, 50);
+      ctx.bezierCurveTo(0, Infinity, Infinity, 50, Infinity, Infinity);
+      ctx.bezierCurveTo(0, Infinity, Infinity, 50, 0, Infinity);
+      ctx.bezierCurveTo(0, Infinity, 0, Infinity, 0, 50);
+      ctx.bezierCurveTo(0, Infinity, 0, Infinity, Infinity, 50);
+      ctx.bezierCurveTo(0, Infinity, 0, Infinity, Infinity, Infinity);
+      ctx.bezierCurveTo(0, Infinity, 0, Infinity, 0, Infinity);
+      ctx.bezierCurveTo(0, Infinity, 0, 50, Infinity, 50);
+      ctx.bezierCurveTo(0, Infinity, 0, 50, Infinity, Infinity);
+      ctx.bezierCurveTo(0, Infinity, 0, 50, 0, Infinity);
+      ctx.bezierCurveTo(0, 50, Infinity, Infinity, 0, 50);
+      ctx.bezierCurveTo(0, 50, Infinity, Infinity, Infinity, 50);
+      ctx.bezierCurveTo(0, 50, Infinity, Infinity, Infinity, Infinity);
+      ctx.bezierCurveTo(0, 50, Infinity, Infinity, 0, Infinity);
+      ctx.bezierCurveTo(0, 50, Infinity, 50, Infinity, 50);
+      ctx.bezierCurveTo(0, 50, Infinity, 50, Infinity, Infinity);
+      ctx.bezierCurveTo(0, 50, Infinity, 50, 0, Infinity);
+      ctx.bezierCurveTo(0, 50, 0, Infinity, Infinity, 50);
+      ctx.bezierCurveTo(0, 50, 0, Infinity, Infinity, Infinity);
+      ctx.bezierCurveTo(0, 50, 0, Infinity, 0, Infinity);
+      ctx.bezierCurveTo(0, 50, 0, 50, Infinity, Infinity);
+      ctx.lineTo(100, 50);
+      ctx.lineTo(0, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 90,45, 0,255,0,255, "90,45", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_528_content"
+  data-contexts="1"
+  data-id="528"
+  data-name="2d.path.bezierCurveTo.nonfinite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.bezierCurveTo.nonfinite (bezierCurveTo() with Infinity/NaN is ignored)">&nbsp;</div><br />
+
+<div id="test_528_status">&nbsp;</div>
+
+[<a href="?runTests=528&noCleanup#528" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="519" href="#519"\>519</a>: 2d.path.quadraticCurveTo.basic</p>
+
+<script>
+  async function test_519_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 50;
+      ctx.beginPath();
+      ctx.moveTo(0, 25);
+      ctx.quadraticCurveTo(100, 25, 100, 25);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_519_content"
+  data-contexts="1"
+  data-id="519"
+  data-name="2d.path.quadraticCurveTo.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.quadraticCurveTo.basic">&nbsp;</div><br />
+
+<div id="test_519_status">&nbsp;</div>
+
+[<a href="?runTests=519&noCleanup#519" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="604" href="#604"\>604</a>: 2d.path.stroke.prune.closed (Zero-length line segments from closed paths are removed before stroking)</p>
+
+<script>
+  async function test_604_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.strokeStyle = '#f00';
+      ctx.lineWidth = 100;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      
+      ctx.beginPath();
+      ctx.moveTo(50, 25);
+      ctx.lineTo(50, 25);
+      ctx.closePath();
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_604_content"
+  data-contexts="1"
+  data-id="604"
+  data-name="2d.path.stroke.prune.closed"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.stroke.prune.closed (Zero-length line segments from closed paths are removed before stroking)">&nbsp;</div><br />
+
+<div id="test_604_status">&nbsp;</div>
+
+[<a href="?runTests=604&noCleanup#604" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="556" href="#556"\>556</a>: 2d.path.arc.zero.1 (arc() draws nothing when startAngle = endAngle and anticlockwise)</p>
+
+<script>
+  async function test_556_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#f00';
+      ctx.lineWidth = 100;
+      ctx.beginPath();
+      ctx.arc(50, 25, 50, 0, 0, true);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,20, 0,255,0,255, "50,20", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_556_content"
+  data-contexts="1"
+  data-id="556"
+  data-name="2d.path.arc.zero.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.zero.1 (arc() draws nothing when startAngle = endAngle and anticlockwise)">&nbsp;</div><br />
+
+<div id="test_556_status">&nbsp;</div>
+
+[<a href="?runTests=556&noCleanup#556" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="505" href="#505"\>505</a>: 2d.path.moveTo.newsubpath</p>
+
+<script>
+  async function test_505_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.moveTo(100, 0);
+      ctx.moveTo(100, 50);
+      ctx.moveTo(0, 50);
+      ctx.fillStyle = '#f00';
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_505_content"
+  data-contexts="1"
+  data-id="505"
+  data-name="2d.path.moveTo.newsubpath"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.moveTo.newsubpath">&nbsp;</div><br />
+
+<div id="test_505_status">&nbsp;</div>
+
+[<a href="?runTests=505&noCleanup#505" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="518" href="#518"\>518</a>: 2d.path.quadraticCurveTo.ensuresubpath.2 (If there is no subpath, the first control point is added)</p>
+
+<script>
+  async function test_518_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 50;
+      ctx.beginPath();
+      ctx.quadraticCurveTo(0, 25, 100, 25);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 5,45, 0,255,0,255, "5,45", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_518_content"
+  data-contexts="1"
+  data-id="518"
+  data-name="2d.path.quadraticCurveTo.ensuresubpath.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.quadraticCurveTo.ensuresubpath.2 (If there is no subpath, the first control point is added)">&nbsp;</div><br />
+
+<div id="test_518_status">&nbsp;</div>
+
+[<a href="?runTests=518&noCleanup#518" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="521" href="#521"\>521</a>: 2d.path.quadraticCurveTo.scaled</p>
+
+<script>
+  async function test_521_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.scale(1000, 1000);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 0.055;
+      ctx.beginPath();
+      ctx.moveTo(-1, 1.05);
+      ctx.quadraticCurveTo(0, -1, 1.2, 1.05);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_521_content"
+  data-contexts="1"
+  data-id="521"
+  data-name="2d.path.quadraticCurveTo.scaled"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.quadraticCurveTo.scaled">&nbsp;</div><br />
+
+<div id="test_521_status">&nbsp;</div>
+
+[<a href="?runTests=521&noCleanup#521" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="624" href="#624"\>624</a>: 2d.path.isPointInPath.outside (isPointInPath() works on paths outside the canvas)</p>
+
+<script>
+  async function test_624_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.rect(0, -100, 20, 20);
+      ctx.rect(20, -10, 20, 20);
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(10, -110), false, "ctx.isPointInPath(10, -110)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(10, -90), true, "ctx.isPointInPath(10, -90)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(10, -70), false, "ctx.isPointInPath(10, -70)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(30, -20), false, "ctx.isPointInPath(30, -20)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(30, 0), true, "ctx.isPointInPath(30, 0)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(30, 20), false, "ctx.isPointInPath(30, 20)", "false");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_624_content"
+  data-contexts="1"
+  data-id="624"
+  data-name="2d.path.isPointInPath.outside"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.isPointInPath.outside (isPointInPath() works on paths outside the canvas)">&nbsp;</div><br />
+
+<div id="test_624_status">&nbsp;</div>
+
+[<a href="?runTests=624&noCleanup#624" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="542" href="#542"\>542</a>: 2d.path.arcTo.zero.2 (arcTo() with zero radius draws a straight line from P0 to P1, even when all points are collinear)</p>
+
+<script>
+  async function test_542_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.lineWidth = 50;
+      
+      ctx.strokeStyle = '#0f0';
+      ctx.beginPath();
+      ctx.moveTo(0, 25);
+      ctx.arcTo(100, 25, -100, 25, 0);
+      ctx.stroke();
+      
+      ctx.strokeStyle = '#f00';
+      ctx.beginPath();
+      ctx.moveTo(100, 25);
+      ctx.arcTo(200, 25, 50, 25, 0);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_542_content"
+  data-contexts="1"
+  data-id="542"
+  data-name="2d.path.arcTo.zero.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arcTo.zero.2 (arcTo() with zero radius draws a straight line from P0 to P1, even when all points are collinear)">&nbsp;</div><br />
+
+<div id="test_542_status">&nbsp;</div>
+
+[<a href="?runTests=542&noCleanup#542" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="541" href="#541"\>541</a>: 2d.path.arcTo.zero.1 (arcTo() with zero radius draws a straight line from P0 to P1)</p>
+
+<script>
+  async function test_541_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.lineWidth = 50;
+      
+      ctx.strokeStyle = '#0f0';
+      ctx.beginPath();
+      ctx.moveTo(0, 25);
+      ctx.arcTo(100, 25, 100, 100, 0);
+      ctx.stroke();
+      
+      ctx.strokeStyle = '#f00';
+      ctx.beginPath();
+      ctx.moveTo(0, -25);
+      ctx.arcTo(50, -25, 50, 50, 0);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_541_content"
+  data-contexts="1"
+  data-id="541"
+  data-name="2d.path.arcTo.zero.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arcTo.zero.1 (arcTo() with zero radius draws a straight line from P0 to P1)">&nbsp;</div><br />
+
+<div id="test_541_status">&nbsp;</div>
+
+[<a href="?runTests=541&noCleanup#541" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="515" href="#515"\>515</a>: 2d.path.lineTo.nonfinite (lineTo() with Infinity/NaN is ignored)</p>
+
+<script>
+  async function test_515_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.moveTo(0, 0);
+      ctx.lineTo(100, 0);
+      ctx.lineTo(Infinity, 50);
+      ctx.lineTo(-Infinity, 50);
+      ctx.lineTo(NaN, 50);
+      ctx.lineTo(0, Infinity);
+      ctx.lineTo(0, -Infinity);
+      ctx.lineTo(0, NaN);
+      ctx.lineTo(Infinity, Infinity);
+      ctx.lineTo(100, 50);
+      ctx.lineTo(0, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 90,45, 0,255,0,255, "90,45", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_515_content"
+  data-contexts="1"
+  data-id="515"
+  data-name="2d.path.lineTo.nonfinite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.lineTo.nonfinite (lineTo() with Infinity/NaN is ignored)">&nbsp;</div><br />
+
+<div id="test_515_status">&nbsp;</div>
+
+[<a href="?runTests=515&noCleanup#515" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="526" href="#526"\>526</a>: 2d.path.bezierCurveTo.shape</p>
+
+<script>
+  async function test_526_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 55;
+      ctx.beginPath();
+      ctx.moveTo(-2000, 3100);
+      ctx.bezierCurveTo(-2000, -1000, 2100, -1000, 2100, 3100);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_526_content"
+  data-contexts="1"
+  data-id="526"
+  data-name="2d.path.bezierCurveTo.shape"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.bezierCurveTo.shape">&nbsp;</div><br />
+
+<div id="test_526_status">&nbsp;</div>
+
+[<a href="?runTests=526&noCleanup#526" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="598" href="#598"\>598</a>: 2d.path.stroke.unaffected (Stroking does not start a new path or subpath)</p>
+
+<script>
+  async function test_598_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.lineWidth = 50;
+      ctx.moveTo(-100, 25);
+      ctx.lineTo(-100, -100);
+      ctx.lineTo(200, -100);
+      ctx.lineTo(200, 25);
+      ctx.strokeStyle = '#f00';
+      ctx.stroke();
+      
+      ctx.closePath();
+      ctx.strokeStyle = '#0f0';
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_598_content"
+  data-contexts="1"
+  data-id="598"
+  data-name="2d.path.stroke.unaffected"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.stroke.unaffected (Stroking does not start a new path or subpath)">&nbsp;</div><br />
+
+<div id="test_598_status">&nbsp;</div>
+
+[<a href="?runTests=598&noCleanup#598" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="549" href="#549"\>549</a>: 2d.path.arc.default (arc() with missing last argument defaults to clockwise)</p>
+
+<script>
+  async function test_549_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#f00';
+      ctx.beginPath();
+      ctx.moveTo(100, 0);
+      ctx.arc(100, 0, 150, -Math.PI, Math.PI/2);
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_549_content"
+  data-contexts="1"
+  data-id="549"
+  data-name="2d.path.arc.default"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.default (arc() with missing last argument defaults to clockwise)">&nbsp;</div><br />
+
+<div id="test_549_status">&nbsp;</div>
+
+[<a href="?runTests=549&noCleanup#549" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="607" href="#607"\>607</a>: 2d.path.stroke.prune.rect (Zero-length line segments from rect and strokeRect are removed before stroking)</p>
+
+<script>
+  async function test_607_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.strokeStyle = '#f00';
+      ctx.lineWidth = 100;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      
+      ctx.beginPath();
+      ctx.rect(50, 25, 0, 0);
+      ctx.stroke();
+      
+      ctx.strokeRect(50, 25, 0, 0);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_607_content"
+  data-contexts="1"
+  data-id="607"
+  data-name="2d.path.stroke.prune.rect"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.stroke.prune.rect (Zero-length line segments from rect and strokeRect are removed before stroking)">&nbsp;</div><br />
+
+<div id="test_607_status">&nbsp;</div>
+
+[<a href="?runTests=607&noCleanup#607" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="612" href="#612"\>612</a>: 2d.path.clip.empty</p>
+
+<script>
+  async function test_612_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.beginPath();
+      ctx.clip();
+      
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_612_content"
+  data-contexts="1"
+  data-id="612"
+  data-name="2d.path.clip.empty"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.clip.empty">&nbsp;</div><br />
+
+<div id="test_612_status">&nbsp;</div>
+
+[<a href="?runTests=612&noCleanup#612" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="508" href="#508"\>508</a>: 2d.path.closePath.empty</p>
+
+<script>
+  async function test_508_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.closePath();
+      ctx.fillStyle = '#f00';
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_508_content"
+  data-contexts="1"
+  data-id="508"
+  data-name="2d.path.closePath.empty"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.closePath.empty">&nbsp;</div><br />
+
+<div id="test_508_status">&nbsp;</div>
+
+[<a href="?runTests=508&noCleanup#508" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="585" href="#585"\>585</a>: 2d.path.rect.negative</p>
+
+<script>
+  async function test_585_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.beginPath();
+      ctx.fillStyle = '#0f0';
+      ctx.rect(0, 0, 50, 25);
+      ctx.rect(100, 0, -50, 25);
+      ctx.rect(0, 50, 50, -25);
+      ctx.rect(100, 50, -50, -25);
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,12, 0,255,0,255, "25,12", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,12, 0,255,0,255, "75,12", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,37, 0,255,0,255, "25,37", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,37, 0,255,0,255, "75,37", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_585_content"
+  data-contexts="1"
+  data-id="585"
+  data-name="2d.path.rect.negative"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.rect.negative">&nbsp;</div><br />
+
+<div id="test_585_status">&nbsp;</div>
+
+[<a href="?runTests=585&noCleanup#585" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="596" href="#596"\>596</a>: 2d.path.stroke.overlap (Stroked subpaths are combined before being drawn)</p>
+
+<script>
+  async function test_596_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
+      ctx.lineWidth = 50;
+      ctx.moveTo(0, 20);
+      ctx.lineTo(100, 20);
+      ctx.moveTo(0, 30);
+      ctx.lineTo(100, 30);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,127,0,255, "50,25", "0,127,0,255", 1);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_596_content"
+  data-contexts="1"
+  data-id="596"
+  data-name="2d.path.stroke.overlap"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.stroke.overlap (Stroked subpaths are combined before being drawn)">&nbsp;</div><br />
+
+<div id="test_596_status">&nbsp;</div>
+
+[<a href="?runTests=596&noCleanup#596" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="609" href="#609"\>609</a>: 2d.path.transformation.basic</p>
+
+<script>
+  async function test_609_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.translate(-100, 0);
+      ctx.rect(100, 0, 100, 50);
+      ctx.translate(0, -100);
+      ctx.fillStyle = '#0f0';
+      ctx.fill();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_609_content"
+  data-contexts="1"
+  data-id="609"
+  data-name="2d.path.transformation.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.transformation.basic">&nbsp;</div><br />
+
+<div id="test_609_status">&nbsp;</div>
+
+[<a href="?runTests=609&noCleanup#609" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="591" href="#591"\>591</a>: 2d.path.fill.winding.subtract.1</p>
+
+<script>
+  async function test_591_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#f00';
+      ctx.moveTo(-10, -10);
+      ctx.lineTo(110, -10);
+      ctx.lineTo(110, 60);
+      ctx.lineTo(-10, 60);
+      ctx.lineTo(-10, -10);
+      ctx.lineTo(0, 0);
+      ctx.lineTo(0, 50);
+      ctx.lineTo(100, 50);
+      ctx.lineTo(100, 0);
+      ctx.fill();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_591_content"
+  data-contexts="1"
+  data-id="591"
+  data-name="2d.path.fill.winding.subtract.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.fill.winding.subtract.1">&nbsp;</div><br />
+
+<div id="test_591_status">&nbsp;</div>
+
+[<a href="?runTests=591&noCleanup#591" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="506" href="#506"\>506</a>: 2d.path.moveTo.multiple</p>
+
+<script>
+  async function test_506_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.moveTo(0, 25);
+      ctx.moveTo(100, 25);
+      ctx.moveTo(0, 25);
+      ctx.lineTo(100, 25);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 50;
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_506_content"
+  data-contexts="1"
+  data-id="506"
+  data-name="2d.path.moveTo.multiple"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.moveTo.multiple">&nbsp;</div><br />
+
+<div id="test_506_status">&nbsp;</div>
+
+[<a href="?runTests=506&noCleanup#506" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="592" href="#592"\>592</a>: 2d.path.fill.winding.subtract.2</p>
+
+<script>
+  async function test_592_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#f00';
+      ctx.moveTo(-10, -10);
+      ctx.lineTo(110, -10);
+      ctx.lineTo(110, 60);
+      ctx.lineTo(-10, 60);
+      ctx.moveTo(0, 0);
+      ctx.lineTo(0, 50);
+      ctx.lineTo(100, 50);
+      ctx.lineTo(100, 0);
+      ctx.fill();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_592_content"
+  data-contexts="1"
+  data-id="592"
+  data-name="2d.path.fill.winding.subtract.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.fill.winding.subtract.2">&nbsp;</div><br />
+
+<div id="test_592_status">&nbsp;</div>
+
+[<a href="?runTests=592&noCleanup#592" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="566" href="#566"\>566</a>: 2d.path.arc.shape.5 (arc() from 0 to 5pi does not draw crazy things)</p>
+
+<script>
+  async function test_566_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.lineWidth = 200;
+      ctx.strokeStyle = '#f00';
+      ctx.beginPath();
+      ctx.arc(300, 0, 100, 0, 5*Math.PI, false);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_566_content"
+  data-contexts="1"
+  data-id="566"
+  data-name="2d.path.arc.shape.5"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.shape.5 (arc() from 0 to 5pi does not draw crazy things)">&nbsp;</div><br />
+
+<div id="test_566_status">&nbsp;</div>
+
+[<a href="?runTests=566&noCleanup#566" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="565" href="#565"\>565</a>: 2d.path.arc.shape.4 (arc() from 0 to -pi/2 draws stuff in the right quadrant)</p>
+
+<script>
+  async function test_565_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.lineWidth = 150;
+      ctx.strokeStyle = '#0f0';
+      ctx.beginPath();
+      ctx.arc(-50, 50, 100, 0, -Math.PI/2, true);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_565_content"
+  data-contexts="1"
+  data-id="565"
+  data-name="2d.path.arc.shape.4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.shape.4 (arc() from 0 to -pi/2 draws stuff in the right quadrant)">&nbsp;</div><br />
+
+<div id="test_565_status">&nbsp;</div>
+
+[<a href="?runTests=565&noCleanup#565" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="564" href="#564"\>564</a>: 2d.path.arc.shape.3 (arc() from 0 to -pi/2 does not draw anything in the wrong quadrant)</p>
+
+<script>
+  async function test_564_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.lineWidth = 100;
+      ctx.strokeStyle = '#f00';
+      ctx.beginPath();
+      ctx.arc(0, 50, 50, 0, -Math.PI/2, false);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_564_content"
+  data-contexts="1"
+  data-id="564"
+  data-name="2d.path.arc.shape.3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.shape.3 (arc() from 0 to -pi/2 does not draw anything in the wrong quadrant)">&nbsp;</div><br />
+
+<div id="test_564_status">&nbsp;</div>
+
+[<a href="?runTests=564&noCleanup#564" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="563" href="#563"\>563</a>: 2d.path.arc.shape.2 (arc() from 0 to pi draws stuff in the right half)</p>
+
+<script>
+  async function test_563_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.lineWidth = 100;
+      ctx.strokeStyle = '#0f0';
+      ctx.beginPath();
+      ctx.arc(50, 50, 50, 0, Math.PI, true);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 20,48, 0,255,0,255, "20,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_563_content"
+  data-contexts="1"
+  data-id="563"
+  data-name="2d.path.arc.shape.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.shape.2 (arc() from 0 to pi draws stuff in the right half)">&nbsp;</div><br />
+
+<div id="test_563_status">&nbsp;</div>
+
+[<a href="?runTests=563&noCleanup#563" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="562" href="#562"\>562</a>: 2d.path.arc.shape.1 (arc() from 0 to pi does not draw anything in the wrong half)</p>
+
+<script>
+  async function test_562_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.lineWidth = 50;
+      ctx.strokeStyle = '#f00';
+      ctx.beginPath();
+      ctx.arc(50, 50, 50, 0, Math.PI, false);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 20,48, 0,255,0,255, "20,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_562_content"
+  data-contexts="1"
+  data-id="562"
+  data-name="2d.path.arc.shape.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.shape.1 (arc() from 0 to pi does not draw anything in the wrong half)">&nbsp;</div><br />
+
+<div id="test_562_status">&nbsp;</div>
+
+[<a href="?runTests=562&noCleanup#562" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="554" href="#554"\>554</a>: 2d.path.arc.angle.5 (arc() wraps angles mod 2pi when clockwise and start > end+2pi)</p>
+
+<script>
+  async function test_554_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#f00';
+      ctx.beginPath();
+      ctx.moveTo(100, 0);
+      ctx.arc(100, 0, 150, (1024-1)*Math.PI, (512+1/2)*Math.PI, false);
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_554_content"
+  data-contexts="1"
+  data-id="554"
+  data-name="2d.path.arc.angle.5"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.angle.5 (arc() wraps angles mod 2pi when clockwise and start > end+2pi)">&nbsp;</div><br />
+
+<div id="test_554_status">&nbsp;</div>
+
+[<a href="?runTests=554&noCleanup#554" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="522" href="#522"\>522</a>: 2d.path.quadraticCurveTo.nonfinite (quadraticCurveTo() with Infinity/NaN is ignored)</p>
+
+<script>
+  async function test_522_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.moveTo(0, 0);
+      ctx.lineTo(100, 0);
+      ctx.quadraticCurveTo(Infinity, 50, 0, 50);
+      ctx.quadraticCurveTo(-Infinity, 50, 0, 50);
+      ctx.quadraticCurveTo(NaN, 50, 0, 50);
+      ctx.quadraticCurveTo(0, Infinity, 0, 50);
+      ctx.quadraticCurveTo(0, -Infinity, 0, 50);
+      ctx.quadraticCurveTo(0, NaN, 0, 50);
+      ctx.quadraticCurveTo(0, 50, Infinity, 50);
+      ctx.quadraticCurveTo(0, 50, -Infinity, 50);
+      ctx.quadraticCurveTo(0, 50, NaN, 50);
+      ctx.quadraticCurveTo(0, 50, 0, Infinity);
+      ctx.quadraticCurveTo(0, 50, 0, -Infinity);
+      ctx.quadraticCurveTo(0, 50, 0, NaN);
+      ctx.quadraticCurveTo(Infinity, Infinity, 0, 50);
+      ctx.quadraticCurveTo(Infinity, Infinity, Infinity, 50);
+      ctx.quadraticCurveTo(Infinity, Infinity, Infinity, Infinity);
+      ctx.quadraticCurveTo(Infinity, Infinity, 0, Infinity);
+      ctx.quadraticCurveTo(Infinity, 50, Infinity, 50);
+      ctx.quadraticCurveTo(Infinity, 50, Infinity, Infinity);
+      ctx.quadraticCurveTo(Infinity, 50, 0, Infinity);
+      ctx.quadraticCurveTo(0, Infinity, Infinity, 50);
+      ctx.quadraticCurveTo(0, Infinity, Infinity, Infinity);
+      ctx.quadraticCurveTo(0, Infinity, 0, Infinity);
+      ctx.quadraticCurveTo(0, 50, Infinity, Infinity);
+      ctx.lineTo(100, 50);
+      ctx.lineTo(0, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 90,45, 0,255,0,255, "90,45", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_522_content"
+  data-contexts="1"
+  data-id="522"
+  data-name="2d.path.quadraticCurveTo.nonfinite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.quadraticCurveTo.nonfinite (quadraticCurveTo() with Infinity/NaN is ignored)">&nbsp;</div><br />
+
+<div id="test_522_status">&nbsp;</div>
+
+[<a href="?runTests=522&noCleanup#522" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: arc stroking is so radically different from the reference, there is no clear way to support this edgecase
+<p><a id="567" href="#567"\>567</a>: 2d.path.arc.selfintersect.1 (arc() with lineWidth > 2*radius is drawn sensibly)</p>
+
+<script>
+  async function test_567_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.lineWidth = 200;
+      ctx.strokeStyle = '#f00';
+      ctx.beginPath();
+      ctx.arc(100, 50, 25, 0, -Math.PI/2, true);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, 0, 25, 0, -Math.PI/2, true);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_567_content"
+  data-contexts="1"
+  data-id="567"
+  data-name="2d.path.arc.selfintersect.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.selfintersect.1 (arc() with lineWidth > 2*radius is drawn sensibly)">&nbsp;</div><br />
+
+<div id="test_567_status">&nbsp;</div>
+
+[<a href="?runTests=567&noCleanup#567" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="568" href="#568"\>568</a>: 2d.path.arc.selfintersect.2 (arc() with lineWidth > 2*radius is drawn sensibly)</p>
+
+<script>
+  async function test_568_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.lineWidth = 180;
+      ctx.strokeStyle = '#0f0';
+      ctx.beginPath();
+      ctx.arc(-50, 50, 25, 0, -Math.PI/2, true);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(100, 0, 25, 0, -Math.PI/2, true);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 90,10, 0,255,0,255, "90,10", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 97,1, 0,255,0,255, "97,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 97,2, 0,255,0,255, "97,2", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 97,3, 0,255,0,255, "97,3", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 2,48, 0,255,0,255, "2,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_568_content"
+  data-contexts="1"
+  data-id="568"
+  data-name="2d.path.arc.selfintersect.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.selfintersect.2 (arc() with lineWidth > 2*radius is drawn sensibly)">&nbsp;</div><br />
+
+<div id="test_568_status">&nbsp;</div>
+
+[<a href="?runTests=568&noCleanup#568" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="579" href="#579"\>579</a>: 2d.path.rect.zero.1</p>
+
+<script>
+  async function test_579_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 100;
+      ctx.beginPath();
+      ctx.rect(0, 50, 100, 0);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_579_content"
+  data-contexts="1"
+  data-id="579"
+  data-name="2d.path.rect.zero.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.rect.zero.1">&nbsp;</div><br />
+
+<div id="test_579_status">&nbsp;</div>
+
+[<a href="?runTests=579&noCleanup#579" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="580" href="#580"\>580</a>: 2d.path.rect.zero.2</p>
+
+<script>
+  async function test_580_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 100;
+      ctx.beginPath();
+      ctx.rect(50, -100, 0, 250);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_580_content"
+  data-contexts="1"
+  data-id="580"
+  data-name="2d.path.rect.zero.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.rect.zero.2">&nbsp;</div><br />
+
+<div id="test_580_status">&nbsp;</div>
+
+[<a href="?runTests=580&noCleanup#580" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="581" href="#581"\>581</a>: 2d.path.rect.zero.3</p>
+
+<script>
+  async function test_581_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#f00';
+      ctx.lineWidth = 100;
+      ctx.beginPath();
+      ctx.rect(50, 25, 0, 0);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_581_content"
+  data-contexts="1"
+  data-id="581"
+  data-name="2d.path.rect.zero.3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.rect.zero.3">&nbsp;</div><br />
+
+<div id="test_581_status">&nbsp;</div>
+
+[<a href="?runTests=581&noCleanup#581" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="582" href="#582"\>582</a>: 2d.path.rect.zero.4</p>
+
+<script>
+  async function test_582_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 50;
+      ctx.rect(100, 25, 0, 0);
+      ctx.lineTo(0, 25);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_582_content"
+  data-contexts="1"
+  data-id="582"
+  data-name="2d.path.rect.zero.4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.rect.zero.4">&nbsp;</div><br />
+
+<div id="test_582_status">&nbsp;</div>
+
+[<a href="?runTests=582&noCleanup#582" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="583" href="#583"\>583</a>: 2d.path.rect.zero.5</p>
+
+<script>
+  async function test_583_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#f00';
+      ctx.lineWidth = 50;
+      ctx.moveTo(0, 0);
+      ctx.rect(100, 25, 0, 0);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_583_content"
+  data-contexts="1"
+  data-id="583"
+  data-name="2d.path.rect.zero.5"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.rect.zero.5">&nbsp;</div><br />
+
+<div id="test_583_status">&nbsp;</div>
+
+[<a href="?runTests=583&noCleanup#583" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="584" href="#584"\>584</a>: 2d.path.rect.zero.6</p>
+
+<script>
+  async function test_584_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#f00';
+      ctx.lineJoin = 'miter';
+      ctx.miterLimit = 1.5;
+      ctx.lineWidth = 200;
+      ctx.beginPath();
+      ctx.rect(100, 25, 1000, 0);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_584_content"
+  data-contexts="1"
+  data-id="584"
+  data-name="2d.path.rect.zero.6"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.rect.zero.6">&nbsp;</div><br />
+
+<div id="test_584_status">&nbsp;</div>
+
+[<a href="?runTests=584&noCleanup#584" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="572" href="#572"\>572</a>: 2d.path.arc.scale.2 (Highly scaled arcs are the right shape)</p>
+
+<script>
+  async function test_572_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.scale(100, 100);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(0, 0, 0.6, 0, Math.PI/2, false);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_572_content"
+  data-contexts="1"
+  data-id="572"
+  data-name="2d.path.arc.scale.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.scale.2 (Highly scaled arcs are the right shape)">&nbsp;</div><br />
+
+<div id="test_572_status">&nbsp;</div>
+
+[<a href="?runTests=572&noCleanup#572" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="553" href="#553"\>553</a>: 2d.path.arc.angle.4 (arc() draws a full circle when clockwise and end > start+2pi)</p>
+
+<script>
+  async function test_553_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.beginPath();
+      ctx.moveTo(50, 25);
+      ctx.arc(50, 25, 60, (512+1/2)*Math.PI, (1024-1)*Math.PI, false);
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_553_content"
+  data-contexts="1"
+  data-id="553"
+  data-name="2d.path.arc.angle.4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.angle.4 (arc() draws a full circle when clockwise and end > start+2pi)">&nbsp;</div><br />
+
+<div id="test_553_status">&nbsp;</div>
+
+[<a href="?runTests=553&noCleanup#553" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="571" href="#571"\>571</a>: 2d.path.arc.scale.1 (Non-uniformly scaled arcs are the right shape)</p>
+
+<script>
+  async function test_571_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.scale(2, 0.5);
+      ctx.fillStyle = '#0f0';
+      ctx.beginPath();
+      ctx.arc(25, 50, 56, 0, 2*Math.PI, false);
+      ctx.fill();
+      ctx.fillStyle = '#f00';
+      ctx.beginPath();
+      ctx.moveTo(-25, 50);
+      ctx.arc(-25, 50, 24, 0, 2*Math.PI, false);
+      ctx.moveTo(75, 50);
+      ctx.arc(75, 50, 24, 0, 2*Math.PI, false);
+      ctx.moveTo(25, -25);
+      ctx.arc(25, -25, 24, 0, 2*Math.PI, false);
+      ctx.moveTo(25, 125);
+      ctx.arc(25, 125, 24, 0, 2*Math.PI, false);
+      ctx.fill();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 0,0, 0,255,0,255, "0,0", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,0, 0,255,0,255, "50,0", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 99,0, 0,255,0,255, "99,0", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 0,25, 0,255,0,255, "0,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 99,25, 0,255,0,255, "99,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 0,49, 0,255,0,255, "0,49", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,49, 0,255,0,255, "50,49", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 99,49, 0,255,0,255, "99,49", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_571_content"
+  data-contexts="1"
+  data-id="571"
+  data-name="2d.path.arc.scale.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.scale.1 (Non-uniformly scaled arcs are the right shape)">&nbsp;</div><br />
+
+<div id="test_571_status">&nbsp;</div>
+
+[<a href="?runTests=571&noCleanup#571" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="550" href="#550"\>550</a>: 2d.path.arc.angle.1 (arc() draws pi/2 .. -pi anticlockwise correctly)</p>
+
+<script>
+  async function test_550_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#f00';
+      ctx.beginPath();
+      ctx.moveTo(100, 0);
+      ctx.arc(100, 0, 150, Math.PI/2, -Math.PI, true);
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_550_content"
+  data-contexts="1"
+  data-id="550"
+  data-name="2d.path.arc.angle.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.angle.1 (arc() draws pi/2 .. -pi anticlockwise correctly)">&nbsp;</div><br />
+
+<div id="test_550_status">&nbsp;</div>
+
+[<a href="?runTests=550&noCleanup#550" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="617" href="#617"\>617</a>: 2d.path.clip.winding.2</p>
+
+<script>
+  async function test_617_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.beginPath();
+      ctx.moveTo(-10, -10);
+      ctx.lineTo(110, -10);
+      ctx.lineTo(110, 60);
+      ctx.lineTo(-10, 60);
+      ctx.lineTo(-10, -10);
+      ctx.clip();
+      
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(0, 50);
+      ctx.lineTo(100, 50);
+      ctx.lineTo(100, 0);
+      ctx.lineTo(0, 0);
+      ctx.clip();
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_617_content"
+  data-contexts="1"
+  data-id="617"
+  data-name="2d.path.clip.winding.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.clip.winding.2">&nbsp;</div><br />
+
+<div id="test_617_status">&nbsp;</div>
+
+[<a href="?runTests=617&noCleanup#617" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="552" href="#552"\>552</a>: 2d.path.arc.angle.3 (arc() wraps angles mod 2pi when anticlockwise and end > start+2pi)</p>
+
+<script>
+  async function test_552_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#f00';
+      ctx.beginPath();
+      ctx.moveTo(100, 0);
+      ctx.arc(100, 0, 150, (512+1/2)*Math.PI, (1024-1)*Math.PI, true);
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_552_content"
+  data-contexts="1"
+  data-id="552"
+  data-name="2d.path.arc.angle.3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.angle.3 (arc() wraps angles mod 2pi when anticlockwise and end > start+2pi)">&nbsp;</div><br />
+
+<div id="test_552_status">&nbsp;</div>
+
+[<a href="?runTests=552&noCleanup#552" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="551" href="#551"\>551</a>: 2d.path.arc.angle.2 (arc() draws -3pi/2 .. -pi anticlockwise correctly)</p>
+
+<script>
+  async function test_551_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#f00';
+      ctx.beginPath();
+      ctx.moveTo(100, 0);
+      ctx.arc(100, 0, 150, -3*Math.PI/2, -Math.PI, true);
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_551_content"
+  data-contexts="1"
+  data-id="551"
+  data-name="2d.path.arc.angle.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.angle.2 (arc() draws -3pi/2 .. -pi anticlockwise correctly)">&nbsp;</div><br />
+
+<div id="test_551_status">&nbsp;</div>
+
+[<a href="?runTests=551&noCleanup#551" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="590" href="#590"\>590</a>: 2d.path.fill.winding.add</p>
+
+<script>
+  async function test_590_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.moveTo(-10, -10);
+      ctx.lineTo(110, -10);
+      ctx.lineTo(110, 60);
+      ctx.lineTo(-10, 60);
+      ctx.lineTo(-10, -10);
+      ctx.lineTo(0, 0);
+      ctx.lineTo(100, 0);
+      ctx.lineTo(100, 50);
+      ctx.lineTo(0, 50);
+      ctx.fill();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_590_content"
+  data-contexts="1"
+  data-id="590"
+  data-name="2d.path.fill.winding.add"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.fill.winding.add">&nbsp;</div><br />
+
+<div id="test_590_status">&nbsp;</div>
+
+[<a href="?runTests=590&noCleanup#590" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="502" href="#502"\>502</a>: 2d.path.initial</p>
+
+<script>
+  async function test_502_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.closePath();
+      ctx.fillStyle = '#f00';
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_502_content"
+  data-contexts="1"
+  data-id="502"
+  data-name="2d.path.initial"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.initial">&nbsp;</div><br />
+
+<div id="test_502_status">&nbsp;</div>
+
+[<a href="?runTests=502&noCleanup#502" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="616" href="#616"\>616</a>: 2d.path.clip.winding.1</p>
+
+<script>
+  async function test_616_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.beginPath();
+      ctx.moveTo(-10, -10);
+      ctx.lineTo(110, -10);
+      ctx.lineTo(110, 60);
+      ctx.lineTo(-10, 60);
+      ctx.lineTo(-10, -10);
+      ctx.lineTo(0, 0);
+      ctx.lineTo(0, 50);
+      ctx.lineTo(100, 50);
+      ctx.lineTo(100, 0);
+      ctx.clip();
+      
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_616_content"
+  data-contexts="1"
+  data-id="616"
+  data-name="2d.path.clip.winding.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.clip.winding.1">&nbsp;</div><br />
+
+<div id="test_616_status">&nbsp;</div>
+
+[<a href="?runTests=616&noCleanup#616" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="555" href="#555"\>555</a>: 2d.path.arc.angle.6 (arc() draws a full circle when anticlockwise and start > end+2pi)</p>
+
+<script>
+  async function test_555_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.beginPath();
+      ctx.moveTo(50, 25);
+      ctx.arc(50, 25, 60, (1024-1)*Math.PI, (512+1/2)*Math.PI, true);
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_555_content"
+  data-contexts="1"
+  data-id="555"
+  data-name="2d.path.arc.angle.6"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.angle.6 (arc() draws a full circle when anticlockwise and start > end+2pi)">&nbsp;</div><br />
+
+<div id="test_555_status">&nbsp;</div>
+
+[<a href="?runTests=555&noCleanup#555" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="586" href="#586"\>586</a>: 2d.path.rect.winding</p>
+
+<script>
+  async function test_586_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.beginPath();
+      ctx.fillStyle = '#f00';
+      ctx.rect(0, 0, 50, 50);
+      ctx.rect(100, 50, -50, -50);
+      ctx.rect(0, 25, 100, -25);
+      ctx.rect(100, 25, -100, 25);
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,12, 0,255,0,255, "25,12", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,12, 0,255,0,255, "75,12", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,37, 0,255,0,255, "25,37", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,37, 0,255,0,255, "75,37", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_586_content"
+  data-contexts="1"
+  data-id="586"
+  data-name="2d.path.rect.winding"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.rect.winding">&nbsp;</div><br />
+
+<div id="test_586_status">&nbsp;</div>
+
+[<a href="?runTests=586&noCleanup#586" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="575" href="#575"\>575</a>: 2d.path.rect.newsubpath</p>
+
+<script>
+  async function test_575_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.beginPath();
+      ctx.strokeStyle = '#f00';
+      ctx.lineWidth = 50;
+      ctx.moveTo(-100, 25);
+      ctx.lineTo(-50, 25);
+      ctx.rect(200, 25, 1, 1);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_575_content"
+  data-contexts="1"
+  data-id="575"
+  data-name="2d.path.rect.newsubpath"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.rect.newsubpath">&nbsp;</div><br />
+
+<div id="test_575_status">&nbsp;</div>
+
+[<a href="?runTests=575&noCleanup#575" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="588" href="#588"\>588</a>: 2d.path.rect.nonfinite (rect() with Infinity/NaN is ignored)</p>
+
+<script>
+  async function test_588_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.moveTo(0, 0);
+      ctx.lineTo(100, 0);
+      ctx.rect(Infinity, 50, 1, 1);
+      ctx.rect(-Infinity, 50, 1, 1);
+      ctx.rect(NaN, 50, 1, 1);
+      ctx.rect(0, Infinity, 1, 1);
+      ctx.rect(0, -Infinity, 1, 1);
+      ctx.rect(0, NaN, 1, 1);
+      ctx.rect(0, 50, Infinity, 1);
+      ctx.rect(0, 50, -Infinity, 1);
+      ctx.rect(0, 50, NaN, 1);
+      ctx.rect(0, 50, 1, Infinity);
+      ctx.rect(0, 50, 1, -Infinity);
+      ctx.rect(0, 50, 1, NaN);
+      ctx.rect(Infinity, Infinity, 1, 1);
+      ctx.rect(Infinity, Infinity, Infinity, 1);
+      ctx.rect(Infinity, Infinity, Infinity, Infinity);
+      ctx.rect(Infinity, Infinity, 1, Infinity);
+      ctx.rect(Infinity, 50, Infinity, 1);
+      ctx.rect(Infinity, 50, Infinity, Infinity);
+      ctx.rect(Infinity, 50, 1, Infinity);
+      ctx.rect(0, Infinity, Infinity, 1);
+      ctx.rect(0, Infinity, Infinity, Infinity);
+      ctx.rect(0, Infinity, 1, Infinity);
+      ctx.rect(0, 50, Infinity, Infinity);
+      ctx.lineTo(100, 50);
+      ctx.lineTo(0, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 90,45, 0,255,0,255, "90,45", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_588_content"
+  data-contexts="1"
+  data-id="588"
+  data-name="2d.path.rect.nonfinite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.rect.nonfinite (rect() with Infinity/NaN is ignored)">&nbsp;</div><br />
+
+<div id="test_588_status">&nbsp;</div>
+
+[<a href="?runTests=588&noCleanup#588" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="627" href="#627"\>627</a>: 2d.path.isPointInPath.bigarc (isPointInPath() works on unclosed arcs larger than 2pi)</p>
+
+<script>
+  async function test_627_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.arc(50, 25, 10, 0, 7, false);
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(50, 10), false, "ctx.isPointInPath(50, 10)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(50, 20), true, "ctx.isPointInPath(50, 20)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(50, 30), true, "ctx.isPointInPath(50, 30)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(50, 40), false, "ctx.isPointInPath(50, 40)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(30, 20), false, "ctx.isPointInPath(30, 20)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(70, 20), false, "ctx.isPointInPath(70, 20)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(30, 30), false, "ctx.isPointInPath(30, 30)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(70, 30), false, "ctx.isPointInPath(70, 30)", "false");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_627_content"
+  data-contexts="1"
+  data-id="627"
+  data-name="2d.path.isPointInPath.bigarc"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.isPointInPath.bigarc (isPointInPath() works on unclosed arcs larger than 2pi)">&nbsp;</div><br />
+
+<div id="test_627_status">&nbsp;</div>
+
+[<a href="?runTests=627&noCleanup#627" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="533" href="#533"\>533</a>: 2d.path.arcTo.collinear.1 (arcTo() with all points on a line, and P1 between P0/P2, draws a straight line to P1)</p>
+
+<script>
+  async function test_533_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.lineWidth = 50;
+      
+      ctx.strokeStyle = '#0f0';
+      ctx.beginPath();
+      ctx.moveTo(0, 25);
+      ctx.arcTo(100, 25, 200, 25, 1);
+      ctx.stroke();
+      
+      ctx.strokeStyle = '#f00';
+      ctx.beginPath();
+      ctx.moveTo(-100, 25);
+      ctx.arcTo(0, 25, 100, 25, 1);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_533_content"
+  data-contexts="1"
+  data-id="533"
+  data-name="2d.path.arcTo.collinear.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arcTo.collinear.1 (arcTo() with all points on a line, and P1 between P0/P2, draws a straight line to P1)">&nbsp;</div><br />
+
+<div id="test_533_status">&nbsp;</div>
+
+[<a href="?runTests=533&noCleanup#533" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="534" href="#534"\>534</a>: 2d.path.arcTo.collinear.2 (arcTo() with all points on a line, and P2 between P0/P1, draws a straight line to P1)</p>
+
+<script>
+  async function test_534_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.lineWidth = 50;
+      
+      ctx.strokeStyle = '#0f0';
+      ctx.beginPath();
+      ctx.moveTo(0, 25);
+      ctx.arcTo(100, 25, 10, 25, 1);
+      ctx.stroke();
+      
+      ctx.strokeStyle = '#f00';
+      ctx.beginPath();
+      ctx.moveTo(100, 25);
+      ctx.arcTo(200, 25, 110, 25, 1);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_534_content"
+  data-contexts="1"
+  data-id="534"
+  data-name="2d.path.arcTo.collinear.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arcTo.collinear.2 (arcTo() with all points on a line, and P2 between P0/P1, draws a straight line to P1)">&nbsp;</div><br />
+
+<div id="test_534_status">&nbsp;</div>
+
+[<a href="?runTests=534&noCleanup#534" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="535" href="#535"\>535</a>: 2d.path.arcTo.collinear.3 (arcTo() with all points on a line, and P0 between P1/P2, draws a straight line to P1)</p>
+
+<script>
+  async function test_535_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.lineWidth = 50;
+      
+      ctx.strokeStyle = '#0f0';
+      ctx.beginPath();
+      ctx.moveTo(0, 25);
+      ctx.arcTo(100, 25, -100, 25, 1);
+      ctx.stroke();
+      
+      ctx.strokeStyle = '#f00';
+      ctx.beginPath();
+      ctx.moveTo(100, 25);
+      ctx.arcTo(200, 25, 0, 25, 1);
+      ctx.stroke();
+      
+      ctx.beginPath();
+      ctx.moveTo(-100, 25);
+      ctx.arcTo(0, 25, -200, 25, 1);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_535_content"
+  data-contexts="1"
+  data-id="535"
+  data-name="2d.path.arcTo.collinear.3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arcTo.collinear.3 (arcTo() with all points on a line, and P0 between P1/P2, draws a straight line to P1)">&nbsp;</div><br />
+
+<div id="test_535_status">&nbsp;</div>
+
+[<a href="?runTests=535&noCleanup#535" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="570" href="#570"\>570</a>: 2d.path.arc.zeroradius (arc() with zero radius draws a line to the start point)</p>
+
+<script>
+  async function test_570_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00'
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.lineWidth = 50;
+      ctx.strokeStyle = '#0f0';
+      ctx.beginPath();
+      ctx.moveTo(0, 25);
+      ctx.arc(200, 25, 0, 0, Math.PI, true);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_570_content"
+  data-contexts="1"
+  data-id="570"
+  data-name="2d.path.arc.zeroradius"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.zeroradius (arc() with zero radius draws a line to the start point)">&nbsp;</div><br />
+
+<div id="test_570_status">&nbsp;</div>
+
+[<a href="?runTests=570&noCleanup#570" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="634" href="#634"\>634</a>: 2d.path.isPointInPath.nonfinite (isPointInPath() returns false for non-finite arguments)</p>
+
+<script>
+  async function test_634_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.rect(-100, -50, 200, 100);
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(Infinity, 0), false, "ctx.isPointInPath(Infinity, 0)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(-Infinity, 0), false, "ctx.isPointInPath(-Infinity, 0)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(NaN, 0), false, "ctx.isPointInPath(NaN, 0)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(0, Infinity), false, "ctx.isPointInPath(0, Infinity)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(0, -Infinity), false, "ctx.isPointInPath(0, -Infinity)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(0, NaN), false, "ctx.isPointInPath(0, NaN)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(NaN, NaN), false, "ctx.isPointInPath(NaN, NaN)", "false");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_634_content"
+  data-contexts="1"
+  data-id="634"
+  data-name="2d.path.isPointInPath.nonfinite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.isPointInPath.nonfinite (isPointInPath() returns false for non-finite arguments)">&nbsp;</div><br />
+
+<div id="test_634_status">&nbsp;</div>
+
+[<a href="?runTests=634&noCleanup#634" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="561" href="#561"\>561</a>: 2d.path.arc.twopie.4 (arc() draws nothing when end = start + 2pi+e and clockwise)</p>
+
+<script>
+  async function test_561_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 100;
+      ctx.beginPath();
+      ctx.arc(50, 25, 50, 0, 2*Math.PI + 1e-4, false);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,20, 0,255,0,255, "50,20", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_561_content"
+  data-contexts="1"
+  data-id="561"
+  data-name="2d.path.arc.twopie.4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.twopie.4 (arc() draws nothing when end = start + 2pi+e and clockwise)">&nbsp;</div><br />
+
+<div id="test_561_status">&nbsp;</div>
+
+[<a href="?runTests=561&noCleanup#561" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="558" href="#558"\>558</a>: 2d.path.arc.twopie.1 (arc() draws nothing when end = start + 2pi-e and anticlockwise)</p>
+
+<script>
+  async function test_558_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#f00';
+      ctx.lineWidth = 100;
+      ctx.beginPath();
+      ctx.arc(50, 25, 50, 0, 2*Math.PI - 1e-4, true);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,20, 0,255,0,255, "50,20", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_558_content"
+  data-contexts="1"
+  data-id="558"
+  data-name="2d.path.arc.twopie.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.twopie.1 (arc() draws nothing when end = start + 2pi-e and anticlockwise)">&nbsp;</div><br />
+
+<div id="test_558_status">&nbsp;</div>
+
+[<a href="?runTests=558&noCleanup#558" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="560" href="#560"\>560</a>: 2d.path.arc.twopie.3 (arc() draws a full circle when end = start + 2pi+e and anticlockwise)</p>
+
+<script>
+  async function test_560_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 100;
+      ctx.beginPath();
+      ctx.arc(50, 25, 50, 0, 2*Math.PI + 1e-4, true);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,20, 0,255,0,255, "50,20", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_560_content"
+  data-contexts="1"
+  data-id="560"
+  data-name="2d.path.arc.twopie.3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.twopie.3 (arc() draws a full circle when end = start + 2pi+e and anticlockwise)">&nbsp;</div><br />
+
+<div id="test_560_status">&nbsp;</div>
+
+[<a href="?runTests=560&noCleanup#560" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="559" href="#559"\>559</a>: 2d.path.arc.twopie.2 (arc() draws a full circle when end = start + 2pi-e and clockwise)</p>
+
+<script>
+  async function test_559_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 100;
+      ctx.beginPath();
+      ctx.arc(50, 25, 50, 0, 2*Math.PI - 1e-4, false);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,20, 0,255,0,255, "50,20", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_559_content"
+  data-contexts="1"
+  data-id="559"
+  data-name="2d.path.arc.twopie.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.twopie.2 (arc() draws a full circle when end = start + 2pi-e and clockwise)">&nbsp;</div><br />
+
+<div id="test_559_status">&nbsp;</div>
+
+[<a href="?runTests=559&noCleanup#559" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="532" href="#532"\>532</a>: 2d.path.arcTo.coincide.2 (arcTo() draws a straight line to P1 if P1 = P2)</p>
+
+<script>
+  async function test_532_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.lineWidth = 50;
+      ctx.strokeStyle = '#0f0';
+      ctx.beginPath();
+      ctx.moveTo(0, 25);
+      ctx.arcTo(100, 25, 100, 25, 1);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_532_content"
+  data-contexts="1"
+  data-id="532"
+  data-name="2d.path.arcTo.coincide.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arcTo.coincide.2 (arcTo() draws a straight line to P1 if P1 = P2)">&nbsp;</div><br />
+
+<div id="test_532_status">&nbsp;</div>
+
+[<a href="?runTests=532&noCleanup#532" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="625" href="#625"\>625</a>: 2d.path.isPointInPath.unclosed (isPointInPath() works on unclosed subpaths)</p>
+
+<script>
+  async function test_625_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.moveTo(0, 0);
+      ctx.lineTo(20, 0);
+      ctx.lineTo(20, 20);
+      ctx.lineTo(0, 20);
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(10, 10), true, "ctx.isPointInPath(10, 10)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(30, 10), false, "ctx.isPointInPath(30, 10)", "false");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_625_content"
+  data-contexts="1"
+  data-id="625"
+  data-name="2d.path.isPointInPath.unclosed"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.isPointInPath.unclosed (isPointInPath() works on unclosed subpaths)">&nbsp;</div><br />
+
+<div id="test_625_status">&nbsp;</div>
+
+[<a href="?runTests=625&noCleanup#625" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="531" href="#531"\>531</a>: 2d.path.arcTo.coincide.1 (arcTo() has no effect if P0 = P1)</p>
+
+<script>
+  async function test_531_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.lineWidth = 50;
+      
+      ctx.strokeStyle = '#0f0';
+      ctx.beginPath();
+      ctx.moveTo(0, 25);
+      ctx.arcTo(0, 25, 50, 1000, 1);
+      ctx.lineTo(100, 25);
+      ctx.stroke();
+      
+      ctx.strokeStyle = '#f00';
+      ctx.beginPath();
+      ctx.moveTo(50, 25);
+      ctx.arcTo(50, 25, 100, 25, 1);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_531_content"
+  data-contexts="1"
+  data-id="531"
+  data-name="2d.path.arcTo.coincide.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arcTo.coincide.1 (arcTo() has no effect if P0 = P1)">&nbsp;</div><br />
+
+<div id="test_531_status">&nbsp;</div>
+
+[<a href="?runTests=531&noCleanup#531" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="547" href="#547"\>547</a>: 2d.path.arc.nonempty (arc() with a non-empty path does draw a straight line to the start point)</p>
+
+<script>
+  async function test_547_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.lineWidth = 50;
+      ctx.strokeStyle = '#0f0';
+      ctx.beginPath();
+      ctx.moveTo(0, 25);
+      ctx.arc(200, 25, 5, 0, 2*Math.PI, true);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_547_content"
+  data-contexts="1"
+  data-id="547"
+  data-name="2d.path.arc.nonempty"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.nonempty (arc() with a non-empty path does draw a straight line to the start point)">&nbsp;</div><br />
+
+<div id="test_547_status">&nbsp;</div>
+
+[<a href="?runTests=547&noCleanup#547" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="529" href="#529"\>529</a>: 2d.path.arcTo.ensuresubpath.1 (If there is no subpath, the first control point is added (and nothing is drawn up to it))</p>
+
+<script>
+  async function test_529_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.lineWidth = 50;
+      ctx.strokeStyle = '#f00';
+      ctx.beginPath();
+      ctx.arcTo(100, 50, 200, 50, 0.1);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_529_content"
+  data-contexts="1"
+  data-id="529"
+  data-name="2d.path.arcTo.ensuresubpath.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arcTo.ensuresubpath.1 (If there is no subpath, the first control point is added (and nothing is drawn up to it))">&nbsp;</div><br />
+
+<div id="test_529_status">&nbsp;</div>
+
+[<a href="?runTests=529&noCleanup#529" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="530" href="#530"\>530</a>: 2d.path.arcTo.ensuresubpath.2 (If there is no subpath, the first control point is added)</p>
+
+<script>
+  async function test_530_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.lineWidth = 50;
+      ctx.strokeStyle = '#0f0';
+      ctx.beginPath();
+      ctx.arcTo(0, 25, 50, 250, 0.1); // adds (x1,y1), draws nothing
+      ctx.lineTo(100, 25);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_530_content"
+  data-contexts="1"
+  data-id="530"
+  data-name="2d.path.arcTo.ensuresubpath.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arcTo.ensuresubpath.2 (If there is no subpath, the first control point is added)">&nbsp;</div><br />
+
+<div id="test_530_status">&nbsp;</div>
+
+[<a href="?runTests=530&noCleanup#530" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="610" href="#610"\>610</a>: 2d.path.transformation.multiple (Transformations are applied while building paths, not when drawing)</p>
+
+<script>
+  async function test_610_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#f00';
+      ctx.translate(-100, 0);
+      ctx.rect(0, 0, 100, 50);
+      ctx.fill();
+      ctx.translate(100, 0);
+      ctx.fill();
+      
+      ctx.beginPath();
+      ctx.strokeStyle = '#f00';
+      ctx.lineWidth = 50;
+      ctx.translate(0, -50);
+      ctx.moveTo(0, 25);
+      ctx.lineTo(100, 25);
+      ctx.stroke();
+      ctx.translate(0, 50);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_610_content"
+  data-contexts="1"
+  data-id="610"
+  data-name="2d.path.transformation.multiple"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.transformation.multiple (Transformations are applied while building paths, not when drawing)">&nbsp;</div><br />
+
+<div id="test_610_status">&nbsp;</div>
+
+[<a href="?runTests=610&noCleanup#610" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="600" href="#600"\>600</a>: 2d.path.stroke.scale2 (Stroke line widths are scaled by the current transformation matrix)</p>
+
+<script>
+  async function test_600_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.beginPath();
+      ctx.rect(25, 12.5, 50, 25);
+      ctx.save();
+      ctx.rotate(Math.PI/2);
+      ctx.scale(25, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.stroke();
+      ctx.restore();
+      
+      ctx.beginPath();
+      ctx.rect(-25, -12.5, 150, 75);
+      ctx.save();
+      ctx.rotate(Math.PI/2);
+      ctx.scale(25, 50);
+      ctx.strokeStyle = '#f00';
+      ctx.stroke();
+      ctx.restore();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 0,0, 0,255,0,255, "0,0", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,0, 0,255,0,255, "50,0", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 99,0, 0,255,0,255, "99,0", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 0,25, 0,255,0,255, "0,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 99,25, 0,255,0,255, "99,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 0,49, 0,255,0,255, "0,49", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,49, 0,255,0,255, "50,49", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 99,49, 0,255,0,255, "99,49", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_600_content"
+  data-contexts="1"
+  data-id="600"
+  data-name="2d.path.stroke.scale2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.stroke.scale2 (Stroke line widths are scaled by the current transformation matrix)">&nbsp;</div><br />
+
+<div id="test_600_status">&nbsp;</div>
+
+[<a href="?runTests=600&noCleanup#600" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="589" href="#589"\>589</a>: 2d.path.fill.overlap</p>
+
+<script>
+  async function test_589_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+      ctx.rect(0, 0, 100, 50);
+      ctx.closePath();
+      ctx.rect(10, 10, 80, 30);
+      ctx.fill();
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,127,0,255, "50,25", "0,127,0,255", 1);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_589_content"
+  data-contexts="1"
+  data-id="589"
+  data-name="2d.path.fill.overlap"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.fill.overlap">&nbsp;</div><br />
+
+<div id="test_589_status">&nbsp;</div>
+
+[<a href="?runTests=589&noCleanup#589" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="599" href="#599"\>599</a>: 2d.path.stroke.scale1 (Stroke line widths are scaled by the current transformation matrix)</p>
+
+<script>
+  async function test_599_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.beginPath();
+      ctx.rect(25, 12.5, 50, 25);
+      ctx.save();
+      ctx.scale(50, 25);
+      ctx.strokeStyle = '#0f0';
+      ctx.stroke();
+      ctx.restore();
+      
+      ctx.beginPath();
+      ctx.rect(-25, -12.5, 150, 75);
+      ctx.save();
+      ctx.scale(50, 25);
+      ctx.strokeStyle = '#f00';
+      ctx.stroke();
+      ctx.restore();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 0,0, 0,255,0,255, "0,0", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,0, 0,255,0,255, "50,0", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 99,0, 0,255,0,255, "99,0", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 0,25, 0,255,0,255, "0,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 99,25, 0,255,0,255, "99,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 0,49, 0,255,0,255, "0,49", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,49, 0,255,0,255, "50,49", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 99,49, 0,255,0,255, "99,49", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_599_content"
+  data-contexts="1"
+  data-id="599"
+  data-name="2d.path.stroke.scale1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.stroke.scale1 (Stroke line widths are scaled by the current transformation matrix)">&nbsp;</div><br />
+
+<div id="test_599_status">&nbsp;</div>
+
+[<a href="?runTests=599&noCleanup#599" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="601" href="#601"\>601</a>: 2d.path.stroke.skew (Strokes lines are skewed by the current transformation matrix)</p>
+
+<script>
+  async function test_601_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(49, -50);
+      ctx.lineTo(201, -50);
+      ctx.rotate(Math.PI/4);
+      ctx.scale(1, 283);
+      ctx.strokeStyle = '#0f0';
+      ctx.stroke();
+      ctx.restore();
+      
+      ctx.save();
+      ctx.beginPath();
+      ctx.translate(-150, 0);
+      ctx.moveTo(49, -50);
+      ctx.lineTo(199, -50);
+      ctx.rotate(Math.PI/4);
+      ctx.scale(1, 142);
+      ctx.strokeStyle = '#f00';
+      ctx.stroke();
+      ctx.restore();
+      
+      ctx.save();
+      ctx.beginPath();
+      ctx.translate(-150, 0);
+      ctx.moveTo(49, -50);
+      ctx.lineTo(199, -50);
+      ctx.rotate(Math.PI/4);
+      ctx.scale(1, 142);
+      ctx.strokeStyle = '#f00';
+      ctx.stroke();
+      ctx.restore();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 0,0, 0,255,0,255, "0,0", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,0, 0,255,0,255, "50,0", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 99,0, 0,255,0,255, "99,0", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 0,25, 0,255,0,255, "0,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 99,25, 0,255,0,255, "99,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 0,49, 0,255,0,255, "0,49", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,49, 0,255,0,255, "50,49", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 99,49, 0,255,0,255, "99,49", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_601_content"
+  data-contexts="1"
+  data-id="601"
+  data-name="2d.path.stroke.skew"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.stroke.skew (Strokes lines are skewed by the current transformation matrix)">&nbsp;</div><br />
+
+<div id="test_601_status">&nbsp;</div>
+
+[<a href="?runTests=601&noCleanup#601" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="512" href="#512"\>512</a>: 2d.path.lineTo.ensuresubpath.2 (If there is no subpath, the point is added and used for subsequent drawing)</p>
+
+<script>
+  async function test_512_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 50;
+      ctx.beginPath();
+      ctx.lineTo(0, 25);
+      ctx.lineTo(100, 25);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_512_content"
+  data-contexts="1"
+  data-id="512"
+  data-name="2d.path.lineTo.ensuresubpath.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.lineTo.ensuresubpath.2 (If there is no subpath, the point is added and used for subsequent drawing)">&nbsp;</div><br />
+
+<div id="test_512_status">&nbsp;</div>
+
+[<a href="?runTests=512&noCleanup#512" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="511" href="#511"\>511</a>: 2d.path.lineTo.ensuresubpath.1 (If there is no subpath, the point is added and nothing is drawn)</p>
+
+<script>
+  async function test_511_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#f00';
+      ctx.lineWidth = 50;
+      ctx.beginPath();
+      ctx.lineTo(100, 50);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_511_content"
+  data-contexts="1"
+  data-id="511"
+  data-name="2d.path.lineTo.ensuresubpath.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.lineTo.ensuresubpath.1 (If there is no subpath, the point is added and nothing is drawn)">&nbsp;</div><br />
+
+<div id="test_511_status">&nbsp;</div>
+
+[<a href="?runTests=511&noCleanup#511" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="633" href="#633"\>633</a>: 2d.path.isPointInPath.transform.4 (isPointInPath() handles transformations correctly)</p>
+
+<script>
+  async function test_633_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.translate(50, 0);
+      ctx.rect(50, 0, 20, 20);
+      ctx.translate(0, 50);
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(60, 10), false, "ctx.isPointInPath(60, 10)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(110, 10), true, "ctx.isPointInPath(110, 10)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(110, 60), false, "ctx.isPointInPath(110, 60)", "false");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_633_content"
+  data-contexts="1"
+  data-id="633"
+  data-name="2d.path.isPointInPath.transform.4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.isPointInPath.transform.4 (isPointInPath() handles transformations correctly)">&nbsp;</div><br />
+
+<div id="test_633_status">&nbsp;</div>
+
+[<a href="?runTests=633&noCleanup#633" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="630" href="#630"\>630</a>: 2d.path.isPointInPath.transform.1 (isPointInPath() handles transformations correctly)</p>
+
+<script>
+  async function test_630_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.translate(50, 0);
+      ctx.rect(0, 0, 20, 20);
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(-40, 10), false, "ctx.isPointInPath(-40, 10)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(10, 10), false, "ctx.isPointInPath(10, 10)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(49, 10), false, "ctx.isPointInPath(49, 10)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(51, 10), true, "ctx.isPointInPath(51, 10)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(69, 10), true, "ctx.isPointInPath(69, 10)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(71, 10), false, "ctx.isPointInPath(71, 10)", "false");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_630_content"
+  data-contexts="1"
+  data-id="630"
+  data-name="2d.path.isPointInPath.transform.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.isPointInPath.transform.1 (isPointInPath() handles transformations correctly)">&nbsp;</div><br />
+
+<div id="test_630_status">&nbsp;</div>
+
+[<a href="?runTests=630&noCleanup#630" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="631" href="#631"\>631</a>: 2d.path.isPointInPath.transform.2 (isPointInPath() handles transformations correctly)</p>
+
+<script>
+  async function test_631_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.rect(50, 0, 20, 20);
+      ctx.translate(50, 0);
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(-40, 10), false, "ctx.isPointInPath(-40, 10)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(10, 10), false, "ctx.isPointInPath(10, 10)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(49, 10), false, "ctx.isPointInPath(49, 10)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(51, 10), true, "ctx.isPointInPath(51, 10)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(69, 10), true, "ctx.isPointInPath(69, 10)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(71, 10), false, "ctx.isPointInPath(71, 10)", "false");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_631_content"
+  data-contexts="1"
+  data-id="631"
+  data-name="2d.path.isPointInPath.transform.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.isPointInPath.transform.2 (isPointInPath() handles transformations correctly)">&nbsp;</div><br />
+
+<div id="test_631_status">&nbsp;</div>
+
+[<a href="?runTests=631&noCleanup#631" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="632" href="#632"\>632</a>: 2d.path.isPointInPath.transform.3 (isPointInPath() handles transformations correctly)</p>
+
+<script>
+  async function test_632_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.scale(-1, 1);
+      ctx.rect(-70, 0, 20, 20);
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(-40, 10), false, "ctx.isPointInPath(-40, 10)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(10, 10), false, "ctx.isPointInPath(10, 10)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(49, 10), false, "ctx.isPointInPath(49, 10)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(51, 10), true, "ctx.isPointInPath(51, 10)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(69, 10), true, "ctx.isPointInPath(69, 10)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(71, 10), false, "ctx.isPointInPath(71, 10)", "false");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_632_content"
+  data-contexts="1"
+  data-id="632"
+  data-name="2d.path.isPointInPath.transform.3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.isPointInPath.transform.3 (isPointInPath() handles transformations correctly)">&nbsp;</div><br />
+
+<div id="test_632_status">&nbsp;</div>
+
+[<a href="?runTests=632&noCleanup#632" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="613" href="#613"\>613</a>: 2d.path.clip.basic.1</p>
+
+<script>
+  async function test_613_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.beginPath();
+      ctx.rect(0, 0, 100, 50);
+      ctx.clip();
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_613_content"
+  data-contexts="1"
+  data-id="613"
+  data-name="2d.path.clip.basic.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.clip.basic.1">&nbsp;</div><br />
+
+<div id="test_613_status">&nbsp;</div>
+
+[<a href="?runTests=613&noCleanup#613" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="614" href="#614"\>614</a>: 2d.path.clip.basic.2</p>
+
+<script>
+  async function test_614_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.beginPath();
+      ctx.rect(-100, 0, 100, 50);
+      ctx.clip();
+      
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_614_content"
+  data-contexts="1"
+  data-id="614"
+  data-name="2d.path.clip.basic.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.clip.basic.2">&nbsp;</div><br />
+
+<div id="test_614_status">&nbsp;</div>
+
+[<a href="?runTests=614&noCleanup#614" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="527" href="#527"\>527</a>: 2d.path.bezierCurveTo.scaled</p>
+
+<script>
+  async function test_527_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.scale(1000, 1000);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 0.055;
+      ctx.beginPath();
+      ctx.moveTo(-2, 3.1);
+      ctx.bezierCurveTo(-2, -1, 2.1, -1, 2.1, 3.1);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_527_content"
+  data-contexts="1"
+  data-id="527"
+  data-name="2d.path.bezierCurveTo.scaled"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.bezierCurveTo.scaled">&nbsp;</div><br />
+
+<div id="test_527_status">&nbsp;</div>
+
+[<a href="?runTests=527&noCleanup#527" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="548" href="#548"\>548</a>: 2d.path.arc.end (arc() adds the end point of the arc to the subpath)</p>
+
+<script>
+  async function test_548_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.lineWidth = 50;
+      ctx.strokeStyle = '#0f0';
+      ctx.beginPath();
+      ctx.moveTo(-100, 0);
+      ctx.arc(-100, 0, 25, -Math.PI/2, Math.PI/2, true);
+      ctx.lineTo(100, 25);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_548_content"
+  data-contexts="1"
+  data-id="548"
+  data-name="2d.path.arc.end"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.end (arc() adds the end point of the arc to the subpath)">&nbsp;</div><br />
+
+<div id="test_548_status">&nbsp;</div>
+
+[<a href="?runTests=548&noCleanup#548" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="620" href="#620"\>620</a>: 2d.path.isPointInPath.basic.2 (isPointInPath() detects whether the point is inside the path)</p>
+
+<script>
+  async function test_620_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.rect(20, 0, 20, 20);
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(10, 10), false, "ctx.isPointInPath(10, 10)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(30, 10), true, "ctx.isPointInPath(30, 10)", "true");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_620_content"
+  data-contexts="1"
+  data-id="620"
+  data-name="2d.path.isPointInPath.basic.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.isPointInPath.basic.2 (isPointInPath() detects whether the point is inside the path)">&nbsp;</div><br />
+
+<div id="test_620_status">&nbsp;</div>
+
+[<a href="?runTests=620&noCleanup#620" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="619" href="#619"\>619</a>: 2d.path.isPointInPath.basic.1 (isPointInPath() detects whether the point is inside the path)</p>
+
+<script>
+  async function test_619_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.rect(0, 0, 20, 20);
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(10, 10), true, "ctx.isPointInPath(10, 10)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(30, 10), false, "ctx.isPointInPath(30, 10)", "false");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_619_content"
+  data-contexts="1"
+  data-id="619"
+  data-name="2d.path.isPointInPath.basic.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.isPointInPath.basic.1 (isPointInPath() detects whether the point is inside the path)">&nbsp;</div><br />
+
+<div id="test_619_status">&nbsp;</div>
+
+[<a href="?runTests=619&noCleanup#619" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="628" href="#628"\>628</a>: 2d.path.isPointInPath.bezier (isPointInPath() works on Bezier curves)</p>
+
+<script>
+  async function test_628_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.moveTo(25, 25);
+      ctx.bezierCurveTo(50, -50, 50, 100, 75, 25);
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(25, 20), false, "ctx.isPointInPath(25, 20)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(25, 30), false, "ctx.isPointInPath(25, 30)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(30, 20), true, "ctx.isPointInPath(30, 20)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(30, 30), false, "ctx.isPointInPath(30, 30)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(40, 2), false, "ctx.isPointInPath(40, 2)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(40, 20), true, "ctx.isPointInPath(40, 20)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(40, 30), false, "ctx.isPointInPath(40, 30)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(40, 47), false, "ctx.isPointInPath(40, 47)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(45, 20), true, "ctx.isPointInPath(45, 20)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(45, 30), false, "ctx.isPointInPath(45, 30)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(55, 20), false, "ctx.isPointInPath(55, 20)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(55, 30), true, "ctx.isPointInPath(55, 30)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(60, 2), false, "ctx.isPointInPath(60, 2)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(60, 20), false, "ctx.isPointInPath(60, 20)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(60, 30), true, "ctx.isPointInPath(60, 30)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(60, 47), false, "ctx.isPointInPath(60, 47)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(70, 20), false, "ctx.isPointInPath(70, 20)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(70, 30), true, "ctx.isPointInPath(70, 30)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(75, 20), false, "ctx.isPointInPath(75, 20)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(75, 30), false, "ctx.isPointInPath(75, 30)", "false");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_628_content"
+  data-contexts="1"
+  data-id="628"
+  data-name="2d.path.isPointInPath.bezier"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.isPointInPath.bezier (isPointInPath() works on Bezier curves)">&nbsp;</div><br />
+
+<div id="test_628_status">&nbsp;</div>
+
+[<a href="?runTests=628&noCleanup#628" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="629" href="#629"\>629</a>: 2d.path.isPointInPath.winding (isPointInPath() uses the non-zero winding number rule)</p>
+
+<script>
+  async function test_629_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          // Create a square ring, using opposite windings to make a hole in the centre
+      ctx.moveTo(0, 0);
+      ctx.lineTo(50, 0);
+      ctx.lineTo(50, 50);
+      ctx.lineTo(0, 50);
+      ctx.lineTo(0, 0);
+      ctx.lineTo(10, 10);
+      ctx.lineTo(10, 40);
+      ctx.lineTo(40, 40);
+      ctx.lineTo(40, 10);
+      ctx.lineTo(10, 10);
+      
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(5, 5), true, "ctx.isPointInPath(5, 5)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(25, 5), true, "ctx.isPointInPath(25, 5)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(45, 5), true, "ctx.isPointInPath(45, 5)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(5, 25), true, "ctx.isPointInPath(5, 25)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(25, 25), false, "ctx.isPointInPath(25, 25)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(45, 25), true, "ctx.isPointInPath(45, 25)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(5, 45), true, "ctx.isPointInPath(5, 45)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(25, 45), true, "ctx.isPointInPath(25, 45)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(45, 45), true, "ctx.isPointInPath(45, 45)", "true");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_629_content"
+  data-contexts="1"
+  data-id="629"
+  data-name="2d.path.isPointInPath.winding"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.isPointInPath.winding (isPointInPath() uses the non-zero winding number rule)">&nbsp;</div><br />
+
+<div id="test_629_status">&nbsp;</div>
+
+[<a href="?runTests=629&noCleanup#629" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="510" href="#510"\>510</a>: 2d.path.closePath.nextpoint</p>
+
+<script>
+  async function test_510_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 50;
+      ctx.moveTo(-100, 25);
+      ctx.lineTo(-100, -1000);
+      ctx.closePath();
+      ctx.lineTo(1000, 25);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_510_content"
+  data-contexts="1"
+  data-id="510"
+  data-name="2d.path.closePath.nextpoint"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.closePath.nextpoint">&nbsp;</div><br />
+
+<div id="test_510_status">&nbsp;</div>
+
+[<a href="?runTests=510&noCleanup#510" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="621" href="#621"\>621</a>: 2d.path.isPointInPath.edge (isPointInPath() counts points on the path as being inside)</p>
+
+<script>
+  async function test_621_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.rect(0, 0, 20, 20);
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(0, 0), true, "ctx.isPointInPath(0, 0)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(10, 0), true, "ctx.isPointInPath(10, 0)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(20, 0), true, "ctx.isPointInPath(20, 0)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(20, 10), true, "ctx.isPointInPath(20, 10)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(20, 20), true, "ctx.isPointInPath(20, 20)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(10, 20), true, "ctx.isPointInPath(10, 20)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(0, 20), true, "ctx.isPointInPath(0, 20)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(0, 10), true, "ctx.isPointInPath(0, 10)", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(10, -0.01), false, "ctx.isPointInPath(10, -0.01)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(10, 20.01), false, "ctx.isPointInPath(10, 20.01)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(-0.01, 10), false, "ctx.isPointInPath(-0.01, 10)", "false");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(20.01, 10), false, "ctx.isPointInPath(20.01, 10)", "false");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_621_content"
+  data-contexts="1"
+  data-id="621"
+  data-name="2d.path.isPointInPath.edge"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.isPointInPath.edge (isPointInPath() counts points on the path as being inside)">&nbsp;</div><br />
+
+<div id="test_621_status">&nbsp;</div>
+
+[<a href="?runTests=621&noCleanup#621" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="597" href="#597"\>597</a>: 2d.path.stroke.union (Strokes in opposite directions are unioned, not subtracted)</p>
+
+<script>
+  async function test_597_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 40;
+      ctx.moveTo(0, 10);
+      ctx.lineTo(100, 10);
+      ctx.moveTo(100, 40);
+      ctx.lineTo(0, 40);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_597_content"
+  data-contexts="1"
+  data-id="597"
+  data-name="2d.path.stroke.union"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.stroke.union (Strokes in opposite directions are unioned, not subtracted)">&nbsp;</div><br />
+
+<div id="test_597_status">&nbsp;</div>
+
+[<a href="?runTests=597&noCleanup#597" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="576" href="#576"\>576</a>: 2d.path.rect.closed</p>
+
+<script>
+  async function test_576_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 200;
+      ctx.lineJoin = 'miter';
+      ctx.rect(100, 50, 100, 100);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_576_content"
+  data-contexts="1"
+  data-id="576"
+  data-name="2d.path.rect.closed"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.rect.closed">&nbsp;</div><br />
+
+<div id="test_576_status">&nbsp;</div>
+
+[<a href="?runTests=576&noCleanup#576" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="536" href="#536"\>536</a>: 2d.path.arcTo.shape.curve1 (arcTo() curves in the right kind of shape)</p>
+
+<script>
+  async function test_536_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var tol = 1.5; // tolerance to avoid antialiasing artifacts
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.strokeStyle = '#f00';
+      ctx.lineWidth = 10;
+      ctx.beginPath();
+      ctx.moveTo(10, 25);
+      ctx.arcTo(75, 25, 75, 60, 20);
+      ctx.stroke();
+      
+      ctx.fillStyle = '#0f0';
+      ctx.beginPath();
+      ctx.rect(10, 20, 45, 10);
+      ctx.moveTo(80, 45);
+      ctx.arc(55, 45, 25+tol, 0, -Math.PI/2, true);
+      ctx.arc(55, 45, 15-tol, -Math.PI/2, 0, false);
+      ctx.fill();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 55,19, 0,255,0,255, "55,19", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 55,20, 0,255,0,255, "55,20", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 55,21, 0,255,0,255, "55,21", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 64,22, 0,255,0,255, "64,22", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 65,21, 0,255,0,255, "65,21", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 72,28, 0,255,0,255, "72,28", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 73,27, 0,255,0,255, "73,27", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 78,36, 0,255,0,255, "78,36", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 79,35, 0,255,0,255, "79,35", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 80,44, 0,255,0,255, "80,44", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 80,45, 0,255,0,255, "80,45", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 80,46, 0,255,0,255, "80,46", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 65,45, 0,255,0,255, "65,45", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_536_content"
+  data-contexts="1"
+  data-id="536"
+  data-name="2d.path.arcTo.shape.curve1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arcTo.shape.curve1 (arcTo() curves in the right kind of shape)">&nbsp;</div><br />
+
+<div id="test_536_status">&nbsp;</div>
+
+[<a href="?runTests=536&noCleanup#536" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="537" href="#537"\>537</a>: 2d.path.arcTo.shape.curve2 (arcTo() curves in the right kind of shape)</p>
+
+<script>
+  async function test_537_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var tol = 1.5; // tolerance to avoid antialiasing artifacts
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#f00';
+      ctx.beginPath();
+      ctx.rect(10, 20, 45, 10);
+      ctx.moveTo(80, 45);
+      ctx.arc(55, 45, 25-tol, 0, -Math.PI/2, true);
+      ctx.arc(55, 45, 15+tol, -Math.PI/2, 0, false);
+      ctx.fill();
+      
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 10;
+      ctx.beginPath();
+      ctx.moveTo(10, 25);
+      ctx.arcTo(75, 25, 75, 60, 20);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 55,19, 0,255,0,255, "55,19", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 55,20, 0,255,0,255, "55,20", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 55,21, 0,255,0,255, "55,21", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 64,22, 0,255,0,255, "64,22", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 65,21, 0,255,0,255, "65,21", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 72,28, 0,255,0,255, "72,28", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 73,27, 0,255,0,255, "73,27", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 78,36, 0,255,0,255, "78,36", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 79,35, 0,255,0,255, "79,35", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 80,44, 0,255,0,255, "80,44", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 80,45, 0,255,0,255, "80,45", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 80,46, 0,255,0,255, "80,46", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_537_content"
+  data-contexts="1"
+  data-id="537"
+  data-name="2d.path.arcTo.shape.curve2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arcTo.shape.curve2 (arcTo() curves in the right kind of shape)">&nbsp;</div><br />
+
+<div id="test_537_status">&nbsp;</div>
+
+[<a href="?runTests=537&noCleanup#537" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="544" href="#544"\>544</a>: 2d.path.arcTo.scale (arcTo scales the curve, not just the control points)</p>
+
+<script>
+  async function test_544_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.beginPath();
+      ctx.moveTo(0, 50);
+      ctx.translate(100, 0);
+      ctx.scale(0.1, 1);
+      ctx.arcTo(50, 50, 50, 0, 50);
+      ctx.lineTo(-1000, 0);
+      ctx.fill();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 0,0, 0,255,0,255, "0,0", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,0, 0,255,0,255, "50,0", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 99,0, 0,255,0,255, "99,0", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 0,25, 0,255,0,255, "0,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 99,25, 0,255,0,255, "99,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 0,49, 0,255,0,255, "0,49", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,49, 0,255,0,255, "50,49", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 99,49, 0,255,0,255, "99,49", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_544_content"
+  data-contexts="1"
+  data-id="544"
+  data-name="2d.path.arcTo.scale"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arcTo.scale (arcTo scales the curve, not just the control points)">&nbsp;</div><br />
+
+<div id="test_544_status">&nbsp;</div>
+
+[<a href="?runTests=544&noCleanup#544" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="516" href="#516"\>516</a>: 2d.path.lineTo.nonfinite.details (lineTo() with Infinity/NaN for first arg still converts the second arg)</p>
+
+<script>
+  async function test_516_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          for (var arg1 of [Infinity, -Infinity, NaN]) {
+        var converted = false;
+        ctx.lineTo(arg1, { valueOf: function() { converted = true; return 0; } });
+        ctx.flush()
+      webAssert._assert(t, converted, "converted");
+      }
+      
+  }
+</script>
+
+<div class="test"
+  id="test_516_content"
+  data-contexts="1"
+  data-id="516"
+  data-name="2d.path.lineTo.nonfinite.details"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.lineTo.nonfinite.details (lineTo() with Infinity/NaN for first arg still converts the second arg)">&nbsp;</div><br />
+
+<div id="test_516_status">&nbsp;</div>
+
+[<a href="?runTests=516&noCleanup#516" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="546" href="#546"\>546</a>: 2d.path.arc.empty (arc() with an empty path does not draw a straight line to the start point)</p>
+
+<script>
+  async function test_546_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.lineWidth = 50;
+      ctx.strokeStyle = '#f00';
+      ctx.beginPath();
+      ctx.arc(200, 25, 5, 0, 2*Math.PI, true);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_546_content"
+  data-contexts="1"
+  data-id="546"
+  data-name="2d.path.arc.empty"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.empty (arc() with an empty path does not draw a straight line to the start point)">&nbsp;</div><br />
+
+<div id="test_546_status">&nbsp;</div>
+
+[<a href="?runTests=546&noCleanup#546" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="543" href="#543"\>543</a>: 2d.path.arcTo.transformation (arcTo joins up to the last subpath point correctly)</p>
+
+<script>
+  async function test_543_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.beginPath();
+      ctx.moveTo(0, 50);
+      ctx.translate(100, 0);
+      ctx.arcTo(50, 50, 50, 0, 50);
+      ctx.lineTo(-100, 0);
+      ctx.fill();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 0,0, 0,255,0,255, "0,0", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,0, 0,255,0,255, "50,0", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 99,0, 0,255,0,255, "99,0", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 0,25, 0,255,0,255, "0,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 99,25, 0,255,0,255, "99,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 0,49, 0,255,0,255, "0,49", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,49, 0,255,0,255, "50,49", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 99,49, 0,255,0,255, "99,49", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_543_content"
+  data-contexts="1"
+  data-id="543"
+  data-name="2d.path.arcTo.transformation"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arcTo.transformation (arcTo joins up to the last subpath point correctly)">&nbsp;</div><br />
+
+<div id="test_543_status">&nbsp;</div>
+
+[<a href="?runTests=543&noCleanup#543" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="557" href="#557"\>557</a>: 2d.path.arc.zero.2 (arc() draws nothing when startAngle = endAngle and clockwise)</p>
+
+<script>
+  async function test_557_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#f00';
+      ctx.lineWidth = 100;
+      ctx.beginPath();
+      ctx.arc(50, 25, 50, 0, 0, false);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,20, 0,255,0,255, "50,20", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_557_content"
+  data-contexts="1"
+  data-id="557"
+  data-name="2d.path.arc.zero.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.zero.2 (arc() draws nothing when startAngle = endAngle and clockwise)">&nbsp;</div><br />
+
+<div id="test_557_status">&nbsp;</div>
+
+[<a href="?runTests=557&noCleanup#557" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="524" href="#524"\>524</a>: 2d.path.bezierCurveTo.ensuresubpath.2 (If there is no subpath, the first control point is added)</p>
+
+<script>
+  async function test_524_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 50;
+      ctx.beginPath();
+      ctx.bezierCurveTo(0, 25, 100, 25, 100, 25);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 5,45, 0,255,0,255, "5,45", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_524_content"
+  data-contexts="1"
+  data-id="524"
+  data-name="2d.path.bezierCurveTo.ensuresubpath.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.bezierCurveTo.ensuresubpath.2 (If there is no subpath, the first control point is added)">&nbsp;</div><br />
+
+<div id="test_524_status">&nbsp;</div>
+
+[<a href="?runTests=524&noCleanup#524" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="539" href="#539"\>539</a>: 2d.path.arcTo.shape.end (arcTo() does not draw anything from P1 to P2)</p>
+
+<script>
+  async function test_539_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#f00';
+      ctx.lineWidth = 50;
+      ctx.beginPath();
+      ctx.moveTo(-100, -100);
+      ctx.arcTo(-100, 25, 200, 25, 10);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_539_content"
+  data-contexts="1"
+  data-id="539"
+  data-name="2d.path.arcTo.shape.end"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arcTo.shape.end (arcTo() does not draw anything from P1 to P2)">&nbsp;</div><br />
+
+<div id="test_539_status">&nbsp;</div>
+
+[<a href="?runTests=539&noCleanup#539" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="525" href="#525"\>525</a>: 2d.path.bezierCurveTo.basic</p>
+
+<script>
+  async function test_525_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 50;
+      ctx.beginPath();
+      ctx.moveTo(0, 25);
+      ctx.bezierCurveTo(100, 25, 100, 25, 100, 25);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_525_content"
+  data-contexts="1"
+  data-id="525"
+  data-name="2d.path.bezierCurveTo.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.bezierCurveTo.basic">&nbsp;</div><br />
+
+<div id="test_525_status">&nbsp;</div>
+
+[<a href="?runTests=525&noCleanup#525" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="507" href="#507"\>507</a>: 2d.path.moveTo.nonfinite (moveTo() with Infinity/NaN is ignored)</p>
+
+<script>
+  async function test_507_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.moveTo(0, 0);
+      ctx.lineTo(100, 0);
+      ctx.moveTo(Infinity, 50);
+      ctx.moveTo(-Infinity, 50);
+      ctx.moveTo(NaN, 50);
+      ctx.moveTo(0, Infinity);
+      ctx.moveTo(0, -Infinity);
+      ctx.moveTo(0, NaN);
+      ctx.moveTo(Infinity, Infinity);
+      ctx.lineTo(100, 50);
+      ctx.lineTo(0, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_507_content"
+  data-contexts="1"
+  data-id="507"
+  data-name="2d.path.moveTo.nonfinite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.moveTo.nonfinite (moveTo() with Infinity/NaN is ignored)">&nbsp;</div><br />
+
+<div id="test_507_status">&nbsp;</div>
+
+[<a href="?runTests=507&noCleanup#507" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="573" href="#573"\>573</a>: 2d.path.arc.nonfinite (arc() with Infinity/NaN is ignored)</p>
+
+<script>
+  async function test_573_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.moveTo(0, 0);
+      ctx.lineTo(100, 0);
+      ctx.arc(Infinity, 0, 50, 0, 2*Math.PI, true);
+      ctx.arc(-Infinity, 0, 50, 0, 2*Math.PI, true);
+      ctx.arc(NaN, 0, 50, 0, 2*Math.PI, true);
+      ctx.arc(0, Infinity, 50, 0, 2*Math.PI, true);
+      ctx.arc(0, -Infinity, 50, 0, 2*Math.PI, true);
+      ctx.arc(0, NaN, 50, 0, 2*Math.PI, true);
+      ctx.arc(0, 0, Infinity, 0, 2*Math.PI, true);
+      ctx.arc(0, 0, -Infinity, 0, 2*Math.PI, true);
+      ctx.arc(0, 0, NaN, 0, 2*Math.PI, true);
+      ctx.arc(0, 0, 50, Infinity, 2*Math.PI, true);
+      ctx.arc(0, 0, 50, -Infinity, 2*Math.PI, true);
+      ctx.arc(0, 0, 50, NaN, 2*Math.PI, true);
+      ctx.arc(0, 0, 50, 0, Infinity, true);
+      ctx.arc(0, 0, 50, 0, -Infinity, true);
+      ctx.arc(0, 0, 50, 0, NaN, true);
+      ctx.arc(Infinity, Infinity, 50, 0, 2*Math.PI, true);
+      ctx.arc(Infinity, Infinity, Infinity, 0, 2*Math.PI, true);
+      ctx.arc(Infinity, Infinity, Infinity, Infinity, 2*Math.PI, true);
+      ctx.arc(Infinity, Infinity, Infinity, Infinity, Infinity, true);
+      ctx.arc(Infinity, Infinity, Infinity, 0, Infinity, true);
+      ctx.arc(Infinity, Infinity, 50, Infinity, 2*Math.PI, true);
+      ctx.arc(Infinity, Infinity, 50, Infinity, Infinity, true);
+      ctx.arc(Infinity, Infinity, 50, 0, Infinity, true);
+      ctx.arc(Infinity, 0, Infinity, 0, 2*Math.PI, true);
+      ctx.arc(Infinity, 0, Infinity, Infinity, 2*Math.PI, true);
+      ctx.arc(Infinity, 0, Infinity, Infinity, Infinity, true);
+      ctx.arc(Infinity, 0, Infinity, 0, Infinity, true);
+      ctx.arc(Infinity, 0, 50, Infinity, 2*Math.PI, true);
+      ctx.arc(Infinity, 0, 50, Infinity, Infinity, true);
+      ctx.arc(Infinity, 0, 50, 0, Infinity, true);
+      ctx.arc(0, Infinity, Infinity, 0, 2*Math.PI, true);
+      ctx.arc(0, Infinity, Infinity, Infinity, 2*Math.PI, true);
+      ctx.arc(0, Infinity, Infinity, Infinity, Infinity, true);
+      ctx.arc(0, Infinity, Infinity, 0, Infinity, true);
+      ctx.arc(0, Infinity, 50, Infinity, 2*Math.PI, true);
+      ctx.arc(0, Infinity, 50, Infinity, Infinity, true);
+      ctx.arc(0, Infinity, 50, 0, Infinity, true);
+      ctx.arc(0, 0, Infinity, Infinity, 2*Math.PI, true);
+      ctx.arc(0, 0, Infinity, Infinity, Infinity, true);
+      ctx.arc(0, 0, Infinity, 0, Infinity, true);
+      ctx.arc(0, 0, 50, Infinity, Infinity, true);
+      ctx.lineTo(100, 50);
+      ctx.lineTo(0, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 90,45, 0,255,0,255, "90,45", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_573_content"
+  data-contexts="1"
+  data-id="573"
+  data-name="2d.path.arc.nonfinite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.nonfinite (arc() with Infinity/NaN is ignored)">&nbsp;</div><br />
+
+<div id="test_573_status">&nbsp;</div>
+
+[<a href="?runTests=573&noCleanup#573" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="577" href="#577"\>577</a>: 2d.path.rect.end.1</p>
+
+<script>
+  async function test_577_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 100;
+      ctx.rect(200, 100, 400, 1000);
+      ctx.lineTo(-2000, -1000);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_577_content"
+  data-contexts="1"
+  data-id="577"
+  data-name="2d.path.rect.end.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.rect.end.1">&nbsp;</div><br />
+
+<div id="test_577_status">&nbsp;</div>
+
+[<a href="?runTests=577&noCleanup#577" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="594" href="#594"\>594</a>: 2d.path.fill.closed.basic</p>
+
+<script>
+  async function test_594_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.moveTo(0, 0);
+      ctx.lineTo(100, 0);
+      ctx.lineTo(100, 50);
+      ctx.lineTo(0, 50);
+      ctx.fill();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_594_content"
+  data-contexts="1"
+  data-id="594"
+  data-name="2d.path.fill.closed.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.fill.closed.basic">&nbsp;</div><br />
+
+<div id="test_594_status">&nbsp;</div>
+
+[<a href="?runTests=594&noCleanup#594" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="569" href="#569"\>569</a>: 2d.path.arc.negative (arc() with negative radius throws INDEX_SIZE_ERR)</p>
+
+<script>
+  async function test_569_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { ctx.arc(0, 0, -1, 0, 0, true); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_569_content"
+  data-contexts="1"
+  data-id="569"
+  data-name="2d.path.arc.negative"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arc.negative (arc() with negative radius throws INDEX_SIZE_ERR)">&nbsp;</div><br />
+
+<div id="test_569_status">&nbsp;</div>
+
+[<a href="?runTests=569&noCleanup#569" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="545" href="#545"\>545</a>: 2d.path.arcTo.nonfinite (arcTo() with Infinity/NaN is ignored)</p>
+
+<script>
+  async function test_545_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.moveTo(0, 0);
+      ctx.lineTo(100, 0);
+      ctx.arcTo(Infinity, 50, 0, 50, 0);
+      ctx.arcTo(-Infinity, 50, 0, 50, 0);
+      ctx.arcTo(NaN, 50, 0, 50, 0);
+      ctx.arcTo(0, Infinity, 0, 50, 0);
+      ctx.arcTo(0, -Infinity, 0, 50, 0);
+      ctx.arcTo(0, NaN, 0, 50, 0);
+      ctx.arcTo(0, 50, Infinity, 50, 0);
+      ctx.arcTo(0, 50, -Infinity, 50, 0);
+      ctx.arcTo(0, 50, NaN, 50, 0);
+      ctx.arcTo(0, 50, 0, Infinity, 0);
+      ctx.arcTo(0, 50, 0, -Infinity, 0);
+      ctx.arcTo(0, 50, 0, NaN, 0);
+      ctx.arcTo(0, 50, 0, 50, Infinity);
+      ctx.arcTo(0, 50, 0, 50, -Infinity);
+      ctx.arcTo(0, 50, 0, 50, NaN);
+      ctx.arcTo(Infinity, Infinity, 0, 50, 0);
+      ctx.arcTo(Infinity, Infinity, Infinity, 50, 0);
+      ctx.arcTo(Infinity, Infinity, Infinity, Infinity, 0);
+      ctx.arcTo(Infinity, Infinity, Infinity, Infinity, Infinity);
+      ctx.arcTo(Infinity, Infinity, Infinity, 50, Infinity);
+      ctx.arcTo(Infinity, Infinity, 0, Infinity, 0);
+      ctx.arcTo(Infinity, Infinity, 0, Infinity, Infinity);
+      ctx.arcTo(Infinity, Infinity, 0, 50, Infinity);
+      ctx.arcTo(Infinity, 50, Infinity, 50, 0);
+      ctx.arcTo(Infinity, 50, Infinity, Infinity, 0);
+      ctx.arcTo(Infinity, 50, Infinity, Infinity, Infinity);
+      ctx.arcTo(Infinity, 50, Infinity, 50, Infinity);
+      ctx.arcTo(Infinity, 50, 0, Infinity, 0);
+      ctx.arcTo(Infinity, 50, 0, Infinity, Infinity);
+      ctx.arcTo(Infinity, 50, 0, 50, Infinity);
+      ctx.arcTo(0, Infinity, Infinity, 50, 0);
+      ctx.arcTo(0, Infinity, Infinity, Infinity, 0);
+      ctx.arcTo(0, Infinity, Infinity, Infinity, Infinity);
+      ctx.arcTo(0, Infinity, Infinity, 50, Infinity);
+      ctx.arcTo(0, Infinity, 0, Infinity, 0);
+      ctx.arcTo(0, Infinity, 0, Infinity, Infinity);
+      ctx.arcTo(0, Infinity, 0, 50, Infinity);
+      ctx.arcTo(0, 50, Infinity, Infinity, 0);
+      ctx.arcTo(0, 50, Infinity, Infinity, Infinity);
+      ctx.arcTo(0, 50, Infinity, 50, Infinity);
+      ctx.arcTo(0, 50, 0, Infinity, Infinity);
+      ctx.lineTo(100, 50);
+      ctx.lineTo(0, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 90,45, 0,255,0,255, "90,45", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_545_content"
+  data-contexts="1"
+  data-id="545"
+  data-name="2d.path.arcTo.nonfinite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arcTo.nonfinite (arcTo() with Infinity/NaN is ignored)">&nbsp;</div><br />
+
+<div id="test_545_status">&nbsp;</div>
+
+[<a href="?runTests=545&noCleanup#545" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="540" href="#540"\>540</a>: 2d.path.arcTo.negative (arcTo() with negative radius throws an exception)</p>
+
+<script>
+  async function test_540_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { ctx.arcTo(0, 0, 0, 0, -1); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_540_content"
+  data-contexts="1"
+  data-id="540"
+  data-name="2d.path.arcTo.negative"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arcTo.negative (arcTo() with negative radius throws an exception)">&nbsp;</div><br />
+
+<div id="test_540_status">&nbsp;</div>
+
+[<a href="?runTests=540&noCleanup#540" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="538" href="#538"\>538</a>: 2d.path.arcTo.shape.start (arcTo() draws a straight line from P0 to P1)</p>
+
+<script>
+  async function test_538_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 50;
+      ctx.beginPath();
+      ctx.moveTo(0, 25);
+      ctx.arcTo(200, 25, 200, 50, 10);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_538_content"
+  data-contexts="1"
+  data-id="538"
+  data-name="2d.path.arcTo.shape.start"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.arcTo.shape.start (arcTo() draws a straight line from P0 to P1)">&nbsp;</div><br />
+
+<div id="test_538_status">&nbsp;</div>
+
+[<a href="?runTests=538&noCleanup#538" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="618" href="#618"\>618</a>: 2d.path.clip.unaffected</p>
+
+<script>
+  async function test_618_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#0f0';
+      
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(0, 50);
+      ctx.lineTo(100, 50);
+      ctx.lineTo(100, 0);
+      ctx.clip();
+      
+      ctx.lineTo(0, 0);
+      ctx.fill();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_618_content"
+  data-contexts="1"
+  data-id="618"
+  data-name="2d.path.clip.unaffected"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.clip.unaffected">&nbsp;</div><br />
+
+<div id="test_618_status">&nbsp;</div>
+
+[<a href="?runTests=618&noCleanup#618" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: chrome fails this one too, and it's unclear exactly what this means/how to do it efficiently anyway
+<p><a id="605" href="#605"\>605</a>: 2d.path.stroke.prune.curve (Zero-length line segments from quadraticCurveTo and bezierCurveTo are removed before stroking)</p>
+
+<script>
+  async function test_605_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.strokeStyle = '#f00';
+      ctx.lineWidth = 100;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      
+      ctx.beginPath();
+      ctx.moveTo(50, 25);
+      ctx.quadraticCurveTo(50, 25, 50, 25);
+      ctx.stroke();
+      
+      ctx.beginPath();
+      ctx.moveTo(50, 25);
+      ctx.bezierCurveTo(50, 25, 50, 25, 50, 25);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_605_content"
+  data-contexts="1"
+  data-id="605"
+  data-name="2d.path.stroke.prune.curve"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.stroke.prune.curve (Zero-length line segments from quadraticCurveTo and bezierCurveTo are removed before stroking)">&nbsp;</div><br />
+
+<div id="test_605_status">&nbsp;</div>
+
+[<a href="?runTests=605&noCleanup#605" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="503" href="#503"\>503</a>: 2d.path.beginPath</p>
+
+<script>
+  async function test_503_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.rect(0, 0, 100, 50);
+      ctx.beginPath();
+      ctx.fillStyle = '#f00';
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_503_content"
+  data-contexts="1"
+  data-id="503"
+  data-name="2d.path.beginPath"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.beginPath">&nbsp;</div><br />
+
+<div id="test_503_status">&nbsp;</div>
+
+[<a href="?runTests=503&noCleanup#503" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="595" href="#595"\>595</a>: 2d.path.fill.closed.unaffected</p>
+
+<script>
+  async function test_595_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#00f';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.moveTo(0, 0);
+      ctx.lineTo(100, 0);
+      ctx.lineTo(100, 50);
+      ctx.fillStyle = '#f00';
+      ctx.fill();
+      ctx.lineTo(0, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fill();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 90,10, 0,255,0,255, "90,10", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 10,40, 0,255,0,255, "10,40", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_595_content"
+  data-contexts="1"
+  data-id="595"
+  data-name="2d.path.fill.closed.unaffected"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.fill.closed.unaffected">&nbsp;</div><br />
+
+<div id="test_595_status">&nbsp;</div>
+
+[<a href="?runTests=595&noCleanup#595" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="509" href="#509"\>509</a>: 2d.path.closePath.newline</p>
+
+<script>
+  async function test_509_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 50;
+      ctx.moveTo(-100, 25);
+      ctx.lineTo(-100, -100);
+      ctx.lineTo(200, -100);
+      ctx.lineTo(200, 25);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_509_content"
+  data-contexts="1"
+  data-id="509"
+  data-name="2d.path.closePath.newline"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.closePath.newline">&nbsp;</div><br />
+
+<div id="test_509_status">&nbsp;</div>
+
+[<a href="?runTests=509&noCleanup#509" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="513" href="#513"\>513</a>: 2d.path.lineTo.basic</p>
+
+<script>
+  async function test_513_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 50;
+      ctx.beginPath();
+      ctx.moveTo(0, 25);
+      ctx.lineTo(100, 25);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_513_content"
+  data-contexts="1"
+  data-id="513"
+  data-name="2d.path.lineTo.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.lineTo.basic">&nbsp;</div><br />
+
+<div id="test_513_status">&nbsp;</div>
+
+[<a href="?runTests=513&noCleanup#513" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="622" href="#622"\>622</a>: 2d.path.isPointInPath.empty (isPointInPath() works when there is no path)</p>
+
+<script>
+  async function test_622_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      canvasAssert._assertSame(t, ctx.isPointInPath(0, 0), false, "ctx.isPointInPath(0, 0)", "false");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_622_content"
+  data-contexts="1"
+  data-id="622"
+  data-name="2d.path.isPointInPath.empty"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.isPointInPath.empty (isPointInPath() works when there is no path)">&nbsp;</div><br />
+
+<div id="test_622_status">&nbsp;</div>
+
+[<a href="?runTests=622&noCleanup#622" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="611" href="#611"\>611</a>: 2d.path.transformation.changing (Transformations are applied while building paths, not when drawing)</p>
+
+<script>
+  async function test_611_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.moveTo(0, 0);
+      ctx.translate(100, 0);
+      ctx.lineTo(0, 0);
+      ctx.translate(0, 50);
+      ctx.lineTo(0, 0);
+      ctx.translate(-100, 0);
+      ctx.lineTo(0, 0);
+      ctx.translate(1000, 1000);
+      ctx.rotate(Math.PI/2);
+      ctx.scale(0.1, 0.1);
+      ctx.fill();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_611_content"
+  data-contexts="1"
+  data-id="611"
+  data-name="2d.path.transformation.changing"
+  data-width="100"
+  data-height="50"
+  data-description="2d.path.transformation.changing (Transformations are applied while building paths, not when drawing)">&nbsp;</div><br />
+
+<div id="test_611_status">&nbsp;</div>
+
+[<a href="?runTests=611&noCleanup#611" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+
+<br /><br />
+&lt;3
+
+</body>
+</html>

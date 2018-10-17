@@ -1,0 +1,440 @@
+<html>
+
+<head>
+<title>2d.type // WebGL2DContext conformance</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<style>
+  div {
+    padding: 5px;
+  }
+  canvas {
+    border: 1px black solid;
+  }
+  .progress {
+    font: 100% monospace;
+  }
+  .failure {
+    background-color: red;
+    color: white;
+    font: 100% sans-serif;
+  }
+  .success {
+    background-color: #88FF88;
+    font: 100% sans-serif;
+  }
+  .failure a:link {
+    color: white
+  }
+  .failure a:visited {
+    color: white
+  }
+</style>
+
+<script type="text/javascript" src="bundle.js"></script>
+<script type="text/javascript" src="assets.js"></script>
+<script type="text/javascript" src="asserts.js"></script>
+
+<script type="text/javascript">
+    async function getAsset(name) {
+      return new Promise((resolve, reject) => {
+        let img = document.createElement("IMG")
+        img.onload = () => resolve(img)
+        img.onerror = reject
+        img.src = rawImageAssets[name]
+      })
+    }
+
+    function bootCanvas(container, id, width, height) {
+        var canvas = document.createElement("CANVAS")
+        canvas.setAttribute("id", id)
+        canvas.setAttribute("width", width)
+        canvas.setAttribute("height", height)
+
+        container.appendChild(canvas)
+
+        var gl = canvas.getContext("webgl2", {
+          stencil: 8,
+          preserveDrawingBuffer: true
+        });
+        gl.viewportWidth = canvas.width;
+        gl.viewportHeight = canvas.height;
+        if (!gl) {
+            console.log("Could not initialise WebGL, sorry :-(")
+            return null;
+        }
+
+        gl.clearColor(1.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        /* TODO: figure out how to pass some gradient tests that need
+         * more grad stops: */
+        let ctx = new Expo2DContext.default(gl, maxGradStops=50)
+        ctx.getContext = () => {return ctx;}
+        
+        return [canvas, gl, ctx]
+    }
+
+    function spinner_graphic(i) {
+      let anim = ["/","&ndash;","\\","|","/","&ndash;","\\", "|"]
+      return anim[i%anim.length]
+    }
+
+    var testContexts = {};
+
+    function focusTest (num) {
+      window.ctx = testContexts[num][0]
+    }
+    window.onhashchange = () => {
+      var url = new URL(window.location)
+      var hashVal = url.hash.substr(1)
+      if (hashVal in testContexts) {
+        focusTest(hashVal)
+      }
+    }
+
+    async function runTests() {
+
+      // TODO: assets??
+
+      if (!window.testComplete) {
+        window.testComplete = (testResults, completedTests, totalTests) =>
+          { /* PUPPETEER STUB */ };
+      }
+
+      testContexts = {};
+
+      var tests = document.getElementsByClassName("test")
+
+      var url = new URL(window.location)
+      if (url.searchParams.get("runTests") != null) {
+        selected_test_ids = url.searchParams.get("runTests").split(",").map((x) => parseInt(x))
+        tests = selected_test_ids.map((x) => document.getElementById("test_"+x+"_content")) 
+      }
+
+      var cleanUp = url.searchParams.get("noCleanup") == null
+
+      let suite_status = document.getElementById("suite_status")
+
+      var failures = new Set();
+      var failureSummaryHTML = "Failed:<ul>"
+
+      let i = 0;
+
+      var testIteration = async (i) => {
+
+        if (i >= tests.length) {
+          finishTests();
+          return;
+        }
+
+        let test_area = tests[i]
+        let test = test_area.dataset
+    
+        // TODO: how to un-convert-from-string numbers in dataset
+        
+        let allCanvases = []
+        let allWebGLContexts = []
+        let allContexts = []
+        
+        let failureMessages = []
+
+        for (let j=0; j<parseInt(test.contexts); j++) {
+          let [canvas, gl, ctx] = bootCanvas(
+            test_area,
+            "canvas_"+test.id+"_"+j,
+            parseInt(test.width),
+            parseInt(test.height)
+          )
+          // Install fake getContext wrapper to allow context objects to be
+          // used in place of canvas objects for our tests:
+          ctx.getContext = (unused) => {return ctx};
+          allCanvases.push(canvas)
+          allWebGLContexts.push(gl)
+          allContexts.push(ctx)
+        }
+
+        let onFail = TriggerObject((message) => {
+          let status_box = document.getElementById("test_"+test.id+"_status")
+
+          status_box.setAttribute("class","failure")
+          status_box.innerHTML += message + "<br />";
+          failureMessages.push(message)
+
+          if (!failures.has(test.id)) {
+            failureSummaryHTML += "<li><a href='#"+test.id+"'>"+test.id+": "+test.description+"</a></li>"
+            failures.add(test.id);
+          }
+        })
+
+        try {
+          let test_fn = eval("test_"+test.id+"_body");
+          await test_fn(onFail, allCanvases, allContexts);
+        } catch (err) {
+          onFail.trigger(false, err.toString());
+        }
+
+        if (cleanUp) {
+          // Copy the resulting drawings out of the original canvas and
+          // safely trash the old gl context, to free up resources:
+          for (let j=0; j<parseInt(test.contexts); j++) {
+            let canvas_clone = allCanvases[j].cloneNode(true);
+            let clone_ctx = canvas_clone.getContext('2d');
+            clone_ctx.drawImage(allCanvases[j], 0, 0);
+
+            allCanvases[j].replaceWith(canvas_clone);
+
+            allWebGLContexts[j].getExtension('WEBGL_lose_context').loseContext();
+            allWebGLContexts[j] = null;
+          }
+        } else {
+          testContexts[test.id] = allContexts
+        }
+
+        suite_status.innerHTML = "["+ spinner_graphic(i) + "] Tests run: " + (i+1) + " / " + tests.length;
+
+        window.testComplete(
+          Object.assign({
+            "failureMessages": failureMessages
+          }, test), i+1, tests.length);
+
+        setTimeout(() => { testIteration(i+1) }, 1);
+      }
+
+      var finishTests = () => {
+        if (failures.size > 0) {
+          failureSummaryHTML += "</ul><br />"
+          suite_status.setAttribute("class","failure")
+          suite_status.innerHTML = failureSummaryHTML
+        } else {
+          suite_status.setAttribute("class","success")
+          suite_status.innerHTML = "[:)] All tests pass !" 
+        }
+
+        if (!cleanUp && tests.length==1){
+          focusTest(tests[0].dataset.id)
+        } else {
+          window.onhashchange()
+        }
+      };
+
+      testIteration(0);
+
+    }
+
+</script>
+</head>
+<body onload="runTests();">
+<h1> 2d.type </h1>
+<div id="suite_status" class="progress">&nbsp;</div>
+<hr />
+
+<!-- DISABLED: expected to fail (DOM/canvas tag doesn't exist)
+<p><a id="2" href="#2"\>2</a>: 2d.type.exists (The 2D context interface is a property of 'window')</p>
+
+<script>
+  async function test_2_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert._assert(t, window.CanvasRenderingContext2D, "window.CanvasRenderingContext2D");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_2_content"
+  data-contexts="1"
+  data-id="2"
+  data-name="2d.type.exists"
+  data-width="100"
+  data-height="50"
+  data-description="2d.type.exists (The 2D context interface is a property of 'window')">&nbsp;</div><br />
+
+<div id="test_2_status">&nbsp;</div>
+
+[<a href="?runTests=2&noCleanup#2" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: expected to fail (DOM/canvas tag doesn't exist)
+<p><a id="3" href="#3"\>3</a>: 2d.type.delete (window.CanvasRenderingContext2D is Configurable)</p>
+
+<script>
+  async function test_3_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      canvasAssert._assertDifferent(t, window.CanvasRenderingContext2D, undefined, "window.CanvasRenderingContext2D", "undefined");
+      ctx.flush()
+      canvasAssert._assertSame(t, delete window.CanvasRenderingContext2D, true, "delete window.CanvasRenderingContext2D", "true");
+      ctx.flush()
+      canvasAssert._assertSame(t, window.CanvasRenderingContext2D, undefined, "window.CanvasRenderingContext2D", "undefined");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_3_content"
+  data-contexts="1"
+  data-id="3"
+  data-name="2d.type.delete"
+  data-width="100"
+  data-height="50"
+  data-description="2d.type.delete (window.CanvasRenderingContext2D is Configurable)">&nbsp;</div><br />
+
+<div id="test_3_status">&nbsp;</div>
+
+[<a href="?runTests=3&noCleanup#3" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: expected to fail (DOM/canvas tag doesn't exist)
+<p><a id="6" href="#6"\>6</a>: 2d.type.extend (Interface methods can be added)</p>
+
+<script>
+  async function test_6_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          window.CanvasRenderingContext2D.prototype.fillRectGreen = function (x, y, w, h)
+      {
+          this.fillStyle = '#0f0';
+          this.fillRect(x, y, w, h);
+      };
+      ctx.fillStyle = '#f00';
+      ctx.fillRectGreen(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_6_content"
+  data-contexts="1"
+  data-id="6"
+  data-name="2d.type.extend"
+  data-width="100"
+  data-height="50"
+  data-description="2d.type.extend (Interface methods can be added)">&nbsp;</div><br />
+
+<div id="test_6_status">&nbsp;</div>
+
+[<a href="?runTests=6&noCleanup#6" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: expected to fail (DOM/canvas tag doesn't exist)
+<p><a id="5" href="#5"\>5</a>: 2d.type.replace (Interface methods can be overridden)</p>
+
+<script>
+  async function test_5_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var fillRect = window.CanvasRenderingContext2D.prototype.fillRect;
+      window.CanvasRenderingContext2D.prototype.fillRect = function (x, y, w, h)
+      {
+          this.fillStyle = '#0f0';
+          fillRect.call(this, x, y, w, h);
+      };
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_5_content"
+  data-contexts="1"
+  data-id="5"
+  data-name="2d.type.replace"
+  data-width="100"
+  data-height="50"
+  data-description="2d.type.replace (Interface methods can be overridden)">&nbsp;</div><br />
+
+<div id="test_5_status">&nbsp;</div>
+
+[<a href="?runTests=5&noCleanup#5" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: expected to fail (DOM/canvas tag doesn't exist)
+<p><a id="4" href="#4"\>4</a>: 2d.type.prototype (window.CanvasRenderingContext2D.prototype are not [[Writable]] and not [[Configurable]], and its methods are [[Configurable]].)</p>
+
+<script>
+  async function test_4_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert._assert(t, window.CanvasRenderingContext2D.prototype, "window.CanvasRenderingContext2D.prototype");
+      ctx.flush()
+      webAssert._assert(t, window.CanvasRenderingContext2D.prototype.fill, "window.CanvasRenderingContext2D.prototype.fill");
+      window.CanvasRenderingContext2D.prototype = null;
+      ctx.flush()
+      webAssert._assert(t, window.CanvasRenderingContext2D.prototype, "window.CanvasRenderingContext2D.prototype");
+      delete window.CanvasRenderingContext2D.prototype;
+      ctx.flush()
+      webAssert._assert(t, window.CanvasRenderingContext2D.prototype, "window.CanvasRenderingContext2D.prototype");
+      window.CanvasRenderingContext2D.prototype.fill = 1;
+      ctx.flush()
+      canvasAssert._assertSame(t, window.CanvasRenderingContext2D.prototype.fill, 1, "window.CanvasRenderingContext2D.prototype.fill", "1");
+      delete window.CanvasRenderingContext2D.prototype.fill;
+      ctx.flush()
+      canvasAssert._assertSame(t, window.CanvasRenderingContext2D.prototype.fill, undefined, "window.CanvasRenderingContext2D.prototype.fill", "undefined");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_4_content"
+  data-contexts="1"
+  data-id="4"
+  data-name="2d.type.prototype"
+  data-width="100"
+  data-height="50"
+  data-description="2d.type.prototype (window.CanvasRenderingContext2D.prototype are not [[Writable]] and not [[Configurable]], and its methods are [[Configurable]].)">&nbsp;</div><br />
+
+<div id="test_4_status">&nbsp;</div>
+
+[<a href="?runTests=4&noCleanup#4" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+
+<br /><br />
+&lt;3
+
+</body>
+</html>

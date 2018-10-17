@@ -1,0 +1,2858 @@
+<html>
+
+<head>
+<title>2d.gradient // WebGL2DContext conformance</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<style>
+  div {
+    padding: 5px;
+  }
+  canvas {
+    border: 1px black solid;
+  }
+  .progress {
+    font: 100% monospace;
+  }
+  .failure {
+    background-color: red;
+    color: white;
+    font: 100% sans-serif;
+  }
+  .success {
+    background-color: #88FF88;
+    font: 100% sans-serif;
+  }
+  .failure a:link {
+    color: white
+  }
+  .failure a:visited {
+    color: white
+  }
+</style>
+
+<script type="text/javascript" src="bundle.js"></script>
+<script type="text/javascript" src="assets.js"></script>
+<script type="text/javascript" src="asserts.js"></script>
+
+<script type="text/javascript">
+    async function getAsset(name) {
+      return new Promise((resolve, reject) => {
+        let img = document.createElement("IMG")
+        img.onload = () => resolve(img)
+        img.onerror = reject
+        img.src = rawImageAssets[name]
+      })
+    }
+
+    function bootCanvas(container, id, width, height) {
+        var canvas = document.createElement("CANVAS")
+        canvas.setAttribute("id", id)
+        canvas.setAttribute("width", width)
+        canvas.setAttribute("height", height)
+
+        container.appendChild(canvas)
+
+        var gl = canvas.getContext("webgl2", {
+          stencil: 8,
+          preserveDrawingBuffer: true
+        });
+        gl.viewportWidth = canvas.width;
+        gl.viewportHeight = canvas.height;
+        if (!gl) {
+            console.log("Could not initialise WebGL, sorry :-(")
+            return null;
+        }
+
+        gl.clearColor(1.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        /* TODO: figure out how to pass some gradient tests that need
+         * more grad stops: */
+        let ctx = new Expo2DContext.default(gl, maxGradStops=50)
+        ctx.getContext = () => {return ctx;}
+        
+        return [canvas, gl, ctx]
+    }
+
+    function spinner_graphic(i) {
+      let anim = ["/","&ndash;","\\","|","/","&ndash;","\\", "|"]
+      return anim[i%anim.length]
+    }
+
+    var testContexts = {};
+
+    function focusTest (num) {
+      window.ctx = testContexts[num][0]
+    }
+    window.onhashchange = () => {
+      var url = new URL(window.location)
+      var hashVal = url.hash.substr(1)
+      if (hashVal in testContexts) {
+        focusTest(hashVal)
+      }
+    }
+
+    async function runTests() {
+
+      // TODO: assets??
+
+      if (!window.testComplete) {
+        window.testComplete = (testResults, completedTests, totalTests) =>
+          { /* PUPPETEER STUB */ };
+      }
+
+      testContexts = {};
+
+      var tests = document.getElementsByClassName("test")
+
+      var url = new URL(window.location)
+      if (url.searchParams.get("runTests") != null) {
+        selected_test_ids = url.searchParams.get("runTests").split(",").map((x) => parseInt(x))
+        tests = selected_test_ids.map((x) => document.getElementById("test_"+x+"_content")) 
+      }
+
+      var cleanUp = url.searchParams.get("noCleanup") == null
+
+      let suite_status = document.getElementById("suite_status")
+
+      var failures = new Set();
+      var failureSummaryHTML = "Failed:<ul>"
+
+      let i = 0;
+
+      var testIteration = async (i) => {
+
+        if (i >= tests.length) {
+          finishTests();
+          return;
+        }
+
+        let test_area = tests[i]
+        let test = test_area.dataset
+    
+        // TODO: how to un-convert-from-string numbers in dataset
+        
+        let allCanvases = []
+        let allWebGLContexts = []
+        let allContexts = []
+        
+        let failureMessages = []
+
+        for (let j=0; j<parseInt(test.contexts); j++) {
+          let [canvas, gl, ctx] = bootCanvas(
+            test_area,
+            "canvas_"+test.id+"_"+j,
+            parseInt(test.width),
+            parseInt(test.height)
+          )
+          // Install fake getContext wrapper to allow context objects to be
+          // used in place of canvas objects for our tests:
+          ctx.getContext = (unused) => {return ctx};
+          allCanvases.push(canvas)
+          allWebGLContexts.push(gl)
+          allContexts.push(ctx)
+        }
+
+        let onFail = TriggerObject((message) => {
+          let status_box = document.getElementById("test_"+test.id+"_status")
+
+          status_box.setAttribute("class","failure")
+          status_box.innerHTML += message + "<br />";
+          failureMessages.push(message)
+
+          if (!failures.has(test.id)) {
+            failureSummaryHTML += "<li><a href='#"+test.id+"'>"+test.id+": "+test.description+"</a></li>"
+            failures.add(test.id);
+          }
+        })
+
+        try {
+          let test_fn = eval("test_"+test.id+"_body");
+          await test_fn(onFail, allCanvases, allContexts);
+        } catch (err) {
+          onFail.trigger(false, err.toString());
+        }
+
+        if (cleanUp) {
+          // Copy the resulting drawings out of the original canvas and
+          // safely trash the old gl context, to free up resources:
+          for (let j=0; j<parseInt(test.contexts); j++) {
+            let canvas_clone = allCanvases[j].cloneNode(true);
+            let clone_ctx = canvas_clone.getContext('2d');
+            clone_ctx.drawImage(allCanvases[j], 0, 0);
+
+            allCanvases[j].replaceWith(canvas_clone);
+
+            allWebGLContexts[j].getExtension('WEBGL_lose_context').loseContext();
+            allWebGLContexts[j] = null;
+          }
+        } else {
+          testContexts[test.id] = allContexts
+        }
+
+        suite_status.innerHTML = "["+ spinner_graphic(i) + "] Tests run: " + (i+1) + " / " + tests.length;
+
+        window.testComplete(
+          Object.assign({
+            "failureMessages": failureMessages
+          }, test), i+1, tests.length);
+
+        setTimeout(() => { testIteration(i+1) }, 1);
+      }
+
+      var finishTests = () => {
+        if (failures.size > 0) {
+          failureSummaryHTML += "</ul><br />"
+          suite_status.setAttribute("class","failure")
+          suite_status.innerHTML = failureSummaryHTML
+        } else {
+          suite_status.setAttribute("class","success")
+          suite_status.innerHTML = "[:)] All tests pass !" 
+        }
+
+        if (!cleanUp && tests.length==1){
+          focusTest(tests[0].dataset.id)
+        } else {
+          window.onhashchange()
+        }
+      };
+
+      testIteration(0);
+
+    }
+
+</script>
+</head>
+<body onload="runTests();">
+<h1> 2d.gradient </h1>
+<div id="suite_status" class="progress">&nbsp;</div>
+<hr />
+
+<p><a id="326" href="#326"\>326</a>: 2d.gradient.radial.cone.front</p>
+
+<script>
+  async function test_326_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createRadialGradient(311, 25, 10, 210, 25, 100);
+      g.addColorStop(0, '#f00');
+      g.addColorStop(1, '#0f0');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_326_content"
+  data-contexts="1"
+  data-id="326"
+  data-name="2d.gradient.radial.cone.front"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.cone.front">&nbsp;</div><br />
+
+<div id="test_326_status">&nbsp;</div>
+
+[<a href="?runTests=326&noCleanup#326" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="313" href="#313"\>313</a>: 2d.gradient.radial.negative (createRadialGradient() throws INDEX_SIZE_ERR if either radius is negative)</p>
+
+<script>
+  async function test_313_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { ctx.createRadialGradient(0, 0, -0.1, 0, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { ctx.createRadialGradient(0, 0, 1, 0, 0, -0.1); });
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { ctx.createRadialGradient(0, 0, -0.1, 0, 0, -0.1); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_313_content"
+  data-contexts="1"
+  data-id="313"
+  data-name="2d.gradient.radial.negative"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.negative (createRadialGradient() throws INDEX_SIZE_ERR if either radius is negative)">&nbsp;</div><br />
+
+<div id="test_313_status">&nbsp;</div>
+
+[<a href="?runTests=313&noCleanup#313" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="298" href="#298"\>298</a>: 2d.gradient.interpolate.vertical</p>
+
+<script>
+  async function test_298_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var g = ctx.createLinearGradient(0, 0, 0, 50);
+      g.addColorStop(0, '#ff0');
+      g.addColorStop(1, '#00f');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,12, 191,191,63,255, "50,12", "191,191,63,255", 10);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 127,127,127,255, "50,25", "127,127,127,255", 5);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,37, 63,63,191,255, "50,37", "63,63,191,255", 10);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_298_content"
+  data-contexts="1"
+  data-id="298"
+  data-name="2d.gradient.interpolate.vertical"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.interpolate.vertical">&nbsp;</div><br />
+
+<div id="test_298_status">&nbsp;</div>
+
+[<a href="?runTests=298&noCleanup#298" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="329" href="#329"\>329</a>: 2d.gradient.radial.cone.beside</p>
+
+<script>
+  async function test_329_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createRadialGradient(0, 100, 40, 100, 100, 50);
+      g.addColorStop(0, '#f00');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_329_content"
+  data-contexts="1"
+  data-id="329"
+  data-name="2d.gradient.radial.cone.beside"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.cone.beside">&nbsp;</div><br />
+
+<div id="test_329_status">&nbsp;</div>
+
+[<a href="?runTests=329&noCleanup#329" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="289" href="#289"\>289</a>: 2d.gradient.interpolate.alpha</p>
+
+<script>
+  async function test_289_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#ff0';
+      ctx.fillRect(0, 0, 100, 50);
+      var g = ctx.createLinearGradient(0, 0, 100, 0);
+      g.addColorStop(0, 'rgba(0,0,255, 0)');
+      g.addColorStop(1, 'rgba(0,0,255, 1)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 25,25, 191,191,63,255, "25,25", "191,191,63,255", 3);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 127,127,127,255, "50,25", "127,127,127,255", 3);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 75,25, 63,63,191,255, "75,25", "63,63,191,255", 3);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_289_content"
+  data-contexts="1"
+  data-id="289"
+  data-name="2d.gradient.interpolate.alpha"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.interpolate.alpha">&nbsp;</div><br />
+
+<div id="test_289_status">&nbsp;</div>
+
+[<a href="?runTests=289&noCleanup#289" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="324" href="#324"\>324</a>: 2d.gradient.radial.equal</p>
+
+<script>
+  async function test_324_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createRadialGradient(50, 25, 20, 50, 25, 20);
+      g.addColorStop(0, '#f00');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_324_content"
+  data-contexts="1"
+  data-id="324"
+  data-name="2d.gradient.radial.equal"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.equal">&nbsp;</div><br />
+
+<div id="test_324_status">&nbsp;</div>
+
+[<a href="?runTests=324&noCleanup#324" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="294" href="#294"\>294</a>: 2d.gradient.interpolate.zerosize.fillRect</p>
+
+<script>
+  async function test_294_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createLinearGradient(50, 25, 50, 25); // zero-length line (undefined direction)
+      g.addColorStop(0, '#f00');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 40,20, 0,255,0,255, "40,20", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_294_content"
+  data-contexts="1"
+  data-id="294"
+  data-name="2d.gradient.interpolate.zerosize.fillRect"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.interpolate.zerosize.fillRect">&nbsp;</div><br />
+
+<div id="test_294_status">&nbsp;</div>
+
+[<a href="?runTests=294&noCleanup#294" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="311" href="#311"\>311</a>: 2d.gradient.linear.transform.2 (Linear gradient coordinates are relative to the coordinate space at the time of filling)</p>
+
+<script>
+  async function test_311_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.translate(100, 0);
+      var g = ctx.createLinearGradient(0, 0, 200, 0);
+      g.addColorStop(0, '#f00');
+      g.addColorStop(0.25, '#0f0');
+      g.addColorStop(0.75, '#0f0');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.translate(-150, 0);
+      ctx.fillRect(50, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_311_content"
+  data-contexts="1"
+  data-id="311"
+  data-name="2d.gradient.linear.transform.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.linear.transform.2 (Linear gradient coordinates are relative to the coordinate space at the time of filling)">&nbsp;</div><br />
+
+<div id="test_311_status">&nbsp;</div>
+
+[<a href="?runTests=311&noCleanup#311" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="312" href="#312"\>312</a>: 2d.gradient.linear.transform.3 (Linear gradient transforms do not experience broken caching effects)</p>
+
+<script>
+  async function test_312_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var g = ctx.createLinearGradient(0, 0, 200, 0);
+      g.addColorStop(0, '#f00');
+      g.addColorStop(0.25, '#0f0');
+      g.addColorStop(0.75, '#0f0');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.translate(-50, 0);
+      ctx.fillRect(50, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_312_content"
+  data-contexts="1"
+  data-id="312"
+  data-name="2d.gradient.linear.transform.3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.linear.transform.3 (Linear gradient transforms do not experience broken caching effects)">&nbsp;</div><br />
+
+<div id="test_312_status">&nbsp;</div>
+
+[<a href="?runTests=312&noCleanup#312" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="327" href="#327"\>327</a>: 2d.gradient.radial.cone.bottom</p>
+
+<script>
+  async function test_327_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createRadialGradient(210, 25, 100, 230, 25, 101);
+      g.addColorStop(0, '#0f0');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_327_content"
+  data-contexts="1"
+  data-id="327"
+  data-name="2d.gradient.radial.cone.bottom"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.cone.bottom">&nbsp;</div><br />
+
+<div id="test_327_status">&nbsp;</div>
+
+[<a href="?runTests=327&noCleanup#327" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="290" href="#290"\>290</a>: 2d.gradient.interpolate.colouralpha</p>
+
+<script>
+  async function test_290_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var g = ctx.createLinearGradient(0, 0, 100, 0);
+      g.addColorStop(0, 'rgba(255,255,0, 0)');
+      g.addColorStop(1, 'rgba(0,0,255, 1)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 25,25, 190,190,65,65, "25,25", "190,190,65,65", 3);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 126,126,128,128, "50,25", "126,126,128,128", 3);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 75,25, 62,62,192,192, "75,25", "62,62,192,192", 3);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_290_content"
+  data-contexts="1"
+  data-id="290"
+  data-name="2d.gradient.interpolate.colouralpha"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.interpolate.colouralpha">&nbsp;</div><br />
+
+<div id="test_290_status">&nbsp;</div>
+
+[<a href="?runTests=290&noCleanup#290" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="309" href="#309"\>309</a>: 2d.gradient.linear.nonfinite (createLinearGradient() throws TypeError if arguments are not finite)</p>
+
+<script>
+  async function test_309_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(Infinity, 0, 1, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(-Infinity, 0, 1, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(NaN, 0, 1, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(0, Infinity, 1, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(0, -Infinity, 1, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(0, NaN, 1, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(0, 0, Infinity, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(0, 0, -Infinity, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(0, 0, NaN, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(0, 0, 1, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(0, 0, 1, -Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(0, 0, 1, NaN); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(Infinity, Infinity, 1, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(Infinity, Infinity, Infinity, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(Infinity, Infinity, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(Infinity, Infinity, 1, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(Infinity, 0, Infinity, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(Infinity, 0, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(Infinity, 0, 1, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(0, Infinity, Infinity, 0); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(0, Infinity, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(0, Infinity, 1, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createLinearGradient(0, 0, Infinity, Infinity); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_309_content"
+  data-contexts="1"
+  data-id="309"
+  data-name="2d.gradient.linear.nonfinite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.linear.nonfinite (createLinearGradient() throws TypeError if arguments are not finite)">&nbsp;</div><br />
+
+<div id="test_309_status">&nbsp;</div>
+
+[<a href="?runTests=309&noCleanup#309" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="308" href="#308"\>308</a>: 2d.gradient.object.invalidcolour</p>
+
+<script>
+  async function test_308_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var g = ctx.createLinearGradient(0, 0, 100, 0);
+      ctx.flush()
+      webAssert.assert_throws(t, "SYNTAX_ERR", function() { g.addColorStop(0, ""); });
+      ctx.flush()
+      webAssert.assert_throws(t, "SYNTAX_ERR", function() { g.addColorStop(0, 'rgb(NaN%, NaN%, NaN%)'); });
+      ctx.flush()
+      webAssert.assert_throws(t, "SYNTAX_ERR", function() { g.addColorStop(0, 'null'); });
+      ctx.flush()
+      webAssert.assert_throws(t, "SYNTAX_ERR", function() { g.addColorStop(0, 'undefined'); });
+      ctx.flush()
+      webAssert.assert_throws(t, "SYNTAX_ERR", function() { g.addColorStop(0, null); });
+      ctx.flush()
+      webAssert.assert_throws(t, "SYNTAX_ERR", function() { g.addColorStop(0, undefined); });
+      
+      var g = ctx.createRadialGradient(0, 0, 0, 100, 0, 0);
+      ctx.flush()
+      webAssert.assert_throws(t, "SYNTAX_ERR", function() { g.addColorStop(0, ""); });
+      ctx.flush()
+      webAssert.assert_throws(t, "SYNTAX_ERR", function() { g.addColorStop(0, 'rgb(NaN%, NaN%, NaN%)'); });
+      ctx.flush()
+      webAssert.assert_throws(t, "SYNTAX_ERR", function() { g.addColorStop(0, 'null'); });
+      ctx.flush()
+      webAssert.assert_throws(t, "SYNTAX_ERR", function() { g.addColorStop(0, 'undefined'); });
+      ctx.flush()
+      webAssert.assert_throws(t, "SYNTAX_ERR", function() { g.addColorStop(0, null); });
+      ctx.flush()
+      webAssert.assert_throws(t, "SYNTAX_ERR", function() { g.addColorStop(0, undefined); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_308_content"
+  data-contexts="1"
+  data-id="308"
+  data-name="2d.gradient.object.invalidcolour"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.object.invalidcolour">&nbsp;</div><br />
+
+<div id="test_308_status">&nbsp;</div>
+
+[<a href="?runTests=308&noCleanup#308" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="310" href="#310"\>310</a>: 2d.gradient.linear.transform.1 (Linear gradient coordinates are relative to the coordinate space at the time of filling)</p>
+
+<script>
+  async function test_310_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var g = ctx.createLinearGradient(0, 0, 200, 0);
+      g.addColorStop(0, '#f00');
+      g.addColorStop(0.25, '#0f0');
+      g.addColorStop(0.75, '#0f0');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.translate(-50, 0);
+      ctx.fillRect(50, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_310_content"
+  data-contexts="1"
+  data-id="310"
+  data-name="2d.gradient.linear.transform.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.linear.transform.1 (Linear gradient coordinates are relative to the coordinate space at the time of filling)">&nbsp;</div><br />
+
+<div id="test_310_status">&nbsp;</div>
+
+[<a href="?runTests=310&noCleanup#310" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="333" href="#333"\>333</a>: 2d.gradient.radial.transform.1 (Radial gradient coordinates are relative to the coordinate space at the time of filling)</p>
+
+<script>
+  async function test_333_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var g = ctx.createRadialGradient(0, 0, 0, 0, 0, 11.2);
+      g.addColorStop(0, '#0f0');
+      g.addColorStop(0.5, '#0f0');
+      g.addColorStop(0.51, '#f00');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.translate(50, 25);
+      ctx.scale(10, 10);
+      ctx.fillRect(-5, -2.5, 10, 5);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_333_content"
+  data-contexts="1"
+  data-id="333"
+  data-name="2d.gradient.radial.transform.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.transform.1 (Radial gradient coordinates are relative to the coordinate space at the time of filling)">&nbsp;</div><br />
+
+<div id="test_333_status">&nbsp;</div>
+
+[<a href="?runTests=333&noCleanup#333" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="335" href="#335"\>335</a>: 2d.gradient.radial.transform.3 (Radial gradient transforms do not experience broken caching effects)</p>
+
+<script>
+  async function test_335_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var g = ctx.createRadialGradient(0, 0, 0, 0, 0, 11.2);
+      g.addColorStop(0, '#0f0');
+      g.addColorStop(0.5, '#0f0');
+      g.addColorStop(0.51, '#f00');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.translate(50, 25);
+      ctx.scale(10, 10);
+      ctx.fillRect(-5, -2.5, 10, 5);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_335_content"
+  data-contexts="1"
+  data-id="335"
+  data-name="2d.gradient.radial.transform.3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.transform.3 (Radial gradient transforms do not experience broken caching effects)">&nbsp;</div><br />
+
+<div id="test_335_status">&nbsp;</div>
+
+[<a href="?runTests=335&noCleanup#335" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: TODO support cross-canvas drawing
+<p><a id="305" href="#305"\>305</a>: 2d.gradient.object.crosscanvas</p>
+
+<script>
+  async function test_305_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      var g = allContexts[1].getContext('2d').createLinearGradient(0, 0, 100, 0);
+      g.addColorStop(0, '#0f0');
+      g.addColorStop(1, '#0f0');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_305_content"
+  data-contexts="2"
+  data-id="305"
+  data-name="2d.gradient.object.crosscanvas"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.object.crosscanvas">&nbsp;</div><br />
+
+<div id="test_305_status">&nbsp;</div>
+
+[<a href="?runTests=305&noCleanup#305" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="303" href="#303"\>303</a>: 2d.gradient.object.update</p>
+
+<script>
+  async function test_303_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var g = ctx.createLinearGradient(-100, 0, 200, 0);
+      g.addColorStop(0, '#f00');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      g.addColorStop(0.1, '#0f0');
+      g.addColorStop(0.9, '#0f0');
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_303_content"
+  data-contexts="1"
+  data-id="303"
+  data-name="2d.gradient.object.update"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.object.update">&nbsp;</div><br />
+
+<div id="test_303_status">&nbsp;</div>
+
+[<a href="?runTests=303&noCleanup#303" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="297" href="#297"\>297</a>: 2d.gradient.interpolate.zerosize.strokeText</p>
+
+<script>
+  async function test_297_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          await ctx.initializeText();
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createLinearGradient(50, 25, 50, 25); // zero-length line (undefined direction)
+      g.addColorStop(0, '#f00');
+      g.addColorStop(1, '#f00');
+      ctx.strokeStyle = g;
+      ctx.font = '100px sans-serif';
+      ctx.strokeText("AA", 0, 50);
+      ctx.flush()
+      canvasAssert._assertGreen(t,ctx, 100, 50);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_297_content"
+  data-contexts="1"
+  data-id="297"
+  data-name="2d.gradient.interpolate.zerosize.strokeText"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.interpolate.zerosize.strokeText">&nbsp;</div><br />
+
+<div id="test_297_status">&nbsp;</div>
+
+[<a href="?runTests=297&noCleanup#297" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="287" href="#287"\>287</a>: 2d.gradient.interpolate.solid</p>
+
+<script>
+  async function test_287_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var g = ctx.createLinearGradient(0, 0, 100, 0);
+      g.addColorStop(0, '#0f0');
+      g.addColorStop(1, '#0f0');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_287_content"
+  data-contexts="1"
+  data-id="287"
+  data-name="2d.gradient.interpolate.solid"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.interpolate.solid">&nbsp;</div><br />
+
+<div id="test_287_status">&nbsp;</div>
+
+[<a href="?runTests=287&noCleanup#287" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="320" href="#320"\>320</a>: 2d.gradient.radial.outside3</p>
+
+<script>
+  async function test_320_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createRadialGradient(200, 25, 20, 200, 25, 10);
+      g.addColorStop(0, '#0f0');
+      g.addColorStop(0.001, '#f00');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_320_content"
+  data-contexts="1"
+  data-id="320"
+  data-name="2d.gradient.radial.outside3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.outside3">&nbsp;</div><br />
+
+<div id="test_320_status">&nbsp;</div>
+
+[<a href="?runTests=320&noCleanup#320" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="319" href="#319"\>319</a>: 2d.gradient.radial.outside2</p>
+
+<script>
+  async function test_319_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createRadialGradient(200, 25, 20, 200, 25, 10);
+      g.addColorStop(0, '#0f0');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_319_content"
+  data-contexts="1"
+  data-id="319"
+  data-name="2d.gradient.radial.outside2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.outside2">&nbsp;</div><br />
+
+<div id="test_319_status">&nbsp;</div>
+
+[<a href="?runTests=319&noCleanup#319" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="318" href="#318"\>318</a>: 2d.gradient.radial.outside1</p>
+
+<script>
+  async function test_318_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createRadialGradient(200, 25, 10, 200, 25, 20);
+      g.addColorStop(0, '#f00');
+      g.addColorStop(1, '#0f0');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_318_content"
+  data-contexts="1"
+  data-id="318"
+  data-name="2d.gradient.radial.outside1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.outside1">&nbsp;</div><br />
+
+<div id="test_318_status">&nbsp;</div>
+
+[<a href="?runTests=318&noCleanup#318" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="321" href="#321"\>321</a>: 2d.gradient.radial.touch1</p>
+
+<script>
+  async function test_321_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createRadialGradient(150, 25, 50, 200, 25, 100);
+      g.addColorStop(0, '#f00');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_321_content"
+  data-contexts="1"
+  data-id="321"
+  data-name="2d.gradient.radial.touch1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.touch1">&nbsp;</div><br />
+
+<div id="test_321_status">&nbsp;</div>
+
+[<a href="?runTests=321&noCleanup#321" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="292" href="#292"\>292</a>: 2d.gradient.interpolate.zerosize.fill</p>
+
+<script>
+  async function test_292_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createLinearGradient(50, 25, 50, 25); // zero-length line (undefined direction)
+      g.addColorStop(0, '#f00');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.rect(0, 0, 100, 50);
+      ctx.fill();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 40,20, 0,255,0,255, "40,20", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_292_content"
+  data-contexts="1"
+  data-id="292"
+  data-name="2d.gradient.interpolate.zerosize.fill"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.interpolate.zerosize.fill">&nbsp;</div><br />
+
+<div id="test_292_status">&nbsp;</div>
+
+[<a href="?runTests=292&noCleanup#292" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="296" href="#296"\>296</a>: 2d.gradient.interpolate.zerosize.fillText</p>
+
+<script>
+  async function test_296_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          await ctx.initializeText();
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createLinearGradient(50, 25, 50, 25); // zero-length line (undefined direction)
+      g.addColorStop(0, '#f00');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.font = '100px sans-serif';
+      ctx.fillText("AA", 0, 50);
+      ctx.flush()
+      canvasAssert._assertGreen(t,ctx, 100, 50);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_296_content"
+  data-contexts="1"
+  data-id="296"
+  data-name="2d.gradient.interpolate.zerosize.fillText"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.interpolate.zerosize.fillText">&nbsp;</div><br />
+
+<div id="test_296_status">&nbsp;</div>
+
+[<a href="?runTests=296&noCleanup#296" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="304" href="#304"\>304</a>: 2d.gradient.object.compare</p>
+
+<script>
+  async function test_304_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var g1 = ctx.createLinearGradient(0, 0, 100, 0);
+      var g2 = ctx.createLinearGradient(0, 0, 100, 0);
+      ctx.flush()
+      canvasAssert._assertDifferent(t, g1, g2, "g1", "g2");
+      ctx.fillStyle = g1;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.fillStyle, g1, "ctx.fillStyle", "g1");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_304_content"
+  data-contexts="1"
+  data-id="304"
+  data-name="2d.gradient.object.compare"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.object.compare">&nbsp;</div><br />
+
+<div id="test_304_status">&nbsp;</div>
+
+[<a href="?runTests=304&noCleanup#304" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="328" href="#328"\>328</a>: 2d.gradient.radial.cone.top</p>
+
+<script>
+  async function test_328_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createRadialGradient(230, 25, 100, 100, 25, 101);
+      g.addColorStop(0, '#f00');
+      g.addColorStop(1, '#0f0');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_328_content"
+  data-contexts="1"
+  data-id="328"
+  data-name="2d.gradient.radial.cone.top"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.cone.top">&nbsp;</div><br />
+
+<div id="test_328_status">&nbsp;</div>
+
+[<a href="?runTests=328&noCleanup#328" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="307" href="#307"\>307</a>: 2d.gradient.object.invalidoffset</p>
+
+<script>
+  async function test_307_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var g = ctx.createLinearGradient(0, 0, 100, 0);
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { g.addColorStop(-1, '#000'); });
+      ctx.flush()
+      webAssert.assert_throws(t, "INDEX_SIZE_ERR", function() { g.addColorStop(2, '#000'); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { g.addColorStop(Infinity, '#000'); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { g.addColorStop(-Infinity, '#000'); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { g.addColorStop(NaN, '#000'); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_307_content"
+  data-contexts="1"
+  data-id="307"
+  data-name="2d.gradient.object.invalidoffset"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.object.invalidoffset">&nbsp;</div><br />
+
+<div id="test_307_status">&nbsp;</div>
+
+[<a href="?runTests=307&noCleanup#307" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="299" href="#299"\>299</a>: 2d.gradient.interpolate.multiple</p>
+
+<script>
+  async function test_299_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var g = ctx.createLinearGradient(0, 0, 200, 0);
+      g.addColorStop(0, '#ff0');
+      g.addColorStop(0.5, '#0ff');
+      g.addColorStop(1, '#f0f');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 200, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 127,255,127,255, "50,25", "127,255,127,255", 3);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 100,25, 0,255,255,255, "100,25", "0,255,255,255", 3);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 150,25, 127,127,255,255, "150,25", "127,127,255,255", 3);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_299_content"
+  data-contexts="1"
+  data-id="299"
+  data-name="2d.gradient.interpolate.multiple"
+  data-width="200"
+  data-height="50"
+  data-description="2d.gradient.interpolate.multiple">&nbsp;</div><br />
+
+<div id="test_299_status">&nbsp;</div>
+
+[<a href="?runTests=299&noCleanup#299" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="317" href="#317"\>317</a>: 2d.gradient.radial.inside3</p>
+
+<script>
+  async function test_317_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createRadialGradient(50, 25, 200, 50, 25, 100);
+      g.addColorStop(0, '#f00');
+      g.addColorStop(0.993, '#f00');
+      g.addColorStop(1, '#0f0');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_317_content"
+  data-contexts="1"
+  data-id="317"
+  data-name="2d.gradient.radial.inside3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.inside3">&nbsp;</div><br />
+
+<div id="test_317_status">&nbsp;</div>
+
+[<a href="?runTests=317&noCleanup#317" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="316" href="#316"\>316</a>: 2d.gradient.radial.inside2</p>
+
+<script>
+  async function test_316_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createRadialGradient(50, 25, 200, 50, 25, 100);
+      g.addColorStop(0, '#f00');
+      g.addColorStop(1, '#0f0');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_316_content"
+  data-contexts="1"
+  data-id="316"
+  data-name="2d.gradient.radial.inside2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.inside2">&nbsp;</div><br />
+
+<div id="test_316_status">&nbsp;</div>
+
+[<a href="?runTests=316&noCleanup#316" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="315" href="#315"\>315</a>: 2d.gradient.radial.inside1</p>
+
+<script>
+  async function test_315_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createRadialGradient(50, 25, 100, 50, 25, 200);
+      g.addColorStop(0, '#0f0');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_315_content"
+  data-contexts="1"
+  data-id="315"
+  data-name="2d.gradient.radial.inside1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.inside1">&nbsp;</div><br />
+
+<div id="test_315_status">&nbsp;</div>
+
+[<a href="?runTests=315&noCleanup#315" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="293" href="#293"\>293</a>: 2d.gradient.interpolate.zerosize.stroke</p>
+
+<script>
+  async function test_293_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createLinearGradient(50, 25, 50, 25); // zero-length line (undefined direction)
+      g.addColorStop(0, '#f00');
+      g.addColorStop(1, '#f00');
+      ctx.strokeStyle = g;
+      ctx.rect(20, 20, 60, 10);
+      ctx.stroke();
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 19,19, 0,255,0,255, "19,19", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 20,19, 0,255,0,255, "20,19", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 21,19, 0,255,0,255, "21,19", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 19,20, 0,255,0,255, "19,20", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 20,20, 0,255,0,255, "20,20", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 21,20, 0,255,0,255, "21,20", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 19,21, 0,255,0,255, "19,21", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 20,21, 0,255,0,255, "20,21", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 21,21, 0,255,0,255, "21,21", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_293_content"
+  data-contexts="1"
+  data-id="293"
+  data-name="2d.gradient.interpolate.zerosize.stroke"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.interpolate.zerosize.stroke">&nbsp;</div><br />
+
+<div id="test_293_status">&nbsp;</div>
+
+[<a href="?runTests=293&noCleanup#293" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="291" href="#291"\>291</a>: 2d.gradient.interpolate.outside</p>
+
+<script>
+  async function test_291_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createLinearGradient(25, 0, 75, 0);
+      g.addColorStop(0.4, '#0f0');
+      g.addColorStop(0.6, '#0f0');
+      
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 20,25, 0,255,0,255, "20,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 80,25, 0,255,0,255, "80,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_291_content"
+  data-contexts="1"
+  data-id="291"
+  data-name="2d.gradient.interpolate.outside"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.interpolate.outside">&nbsp;</div><br />
+
+<div id="test_291_status">&nbsp;</div>
+
+[<a href="?runTests=291&noCleanup#291" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="325" href="#325"\>325</a>: 2d.gradient.radial.cone.behind</p>
+
+<script>
+  async function test_325_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createRadialGradient(120, 25, 10, 211, 25, 100);
+      g.addColorStop(0, '#f00');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_325_content"
+  data-contexts="1"
+  data-id="325"
+  data-name="2d.gradient.radial.cone.behind"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.cone.behind">&nbsp;</div><br />
+
+<div id="test_325_status">&nbsp;</div>
+
+[<a href="?runTests=325&noCleanup#325" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="323" href="#323"\>323</a>: 2d.gradient.radial.touch3</p>
+
+<script>
+  async function test_323_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createRadialGradient(120, -15, 25, 140, -30, 50);
+      g.addColorStop(0, '#f00');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_323_content"
+  data-contexts="1"
+  data-id="323"
+  data-name="2d.gradient.radial.touch3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.touch3">&nbsp;</div><br />
+
+<div id="test_323_status">&nbsp;</div>
+
+[<a href="?runTests=323&noCleanup#323" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="334" href="#334"\>334</a>: 2d.gradient.radial.transform.2 (Radial gradient coordinates are relative to the coordinate space at the time of filling)</p>
+
+<script>
+  async function test_334_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.translate(100, 0);
+      var g = ctx.createRadialGradient(0, 0, 0, 0, 0, 11.2);
+      g.addColorStop(0, '#0f0');
+      g.addColorStop(0.5, '#0f0');
+      g.addColorStop(0.51, '#f00');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.translate(-50, 25);
+      ctx.scale(10, 10);
+      ctx.fillRect(-5, -2.5, 10, 5);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_334_content"
+  data-contexts="1"
+  data-id="334"
+  data-name="2d.gradient.radial.transform.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.transform.2 (Radial gradient coordinates are relative to the coordinate space at the time of filling)">&nbsp;</div><br />
+
+<div id="test_334_status">&nbsp;</div>
+
+[<a href="?runTests=334&noCleanup#334" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: no canvas object (TODO should there be a way of grabbing style information from surrounding GLView for css value 'currentColor'??)
+<p><a id="306" href="#306"\>306</a>: 2d.gradient.object.current</p>
+
+<script>
+  async function test_306_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          canvas.setAttribute('style', 'color: #f00');
+      
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createLinearGradient(0, 0, 100, 0);
+      g.addColorStop(0, 'currentColor');
+      g.addColorStop(1, 'currentColor');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,0,0,255, "50,25", "0,0,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_306_content"
+  data-contexts="1"
+  data-id="306"
+  data-name="2d.gradient.object.current"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.object.current">&nbsp;</div><br />
+
+<div id="test_306_status">&nbsp;</div>
+
+[<a href="?runTests=306&noCleanup#306" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: window object/DOM doesn't exist
+<p><a id="285" href="#285"\>285</a>: 2d.gradient.object.type (window.CanvasGradient exists and has the right properties)</p>
+
+<script>
+  async function test_285_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      canvasAssert._assertDifferent(t, window.CanvasGradient, undefined, "window.CanvasGradient", "undefined");
+      ctx.flush()
+      canvasAssert._assertDifferent(t, window.CanvasGradient.prototype.addColorStop, undefined, "window.CanvasGradient.prototype.addColorStop", "undefined");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_285_content"
+  data-contexts="1"
+  data-id="285"
+  data-name="2d.gradient.object.type"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.object.type (window.CanvasGradient exists and has the right properties)">&nbsp;</div><br />
+
+<div id="test_285_status">&nbsp;</div>
+
+[<a href="?runTests=285&noCleanup#285" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="288" href="#288"\>288</a>: 2d.gradient.interpolate.colour</p>
+
+<script>
+  async function test_288_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var g = ctx.createLinearGradient(0, 0, 100, 0);
+      g.addColorStop(0, '#ff0');
+      g.addColorStop(1, '#00f');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 25,25, 191,191,63,255, "25,25", "191,191,63,255", 3);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 127,127,127,255, "50,25", "127,127,127,255", 3);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 75,25, 63,63,191,255, "75,25", "63,63,191,255", 3);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_288_content"
+  data-contexts="1"
+  data-id="288"
+  data-name="2d.gradient.interpolate.colour"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.interpolate.colour">&nbsp;</div><br />
+
+<div id="test_288_status">&nbsp;</div>
+
+[<a href="?runTests=288&noCleanup#288" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="300" href="#300"\>300</a>: 2d.gradient.interpolate.overlap</p>
+
+<script>
+  async function test_300_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var g = ctx.createLinearGradient(0, 0, 200, 0);
+      g.addColorStop(0, '#f00');
+      g.addColorStop(0, '#ff0');
+      g.addColorStop(0.25, '#00f');
+      g.addColorStop(0.25, '#0f0');
+      g.addColorStop(0.25, '#0f0');
+      g.addColorStop(0.25, '#0f0');
+      g.addColorStop(0.25, '#ff0');
+      g.addColorStop(0.5, '#00f');
+      g.addColorStop(0.5, '#0f0');
+      g.addColorStop(0.75, '#00f');
+      g.addColorStop(0.75, '#f00');
+      g.addColorStop(0.75, '#ff0');
+      g.addColorStop(0.5, '#0f0');
+      g.addColorStop(0.5, '#0f0');
+      g.addColorStop(0.5, '#ff0');
+      g.addColorStop(1, '#00f');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 200, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 49,25, 0,0,255,255, "49,25", "0,0,255,255", 16);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 51,25, 255,255,0,255, "51,25", "255,255,0,255", 16);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 99,25, 0,0,255,255, "99,25", "0,0,255,255", 16);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 101,25, 255,255,0,255, "101,25", "255,255,0,255", 16);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 149,25, 0,0,255,255, "149,25", "0,0,255,255", 16);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 151,25, 255,255,0,255, "151,25", "255,255,0,255", 16);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_300_content"
+  data-contexts="1"
+  data-id="300"
+  data-name="2d.gradient.interpolate.overlap"
+  data-width="200"
+  data-height="50"
+  data-description="2d.gradient.interpolate.overlap">&nbsp;</div><br />
+
+<div id="test_300_status">&nbsp;</div>
+
+[<a href="?runTests=300&noCleanup#300" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="301" href="#301"\>301</a>: 2d.gradient.interpolate.overlap2</p>
+
+<script>
+  async function test_301_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var g = ctx.createLinearGradient(0, 0, 100, 0);
+      var ps = [ 0, 1/10, 1/4, 1/3, 1/2, 3/4, 1 ];
+      for (var p = 0; p < ps.length; ++p)
+      {
+              g.addColorStop(ps[p], '#0f0');
+              for (var i = 0; i < 15; ++i)
+                      g.addColorStop(ps[p], '#f00');
+              g.addColorStop(ps[p], '#0f0');
+      }
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 30,25, 0,255,0,255, "30,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 40,25, 0,255,0,255, "40,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 60,25, 0,255,0,255, "60,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 80,25, 0,255,0,255, "80,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_301_content"
+  data-contexts="1"
+  data-id="301"
+  data-name="2d.gradient.interpolate.overlap2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.interpolate.overlap2">&nbsp;</div><br />
+
+<div id="test_301_status">&nbsp;</div>
+
+[<a href="?runTests=301&noCleanup#301" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="302" href="#302"\>302</a>: 2d.gradient.empty</p>
+
+<script>
+  async function test_302_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      var g = ctx.createLinearGradient(0, 0, 0, 50);
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_302_content"
+  data-contexts="1"
+  data-id="302"
+  data-name="2d.gradient.empty"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.empty">&nbsp;</div><br />
+
+<div id="test_302_status">&nbsp;</div>
+
+[<a href="?runTests=302&noCleanup#302" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<!-- DISABLED: window object/DOM doesn't exist
+<p><a id="286" href="#286"\>286</a>: 2d.gradient.object.return (createLinearGradient() and createRadialGradient() returns objects implementing CanvasGradient)</p>
+
+<script>
+  async function test_286_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          window.CanvasGradient.prototype.thisImplementsCanvasGradient = true;
+      
+      var g1 = ctx.createLinearGradient(0, 0, 100, 0);
+      ctx.flush()
+      canvasAssert._assertDifferent(t, g1.addColorStop, undefined, "g1.addColorStop", "undefined");
+      ctx.flush()
+      canvasAssert._assertSame(t, g1.thisImplementsCanvasGradient, true, "g1.thisImplementsCanvasGradient", "true");
+      
+      var g2 = ctx.createRadialGradient(0, 0, 10, 0, 0, 20);
+      ctx.flush()
+      canvasAssert._assertDifferent(t, g2.addColorStop, undefined, "g2.addColorStop", "undefined");
+      ctx.flush()
+      canvasAssert._assertSame(t, g2.thisImplementsCanvasGradient, true, "g2.thisImplementsCanvasGradient", "true");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_286_content"
+  data-contexts="1"
+  data-id="286"
+  data-name="2d.gradient.object.return"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.object.return (createLinearGradient() and createRadialGradient() returns objects implementing CanvasGradient)">&nbsp;</div><br />
+
+<div id="test_286_status">&nbsp;</div>
+
+[<a href="?runTests=286&noCleanup#286" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<p><a id="322" href="#322"\>322</a>: 2d.gradient.radial.touch2</p>
+
+<script>
+  async function test_322_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createRadialGradient(-80, 25, 70, 0, 25, 150);
+      g.addColorStop(0, '#f00');
+      g.addColorStop(0.01, '#0f0');
+      g.addColorStop(0.99, '#0f0');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_322_content"
+  data-contexts="1"
+  data-id="322"
+  data-name="2d.gradient.radial.touch2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.touch2">&nbsp;</div><br />
+
+<div id="test_322_status">&nbsp;</div>
+
+[<a href="?runTests=322&noCleanup#322" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="314" href="#314"\>314</a>: 2d.gradient.radial.nonfinite (createRadialGradient() throws TypeError if arguments are not finite)</p>
+
+<script>
+  async function test_314_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, 0, 1, 0, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(-Infinity, 0, 1, 0, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(NaN, 0, 1, 0, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, Infinity, 1, 0, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, -Infinity, 1, 0, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, NaN, 1, 0, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, Infinity, 0, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, -Infinity, 0, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, NaN, 0, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, 1, Infinity, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, 1, -Infinity, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, 1, NaN, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, 1, 0, Infinity, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, 1, 0, -Infinity, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, 1, 0, NaN, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, 1, 0, 0, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, 1, 0, 0, -Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, 1, 0, 0, NaN); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, Infinity, 1, 0, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, Infinity, Infinity, 0, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, Infinity, Infinity, Infinity, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, Infinity, Infinity, Infinity, Infinity, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, Infinity, Infinity, Infinity, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, Infinity, Infinity, Infinity, 0, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, Infinity, Infinity, 0, Infinity, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, Infinity, Infinity, 0, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, Infinity, Infinity, 0, 0, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, Infinity, 1, Infinity, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, Infinity, 1, Infinity, Infinity, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, Infinity, 1, Infinity, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, Infinity, 1, Infinity, 0, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, Infinity, 1, 0, Infinity, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, Infinity, 1, 0, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, Infinity, 1, 0, 0, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, 0, Infinity, 0, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, 0, Infinity, Infinity, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, 0, Infinity, Infinity, Infinity, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, 0, Infinity, Infinity, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, 0, Infinity, Infinity, 0, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, 0, Infinity, 0, Infinity, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, 0, Infinity, 0, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, 0, Infinity, 0, 0, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, 0, 1, Infinity, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, 0, 1, Infinity, Infinity, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, 0, 1, Infinity, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, 0, 1, Infinity, 0, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, 0, 1, 0, Infinity, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, 0, 1, 0, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(Infinity, 0, 1, 0, 0, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, Infinity, Infinity, 0, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, Infinity, Infinity, Infinity, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, Infinity, Infinity, Infinity, Infinity, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, Infinity, Infinity, Infinity, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, Infinity, Infinity, Infinity, 0, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, Infinity, Infinity, 0, Infinity, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, Infinity, Infinity, 0, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, Infinity, Infinity, 0, 0, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, Infinity, 1, Infinity, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, Infinity, 1, Infinity, Infinity, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, Infinity, 1, Infinity, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, Infinity, 1, Infinity, 0, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, Infinity, 1, 0, Infinity, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, Infinity, 1, 0, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, Infinity, 1, 0, 0, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, Infinity, Infinity, 0, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, Infinity, Infinity, Infinity, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, Infinity, Infinity, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, Infinity, Infinity, 0, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, Infinity, 0, Infinity, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, Infinity, 0, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, Infinity, 0, 0, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, 1, Infinity, Infinity, 1); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, 1, Infinity, Infinity, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, 1, Infinity, 0, Infinity); });
+      ctx.flush()
+      webAssert.assert_throws(t, new TypeError(), function() { ctx.createRadialGradient(0, 0, 1, 0, Infinity, Infinity); });
+      
+  }
+</script>
+
+<div class="test"
+  id="test_314_content"
+  data-contexts="1"
+  data-id="314"
+  data-name="2d.gradient.radial.nonfinite"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.nonfinite (createRadialGradient() throws TypeError if arguments are not finite)">&nbsp;</div><br />
+
+<div id="test_314_status">&nbsp;</div>
+
+[<a href="?runTests=314&noCleanup#314" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="295" href="#295"\>295</a>: 2d.gradient.interpolate.zerosize.strokeRect</p>
+
+<script>
+  async function test_295_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createLinearGradient(50, 25, 50, 25); // zero-length line (undefined direction)
+      g.addColorStop(0, '#f00');
+      g.addColorStop(1, '#f00');
+      ctx.strokeStyle = g;
+      ctx.strokeRect(20, 20, 60, 10);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 19,19, 0,255,0,255, "19,19", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 20,19, 0,255,0,255, "20,19", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 21,19, 0,255,0,255, "21,19", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 19,20, 0,255,0,255, "19,20", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 20,20, 0,255,0,255, "20,20", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 21,20, 0,255,0,255, "21,20", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 19,21, 0,255,0,255, "19,21", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 20,21, 0,255,0,255, "20,21", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 21,21, 0,255,0,255, "21,21", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_295_content"
+  data-contexts="1"
+  data-id="295"
+  data-name="2d.gradient.interpolate.zerosize.strokeRect"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.interpolate.zerosize.strokeRect">&nbsp;</div><br />
+
+<div id="test_295_status">&nbsp;</div>
+
+[<a href="?runTests=295&noCleanup#295" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="330" href="#330"\>330</a>: 2d.gradient.radial.cone.cylinder</p>
+
+<script>
+  async function test_330_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createRadialGradient(210, 25, 100, 230, 25, 100);
+      g.addColorStop(0, '#0f0');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_330_content"
+  data-contexts="1"
+  data-id="330"
+  data-name="2d.gradient.radial.cone.cylinder"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.cone.cylinder">&nbsp;</div><br />
+
+<div id="test_330_status">&nbsp;</div>
+
+[<a href="?runTests=330&noCleanup#330" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="332" href="#332"\>332</a>: 2d.gradient.radial.cone.shape2</p>
+
+<script>
+  async function test_332_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var tol = 1; // tolerance to avoid antialiasing artifacts
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var g = ctx.createRadialGradient(30+10*5/2, 40, 10*3/2, 30+10*15/4, 40, 10*9/4);
+      g.addColorStop(0, '#f00');
+      g.addColorStop(1, '#f00');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.beginPath();
+      ctx.moveTo(30-tol, 40);
+      ctx.lineTo(110, -20-tol);
+      ctx.lineTo(110, 100+tol);
+      ctx.fill();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_332_content"
+  data-contexts="1"
+  data-id="332"
+  data-name="2d.gradient.radial.cone.shape2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.cone.shape2">&nbsp;</div><br />
+
+<div id="test_332_status">&nbsp;</div>
+
+[<a href="?runTests=332&noCleanup#332" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="331" href="#331"\>331</a>: 2d.gradient.radial.cone.shape1</p>
+
+<script>
+  async function test_331_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var tol = 1; // tolerance to avoid antialiasing artifacts
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#f00';
+      ctx.beginPath();
+      ctx.moveTo(30+tol, 40);
+      ctx.lineTo(110, -20+tol);
+      ctx.lineTo(110, 100-tol);
+      ctx.fill();
+      
+      var g = ctx.createRadialGradient(30+10*5/2, 40, 10*3/2, 30+10*15/4, 40, 10*9/4);
+      g.addColorStop(0, '#0f0');
+      g.addColorStop(1, '#0f0');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,1, 0,255,0,255, "50,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,1, 0,255,0,255, "98,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,48, 0,255,0,255, "50,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_331_content"
+  data-contexts="1"
+  data-id="331"
+  data-name="2d.gradient.radial.cone.shape1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.gradient.radial.cone.shape1">&nbsp;</div><br />
+
+<div id="test_331_status">&nbsp;</div>
+
+[<a href="?runTests=331&noCleanup#331" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+
+<br /><br />
+&lt;3
+
+</body>
+</html>

@@ -1,0 +1,2845 @@
+<html>
+
+<head>
+<title>2d.shadow // WebGL2DContext conformance</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<style>
+  div {
+    padding: 5px;
+  }
+  canvas {
+    border: 1px black solid;
+  }
+  .progress {
+    font: 100% monospace;
+  }
+  .failure {
+    background-color: red;
+    color: white;
+    font: 100% sans-serif;
+  }
+  .success {
+    background-color: #88FF88;
+    font: 100% sans-serif;
+  }
+  .failure a:link {
+    color: white
+  }
+  .failure a:visited {
+    color: white
+  }
+</style>
+
+<script type="text/javascript" src="bundle.js"></script>
+<script type="text/javascript" src="assets.js"></script>
+<script type="text/javascript" src="asserts.js"></script>
+
+<script type="text/javascript">
+    async function getAsset(name) {
+      return new Promise((resolve, reject) => {
+        let img = document.createElement("IMG")
+        img.onload = () => resolve(img)
+        img.onerror = reject
+        img.src = rawImageAssets[name]
+      })
+    }
+
+    function bootCanvas(container, id, width, height) {
+        var canvas = document.createElement("CANVAS")
+        canvas.setAttribute("id", id)
+        canvas.setAttribute("width", width)
+        canvas.setAttribute("height", height)
+
+        container.appendChild(canvas)
+
+        var gl = canvas.getContext("webgl2", {
+          stencil: 8,
+          preserveDrawingBuffer: true
+        });
+        gl.viewportWidth = canvas.width;
+        gl.viewportHeight = canvas.height;
+        if (!gl) {
+            console.log("Could not initialise WebGL, sorry :-(")
+            return null;
+        }
+
+        gl.clearColor(1.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        /* TODO: figure out how to pass some gradient tests that need
+         * more grad stops: */
+        let ctx = new Expo2DContext.default(gl, maxGradStops=50)
+        ctx.getContext = () => {return ctx;}
+        
+        return [canvas, gl, ctx]
+    }
+
+    function spinner_graphic(i) {
+      let anim = ["/","&ndash;","\\","|","/","&ndash;","\\", "|"]
+      return anim[i%anim.length]
+    }
+
+    var testContexts = {};
+
+    function focusTest (num) {
+      window.ctx = testContexts[num][0]
+    }
+    window.onhashchange = () => {
+      var url = new URL(window.location)
+      var hashVal = url.hash.substr(1)
+      if (hashVal in testContexts) {
+        focusTest(hashVal)
+      }
+    }
+
+    async function runTests() {
+
+      // TODO: assets??
+
+      if (!window.testComplete) {
+        window.testComplete = (testResults, completedTests, totalTests) =>
+          { /* PUPPETEER STUB */ };
+      }
+
+      testContexts = {};
+
+      var tests = document.getElementsByClassName("test")
+
+      var url = new URL(window.location)
+      if (url.searchParams.get("runTests") != null) {
+        selected_test_ids = url.searchParams.get("runTests").split(",").map((x) => parseInt(x))
+        tests = selected_test_ids.map((x) => document.getElementById("test_"+x+"_content")) 
+      }
+
+      var cleanUp = url.searchParams.get("noCleanup") == null
+
+      let suite_status = document.getElementById("suite_status")
+
+      var failures = new Set();
+      var failureSummaryHTML = "Failed:<ul>"
+
+      let i = 0;
+
+      var testIteration = async (i) => {
+
+        if (i >= tests.length) {
+          finishTests();
+          return;
+        }
+
+        let test_area = tests[i]
+        let test = test_area.dataset
+    
+        // TODO: how to un-convert-from-string numbers in dataset
+        
+        let allCanvases = []
+        let allWebGLContexts = []
+        let allContexts = []
+        
+        let failureMessages = []
+
+        for (let j=0; j<parseInt(test.contexts); j++) {
+          let [canvas, gl, ctx] = bootCanvas(
+            test_area,
+            "canvas_"+test.id+"_"+j,
+            parseInt(test.width),
+            parseInt(test.height)
+          )
+          // Install fake getContext wrapper to allow context objects to be
+          // used in place of canvas objects for our tests:
+          ctx.getContext = (unused) => {return ctx};
+          allCanvases.push(canvas)
+          allWebGLContexts.push(gl)
+          allContexts.push(ctx)
+        }
+
+        let onFail = TriggerObject((message) => {
+          let status_box = document.getElementById("test_"+test.id+"_status")
+
+          status_box.setAttribute("class","failure")
+          status_box.innerHTML += message + "<br />";
+          failureMessages.push(message)
+
+          if (!failures.has(test.id)) {
+            failureSummaryHTML += "<li><a href='#"+test.id+"'>"+test.id+": "+test.description+"</a></li>"
+            failures.add(test.id);
+          }
+        })
+
+        try {
+          let test_fn = eval("test_"+test.id+"_body");
+          await test_fn(onFail, allCanvases, allContexts);
+        } catch (err) {
+          onFail.trigger(false, err.toString());
+        }
+
+        if (cleanUp) {
+          // Copy the resulting drawings out of the original canvas and
+          // safely trash the old gl context, to free up resources:
+          for (let j=0; j<parseInt(test.contexts); j++) {
+            let canvas_clone = allCanvases[j].cloneNode(true);
+            let clone_ctx = canvas_clone.getContext('2d');
+            clone_ctx.drawImage(allCanvases[j], 0, 0);
+
+            allCanvases[j].replaceWith(canvas_clone);
+
+            allWebGLContexts[j].getExtension('WEBGL_lose_context').loseContext();
+            allWebGLContexts[j] = null;
+          }
+        } else {
+          testContexts[test.id] = allContexts
+        }
+
+        suite_status.innerHTML = "["+ spinner_graphic(i) + "] Tests run: " + (i+1) + " / " + tests.length;
+
+        window.testComplete(
+          Object.assign({
+            "failureMessages": failureMessages
+          }, test), i+1, tests.length);
+
+        setTimeout(() => { testIteration(i+1) }, 1);
+      }
+
+      var finishTests = () => {
+        if (failures.size > 0) {
+          failureSummaryHTML += "</ul><br />"
+          suite_status.setAttribute("class","failure")
+          suite_status.innerHTML = failureSummaryHTML
+        } else {
+          suite_status.setAttribute("class","success")
+          suite_status.innerHTML = "[:)] All tests pass !" 
+        }
+
+        if (!cleanUp && tests.length==1){
+          focusTest(tests[0].dataset.id)
+        } else {
+          window.onhashchange()
+        }
+      };
+
+      testIteration(0);
+
+    }
+
+</script>
+</head>
+<body onload="runTests();">
+<h1> 2d.shadow </h1>
+<div id="suite_status" class="progress">&nbsp;</div>
+<hr />
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="419" href="#419"\>419</a>: 2d.shadow.attributes.shadowColor.valid</p>
+
+<script>
+  async function test_419_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.shadowColor = 'lime';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowColor, '#00ff00', "ctx.shadowColor", "'#00ff00'");
+      
+      ctx.shadowColor = 'RGBA(0,255, 0,0)';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowColor, 'rgba(0, 255, 0, 0)', "ctx.shadowColor", "'rgba(0, 255, 0, 0)'");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_419_content"
+  data-contexts="1"
+  data-id="419"
+  data-name="2d.shadow.attributes.shadowColor.valid"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.attributes.shadowColor.valid">&nbsp;</div><br />
+
+<div id="test_419_status">&nbsp;</div>
+
+[<a href="?runTests=419&noCleanup#419" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="462" href="#462"\>462</a>: 2d.shadow.alpha.1 (Shadow colour alpha components are used)</p>
+
+<script>
+  async function test_462_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowColor = 'rgba(255, 0, 0, 0.01)';
+      ctx.shadowOffsetY = 50;
+      ctx.fillRect(0, -50, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 4);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_462_content"
+  data-contexts="1"
+  data-id="462"
+  data-name="2d.shadow.alpha.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.alpha.1 (Shadow colour alpha components are used)">&nbsp;</div><br />
+
+<div id="test_462_status">&nbsp;</div>
+
+[<a href="?runTests=462&noCleanup#462" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="449" href="#449"\>449</a>: 2d.shadow.canvas.alpha (Shadows are drawn correctly for partially-transparent canvases)</p>
+
+<script>
+  async function test_449_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var canvas2 = allContexts[1];
+      canvas2.width = 100;
+      canvas2.height = 50;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.fillStyle = 'rgba(255, 0, 0, 0.5)';
+      ctx2.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowOffsetY = 50;
+      ctx.shadowColor = '#00f';
+      ctx.drawImage(canvas2, 0, -50);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 127,0,127,255, "50,25", "127,0,127,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_449_content"
+  data-contexts="2"
+  data-id="449"
+  data-name="2d.shadow.canvas.alpha"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.canvas.alpha (Shadows are drawn correctly for partially-transparent canvases)">&nbsp;</div><br />
+
+<div id="test_449_status">&nbsp;</div>
+
+[<a href="?runTests=449&noCleanup#449" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="432" href="#432"\>432</a>: 2d.shadow.clip.2 (Shadows are not drawn outside the clipping region)</p>
+
+<script>
+  async function test_432_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(50, 0, 50, 50);
+      
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, 50, 50);
+      ctx.clip();
+      ctx.shadowColor = '#f00';
+      ctx.shadowOffsetX = 50;
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.restore();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_432_content"
+  data-contexts="1"
+  data-id="432"
+  data-name="2d.shadow.clip.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.clip.2 (Shadows are not drawn outside the clipping region)">&nbsp;</div><br />
+
+<div id="test_432_status">&nbsp;</div>
+
+[<a href="?runTests=432&noCleanup#432" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="433" href="#433"\>433</a>: 2d.shadow.clip.3 (Shadows of clipped shapes are still drawn within the clipping region)</p>
+
+<script>
+  async function test_433_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(50, 0, 50, 50);
+      
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, 50, 50);
+      ctx.clip();
+      ctx.fillStyle = '#f00';
+      ctx.shadowColor = '#0f0';
+      ctx.shadowOffsetX = 50;
+      ctx.fillRect(-50, 0, 50, 50);
+      ctx.restore();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_433_content"
+  data-contexts="1"
+  data-id="433"
+  data-name="2d.shadow.clip.3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.clip.3 (Shadows of clipped shapes are still drawn within the clipping region)">&nbsp;</div><br />
+
+<div id="test_433_status">&nbsp;</div>
+
+[<a href="?runTests=433&noCleanup#433" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="431" href="#431"\>431</a>: 2d.shadow.clip.1 (Shadows of clipped shapes are still drawn within the clipping region)</p>
+
+<script>
+  async function test_431_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(50, 0, 50, 50);
+      
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(50, 0, 50, 50);
+      ctx.clip();
+      ctx.shadowColor = '#0f0';
+      ctx.shadowOffsetX = 50;
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.restore();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_431_content"
+  data-contexts="1"
+  data-id="431"
+  data-name="2d.shadow.clip.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.clip.1 (Shadows of clipped shapes are still drawn within the clipping region)">&nbsp;</div><br />
+
+<div id="test_431_status">&nbsp;</div>
+
+[<a href="?runTests=431&noCleanup#431" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="464" href="#464"\>464</a>: 2d.shadow.alpha.3 (Shadows are affected by globalAlpha)</p>
+
+<script>
+  async function test_464_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#f00'; // (work around broken Firefox globalAlpha caching)
+      ctx.shadowColor = '#00f';
+      ctx.shadowOffsetY = 50;
+      ctx.globalAlpha = 0.5;
+      ctx.fillRect(0, -50, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 127,0,127,255, "50,25", "127,0,127,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_464_content"
+  data-contexts="1"
+  data-id="464"
+  data-name="2d.shadow.alpha.3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.alpha.3 (Shadows are affected by globalAlpha)">&nbsp;</div><br />
+
+<div id="test_464_status">&nbsp;</div>
+
+[<a href="?runTests=464&noCleanup#464" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="426" href="#426"\>426</a>: 2d.shadow.offset.positiveX (Shadows can be offset with positive x)</p>
+
+<script>
+  async function test_426_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.shadowColor = '#0f0';
+      ctx.shadowOffsetX = 50;
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_426_content"
+  data-contexts="1"
+  data-id="426"
+  data-name="2d.shadow.offset.positiveX"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.offset.positiveX (Shadows can be offset with positive x)">&nbsp;</div><br />
+
+<div id="test_426_status">&nbsp;</div>
+
+[<a href="?runTests=426&noCleanup#426" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="428" href="#428"\>428</a>: 2d.shadow.offset.positiveY (Shadows can be offset with positive y)</p>
+
+<script>
+  async function test_428_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.shadowColor = '#0f0';
+      ctx.shadowOffsetY = 25;
+      ctx.fillRect(0, 0, 100, 25);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,12, 0,255,0,255, "50,12", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,37, 0,255,0,255, "50,37", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_428_content"
+  data-contexts="1"
+  data-id="428"
+  data-name="2d.shadow.offset.positiveY"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.offset.positiveY (Shadows can be offset with positive y)">&nbsp;</div><br />
+
+<div id="test_428_status">&nbsp;</div>
+
+[<a href="?runTests=428&noCleanup#428" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="430" href="#430"\>430</a>: 2d.shadow.outside (Shadows of shapes outside the visible area can be offset onto the visible area)</p>
+
+<script>
+  async function test_430_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowColor = '#0f0';
+      ctx.shadowOffsetX = 100;
+      ctx.fillRect(-100, 0, 25, 50);
+      ctx.shadowOffsetX = -100;
+      ctx.fillRect(175, 0, 25, 50);
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 100;
+      ctx.fillRect(25, -100, 50, 25);
+      ctx.shadowOffsetY = -100;
+      ctx.fillRect(25, 125, 50, 25);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 12,25, 0,255,0,255, "12,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 87,25, 0,255,0,255, "87,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,12, 0,255,0,255, "50,12", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,37, 0,255,0,255, "50,37", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_430_content"
+  data-contexts="1"
+  data-id="430"
+  data-name="2d.shadow.outside"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.outside (Shadows of shapes outside the visible area can be offset onto the visible area)">&nbsp;</div><br />
+
+<div id="test_430_status">&nbsp;</div>
+
+[<a href="?runTests=430&noCleanup#430" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="441" href="#441"\>441</a>: 2d.shadow.image.transparent.1 (Shadows are not drawn for transparent images)</p>
+
+<script>
+  async function test_441_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('transparent.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowColor = '#f00';
+      ctx.shadowOffsetY = 50;
+      ctx.drawImage(_AssetRef0, 0, -50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_441_content"
+  data-contexts="1"
+  data-id="441"
+  data-name="2d.shadow.image.transparent.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.image.transparent.1 (Shadows are not drawn for transparent images)">&nbsp;</div><br />
+
+<div id="test_441_status">&nbsp;</div>
+
+[<a href="?runTests=441&noCleanup#441" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="468" href="#468"\>468</a>: 2d.shadow.composite.2 (Shadows are drawn using globalCompositeOperation)</p>
+
+<script>
+  async function test_468_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'xor';
+      ctx.shadowColor = '#f00';
+      ctx.shadowBlur = 1;
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(-10, -10, 120, 70);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_468_content"
+  data-contexts="1"
+  data-id="468"
+  data-name="2d.shadow.composite.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.composite.2 (Shadows are drawn using globalCompositeOperation)">&nbsp;</div><br />
+
+<div id="test_468_status">&nbsp;</div>
+
+[<a href="?runTests=468&noCleanup#468" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="444" href="#444"\>444</a>: 2d.shadow.image.section (Shadows are not drawn for areas outside image source rectangles)</p>
+
+<script>
+  async function test_444_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('redtransparent.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowOffsetY = 50;
+      ctx.shadowColor = '#f00';
+      ctx.drawImage(_AssetRef0, 50, 0, 50, 50, 0, -50, 50, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_444_content"
+  data-contexts="1"
+  data-id="444"
+  data-name="2d.shadow.image.section"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.image.section (Shadows are not drawn for areas outside image source rectangles)">&nbsp;</div><br />
+
+<div id="test_444_status">&nbsp;</div>
+
+[<a href="?runTests=444&noCleanup#444" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="448" href="#448"\>448</a>: 2d.shadow.canvas.transparent.2 (Shadows are not drawn for transparent parts of canvases)</p>
+
+<script>
+  async function test_448_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var canvas2 = allContexts[1];
+      canvas2.width = 100;
+      canvas2.height = 50;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.fillStyle = '#f00';
+      ctx2.fillRect(0, 0, 50, 50);
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(50, 0, 50, 50);
+      ctx.shadowOffsetY = 50;
+      ctx.shadowColor = '#0f0';
+      ctx.drawImage(canvas2, 50, -50);
+      ctx.shadowColor = '#f00';
+      ctx.drawImage(canvas2, -50, -50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_448_content"
+  data-contexts="2"
+  data-id="448"
+  data-name="2d.shadow.canvas.transparent.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.canvas.transparent.2 (Shadows are not drawn for transparent parts of canvases)">&nbsp;</div><br />
+
+<div id="test_448_status">&nbsp;</div>
+
+[<a href="?runTests=448&noCleanup#448" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="443" href="#443"\>443</a>: 2d.shadow.image.alpha (Shadows are drawn correctly for partially-transparent images)</p>
+
+<script>
+  async function test_443_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('transparent50.png')
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowOffsetY = 50;
+      ctx.shadowColor = '#00f';
+      ctx.drawImage(_AssetRef0, 0, -50);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 127,0,127,255, "50,25", "127,0,127,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_443_content"
+  data-contexts="1"
+  data-id="443"
+  data-name="2d.shadow.image.alpha"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.image.alpha (Shadows are drawn correctly for partially-transparent images)">&nbsp;</div><br />
+
+<div id="test_443_status">&nbsp;</div>
+
+[<a href="?runTests=443&noCleanup#443" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="447" href="#447"\>447</a>: 2d.shadow.canvas.transparent.1 (Shadows are not drawn for transparent canvases)</p>
+
+<script>
+  async function test_447_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var canvas2 = allContexts[1];
+      canvas2.width = 100;
+      canvas2.height = 50;
+      var ctx2 = canvas2.getContext('2d');
+      
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowColor = '#f00';
+      ctx.shadowOffsetY = 50;
+      ctx.drawImage(canvas2, 0, -50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_447_content"
+  data-contexts="2"
+  data-id="447"
+  data-name="2d.shadow.canvas.transparent.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.canvas.transparent.1 (Shadows are not drawn for transparent canvases)">&nbsp;</div><br />
+
+<div id="test_447_status">&nbsp;</div>
+
+[<a href="?runTests=447&noCleanup#447" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="451" href="#451"\>451</a>: 2d.shadow.pattern.transparent.1 (Shadows are not drawn for transparent fill patterns)</p>
+
+<script>
+  async function test_451_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('transparent.png')
+      var pattern = ctx.createPattern(_AssetRef0, 'repeat');
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowColor = '#f00';
+      ctx.shadowOffsetY = 50;
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, -50, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_451_content"
+  data-contexts="1"
+  data-id="451"
+  data-name="2d.shadow.pattern.transparent.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.pattern.transparent.1 (Shadows are not drawn for transparent fill patterns)">&nbsp;</div><br />
+
+<div id="test_451_status">&nbsp;</div>
+
+[<a href="?runTests=451&noCleanup#451" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="453" href="#453"\>453</a>: 2d.shadow.pattern.alpha (Shadows are drawn correctly for partially-transparent fill patterns)</p>
+
+<script>
+  async function test_453_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('transparent50.png')
+      var pattern = ctx.createPattern(_AssetRef0, 'repeat');
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowOffsetY = 50;
+      ctx.shadowColor = '#00f';
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, -50, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 127,0,127,255, "50,25", "127,0,127,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_453_content"
+  data-contexts="1"
+  data-id="453"
+  data-name="2d.shadow.pattern.alpha"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.pattern.alpha (Shadows are drawn correctly for partially-transparent fill patterns)">&nbsp;</div><br />
+
+<div id="test_453_status">&nbsp;</div>
+
+[<a href="?runTests=453&noCleanup#453" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="452" href="#452"\>452</a>: 2d.shadow.pattern.transparent.2 (Shadows are not drawn for transparent parts of fill patterns)</p>
+
+<script>
+  async function test_452_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('redtransparent.png')
+      var pattern = ctx.createPattern(_AssetRef0, 'repeat');
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(50, 0, 50, 50);
+      ctx.shadowOffsetY = 50;
+      ctx.shadowColor = '#0f0';
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, -50, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_452_content"
+  data-contexts="1"
+  data-id="452"
+  data-name="2d.shadow.pattern.transparent.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.pattern.transparent.2 (Shadows are not drawn for transparent parts of fill patterns)">&nbsp;</div><br />
+
+<div id="test_452_status">&nbsp;</div>
+
+[<a href="?runTests=452&noCleanup#452" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="440" href="#440"\>440</a>: 2d.shadow.image.basic (Shadows are drawn for images)</p>
+
+<script>
+  async function test_440_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red.png')
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowColor = '#0f0';
+      ctx.shadowOffsetY = 50;
+      ctx.drawImage(_AssetRef0, 0, -50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_440_content"
+  data-contexts="1"
+  data-id="440"
+  data-name="2d.shadow.image.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.image.basic (Shadows are drawn for images)">&nbsp;</div><br />
+
+<div id="test_440_status">&nbsp;</div>
+
+[<a href="?runTests=440&noCleanup#440" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="455" href="#455"\>455</a>: 2d.shadow.gradient.transparent.1 (Shadows are not drawn for transparent gradient fills)</p>
+
+<script>
+  async function test_455_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var gradient = ctx.createLinearGradient(0, 0, 100, 0);
+      gradient.addColorStop(0, 'rgba(0,0,0,0)');
+      gradient.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowColor = '#f00';
+      ctx.shadowOffsetY = 50;
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, -50, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_455_content"
+  data-contexts="1"
+  data-id="455"
+  data-name="2d.shadow.gradient.transparent.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.gradient.transparent.1 (Shadows are not drawn for transparent gradient fills)">&nbsp;</div><br />
+
+<div id="test_455_status">&nbsp;</div>
+
+[<a href="?runTests=455&noCleanup#455" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="425" href="#425"\>425</a>: 2d.shadow.enable.y (Shadows are drawn if shadowOffsetY is set)</p>
+
+<script>
+  async function test_425_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.globalCompositeOperation = 'destination-atop';
+      ctx.shadowColor = '#0f0';
+      ctx.shadowOffsetY = 0.1;
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_425_content"
+  data-contexts="1"
+  data-id="425"
+  data-name="2d.shadow.enable.y"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.enable.y (Shadows are drawn if shadowOffsetY is set)">&nbsp;</div><br />
+
+<div id="test_425_status">&nbsp;</div>
+
+[<a href="?runTests=425&noCleanup#425" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="424" href="#424"\>424</a>: 2d.shadow.enable.x (Shadows are drawn if shadowOffsetX is set)</p>
+
+<script>
+  async function test_424_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.globalCompositeOperation = 'destination-atop';
+      ctx.shadowColor = '#0f0';
+      ctx.shadowOffsetX = 0.1;
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_424_content"
+  data-contexts="1"
+  data-id="424"
+  data-name="2d.shadow.enable.x"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.enable.x (Shadows are drawn if shadowOffsetX is set)">&nbsp;</div><br />
+
+<div id="test_424_status">&nbsp;</div>
+
+[<a href="?runTests=424&noCleanup#424" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="420" href="#420"\>420</a>: 2d.shadow.attributes.shadowColor.invalid</p>
+
+<script>
+  async function test_420_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.shadowColor = '#00ff00';
+      ctx.shadowColor = 'bogus';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowColor, '#00ff00', "ctx.shadowColor", "'#00ff00'");
+      
+      ctx.shadowColor = '#00ff00';
+      ctx.shadowColor = 'red bogus';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowColor, '#00ff00', "ctx.shadowColor", "'#00ff00'");
+      
+      ctx.shadowColor = '#00ff00';
+      ctx.shadowColor = ctx;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowColor, '#00ff00', "ctx.shadowColor", "'#00ff00'");
+      
+      ctx.shadowColor = '#00ff00';
+      ctx.shadowColor = undefined;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowColor, '#00ff00', "ctx.shadowColor", "'#00ff00'");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_420_content"
+  data-contexts="1"
+  data-id="420"
+  data-name="2d.shadow.attributes.shadowColor.invalid"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.attributes.shadowColor.invalid">&nbsp;</div><br />
+
+<div id="test_420_status">&nbsp;</div>
+
+[<a href="?runTests=420&noCleanup#420" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="446" href="#446"\>446</a>: 2d.shadow.canvas.basic (Shadows are drawn for canvases)</p>
+
+<script>
+  async function test_446_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var canvas2 = allContexts[1];
+      canvas2.width = 100;
+      canvas2.height = 50;
+      var ctx2 = canvas2.getContext('2d');
+      ctx2.fillStyle = '#f00';
+      ctx2.fillRect(0, 0, 100, 50);
+      
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowColor = '#0f0';
+      ctx.shadowOffsetY = 50;
+      ctx.drawImage(canvas2, 0, -50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_446_content"
+  data-contexts="2"
+  data-id="446"
+  data-name="2d.shadow.canvas.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.canvas.basic (Shadows are drawn for canvases)">&nbsp;</div><br />
+
+<div id="test_446_status">&nbsp;</div>
+
+[<a href="?runTests=446&noCleanup#446" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="436" href="#436"\>436</a>: 2d.shadow.stroke.cap.2 (Shadows are drawn for stroke caps)</p>
+
+<script>
+  async function test_436_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#f00';
+      ctx.shadowColor = '#0f0';
+      ctx.shadowOffsetY = 50;
+      ctx.beginPath();
+      ctx.lineWidth = 50;
+      ctx.lineCap = 'square';
+      ctx.moveTo(25, -25);
+      ctx.lineTo(75, -25);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_436_content"
+  data-contexts="1"
+  data-id="436"
+  data-name="2d.shadow.stroke.cap.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.stroke.cap.2 (Shadows are drawn for stroke caps)">&nbsp;</div><br />
+
+<div id="test_436_status">&nbsp;</div>
+
+[<a href="?runTests=436&noCleanup#436" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="418" href="#418"\>418</a>: 2d.shadow.attributes.shadowColor.initial</p>
+
+<script>
+  async function test_418_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowColor, 'rgba(0, 0, 0, 0)', "ctx.shadowColor", "'rgba(0, 0, 0, 0)'");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_418_content"
+  data-contexts="1"
+  data-id="418"
+  data-name="2d.shadow.attributes.shadowColor.initial"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.attributes.shadowColor.initial">&nbsp;</div><br />
+
+<div id="test_418_status">&nbsp;</div>
+
+[<a href="?runTests=418&noCleanup#418" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="417" href="#417"\>417</a>: 2d.shadow.attributes.shadowOffset.invalid</p>
+
+<script>
+  async function test_417_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.shadowOffsetX = 1;
+      ctx.shadowOffsetY = 2;
+      ctx.shadowOffsetX = Infinity;
+      ctx.shadowOffsetY = Infinity;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetX, 1, "ctx.shadowOffsetX", "1");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetY, 2, "ctx.shadowOffsetY", "2");
+      
+      ctx.shadowOffsetX = 1;
+      ctx.shadowOffsetY = 2;
+      ctx.shadowOffsetX = -Infinity;
+      ctx.shadowOffsetY = -Infinity;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetX, 1, "ctx.shadowOffsetX", "1");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetY, 2, "ctx.shadowOffsetY", "2");
+      
+      ctx.shadowOffsetX = 1;
+      ctx.shadowOffsetY = 2;
+      ctx.shadowOffsetX = NaN;
+      ctx.shadowOffsetY = NaN;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetX, 1, "ctx.shadowOffsetX", "1");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetY, 2, "ctx.shadowOffsetY", "2");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_417_content"
+  data-contexts="1"
+  data-id="417"
+  data-name="2d.shadow.attributes.shadowOffset.invalid"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.attributes.shadowOffset.invalid">&nbsp;</div><br />
+
+<div id="test_417_status">&nbsp;</div>
+
+[<a href="?runTests=417&noCleanup#417" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="423" href="#423"\>423</a>: 2d.shadow.enable.blur (Shadows are drawn if shadowBlur is set)</p>
+
+<script>
+  async function test_423_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.globalCompositeOperation = 'destination-atop';
+      ctx.shadowColor = '#0f0';
+      ctx.shadowBlur = 0.1;
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_423_content"
+  data-contexts="1"
+  data-id="423"
+  data-name="2d.shadow.enable.blur"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.enable.blur (Shadows are drawn if shadowBlur is set)">&nbsp;</div><br />
+
+<div id="test_423_status">&nbsp;</div>
+
+[<a href="?runTests=423&noCleanup#423" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="427" href="#427"\>427</a>: 2d.shadow.offset.negativeX (Shadows can be offset with negative x)</p>
+
+<script>
+  async function test_427_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.shadowColor = '#0f0';
+      ctx.shadowOffsetX = -50;
+      ctx.fillRect(50, 0, 50, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_427_content"
+  data-contexts="1"
+  data-id="427"
+  data-name="2d.shadow.offset.negativeX"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.offset.negativeX (Shadows can be offset with negative x)">&nbsp;</div><br />
+
+<div id="test_427_status">&nbsp;</div>
+
+[<a href="?runTests=427&noCleanup#427" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="429" href="#429"\>429</a>: 2d.shadow.offset.negativeY (Shadows can be offset with negative y)</p>
+
+<script>
+  async function test_429_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.shadowColor = '#0f0';
+      ctx.shadowOffsetY = -25;
+      ctx.fillRect(0, 25, 100, 25);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,12, 0,255,0,255, "50,12", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,37, 0,255,0,255, "50,37", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_429_content"
+  data-contexts="1"
+  data-id="429"
+  data-name="2d.shadow.offset.negativeY"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.offset.negativeY (Shadows can be offset with negative y)">&nbsp;</div><br />
+
+<div id="test_429_status">&nbsp;</div>
+
+[<a href="?runTests=429&noCleanup#429" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="445" href="#445"\>445</a>: 2d.shadow.image.scale (Shadows are drawn correctly for scaled images)</p>
+
+<script>
+  async function test_445_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('redtransparent.png')
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowOffsetY = 50;
+      ctx.shadowColor = '#0f0';
+      ctx.drawImage(_AssetRef0, 0, 0, 100, 50, -10, -50, 240, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_445_content"
+  data-contexts="1"
+  data-id="445"
+  data-name="2d.shadow.image.scale"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.image.scale (Shadows are drawn correctly for scaled images)">&nbsp;</div><br />
+
+<div id="test_445_status">&nbsp;</div>
+
+[<a href="?runTests=445&noCleanup#445" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="460" href="#460"\>460</a>: 2d.shadow.blur.low (Shadows look correct for small blurs)</p>
+
+<script>
+  async function test_460_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#ff0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowColor = '#00f';
+      ctx.shadowOffsetY = 25;
+      for (var x = 0; x < 100; ++x) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(x, 0, 1, 50);
+          ctx.clip();
+          ctx.shadowBlur = x;
+          ctx.fillRect(-200, -200, 500, 200);
+          ctx.restore();
+      }
+      
+  }
+</script>
+
+<div class="test"
+  id="test_460_content"
+  data-contexts="1"
+  data-id="460"
+  data-name="2d.shadow.blur.low"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.blur.low (Shadows look correct for small blurs)">&nbsp;</div><br />
+
+<div id="test_460_status">&nbsp;</div>
+
+[<a href="?runTests=460&noCleanup#460" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="466" href="#466"\>466</a>: 2d.shadow.alpha.5 (Shadows of shapes with alpha components are drawn correctly)</p>
+
+<script>
+  async function test_466_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = 'rgba(64, 0, 0, 0.5)';
+      ctx.shadowColor = '#00f';
+      ctx.shadowOffsetY = 50;
+      ctx.fillRect(0, -50, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 127,0,127,255, "50,25", "127,0,127,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_466_content"
+  data-contexts="1"
+  data-id="466"
+  data-name="2d.shadow.alpha.5"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.alpha.5 (Shadows of shapes with alpha components are drawn correctly)">&nbsp;</div><br />
+
+<div id="test_466_status">&nbsp;</div>
+
+[<a href="?runTests=466&noCleanup#466" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="465" href="#465"\>465</a>: 2d.shadow.alpha.4 (Shadows with alpha components are correctly affected by globalAlpha)</p>
+
+<script>
+  async function test_465_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.fillStyle = '#f00'; // (work around broken Firefox globalAlpha caching)
+      ctx.shadowColor = 'rgba(0, 0, 255, 0.707)';
+      ctx.shadowOffsetY = 50;
+      ctx.globalAlpha = 0.707;
+      ctx.fillRect(0, -50, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 127,0,127,255, "50,25", "127,0,127,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_465_content"
+  data-contexts="1"
+  data-id="465"
+  data-name="2d.shadow.alpha.4"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.alpha.4 (Shadows with alpha components are correctly affected by globalAlpha)">&nbsp;</div><br />
+
+<div id="test_465_status">&nbsp;</div>
+
+[<a href="?runTests=465&noCleanup#465" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="434" href="#434"\>434</a>: 2d.shadow.stroke.basic (Shadows are drawn for strokes)</p>
+
+<script>
+  async function test_434_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#f00';
+      ctx.shadowColor = '#0f0';
+      ctx.shadowOffsetY = 50;
+      ctx.beginPath();
+      ctx.lineWidth = 50;
+      ctx.moveTo(0, -25);
+      ctx.lineTo(100, -25);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_434_content"
+  data-contexts="1"
+  data-id="434"
+  data-name="2d.shadow.stroke.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.stroke.basic (Shadows are drawn for strokes)">&nbsp;</div><br />
+
+<div id="test_434_status">&nbsp;</div>
+
+[<a href="?runTests=434&noCleanup#434" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="437" href="#437"\>437</a>: 2d.shadow.stroke.join.1 (Shadows are not drawn for areas outside stroke joins)</p>
+
+<script>
+  async function test_437_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#f00';
+      ctx.shadowColor = '#f00';
+      ctx.shadowOffsetX = 100;
+      ctx.lineWidth = 200;
+      ctx.lineJoin = 'bevel';
+      ctx.beginPath();
+      ctx.moveTo(-200, -50);
+      ctx.lineTo(-150, -50);
+      ctx.lineTo(-151, -100);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,48, 0,255,0,255, "48,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_437_content"
+  data-contexts="1"
+  data-id="437"
+  data-name="2d.shadow.stroke.join.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.stroke.join.1 (Shadows are not drawn for areas outside stroke joins)">&nbsp;</div><br />
+
+<div id="test_437_status">&nbsp;</div>
+
+[<a href="?runTests=437&noCleanup#437" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="439" href="#439"\>439</a>: 2d.shadow.stroke.join.3 (Shadows are drawn for stroke joins respecting miter limit)</p>
+
+<script>
+  async function test_439_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#f00';
+      ctx.shadowColor = '#f00';
+      ctx.shadowOffsetX = 100;
+      ctx.lineWidth = 200;
+      ctx.lineJoin = 'miter';
+      ctx.miterLimit = 0.1;
+      ctx.beginPath();
+      ctx.moveTo(-200, -50);
+      ctx.lineTo(-150, -50);
+      ctx.lineTo(-151, -100); // (not an exact right angle, to avoid some other bug in Firefox 3)
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,48, 0,255,0,255, "48,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_439_content"
+  data-contexts="1"
+  data-id="439"
+  data-name="2d.shadow.stroke.join.3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.stroke.join.3 (Shadows are drawn for stroke joins respecting miter limit)">&nbsp;</div><br />
+
+<div id="test_439_status">&nbsp;</div>
+
+[<a href="?runTests=439&noCleanup#439" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="438" href="#438"\>438</a>: 2d.shadow.stroke.join.2 (Shadows are drawn for stroke joins)</p>
+
+<script>
+  async function test_438_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(50, 0, 50, 50);
+      ctx.strokeStyle = '#f00';
+      ctx.shadowColor = '#0f0';
+      ctx.shadowOffsetX = 100;
+      ctx.lineWidth = 200;
+      ctx.lineJoin = 'miter';
+      ctx.beginPath();
+      ctx.moveTo(-200, -50);
+      ctx.lineTo(-150, -50);
+      ctx.lineTo(-151, -100);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,48, 0,255,0,255, "48,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,48, 0,255,0,255, "98,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_438_content"
+  data-contexts="1"
+  data-id="438"
+  data-name="2d.shadow.stroke.join.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.stroke.join.2 (Shadows are drawn for stroke joins)">&nbsp;</div><br />
+
+<div id="test_438_status">&nbsp;</div>
+
+[<a href="?runTests=438&noCleanup#438" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="463" href="#463"\>463</a>: 2d.shadow.alpha.2 (Shadow colour alpha components are used)</p>
+
+<script>
+  async function test_463_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowColor = 'rgba(0, 0, 255, 0.5)';
+      ctx.shadowOffsetY = 50;
+      ctx.fillRect(0, -50, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 127,0,127,255, "50,25", "127,0,127,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_463_content"
+  data-contexts="1"
+  data-id="463"
+  data-name="2d.shadow.alpha.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.alpha.2 (Shadow colour alpha components are used)">&nbsp;</div><br />
+
+<div id="test_463_status">&nbsp;</div>
+
+[<a href="?runTests=463&noCleanup#463" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="416" href="#416"\>416</a>: 2d.shadow.attributes.shadowOffset.valid</p>
+
+<script>
+  async function test_416_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.shadowOffsetX = 1;
+      ctx.shadowOffsetY = 2;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetX, 1, "ctx.shadowOffsetX", "1");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetY, 2, "ctx.shadowOffsetY", "2");
+      
+      ctx.shadowOffsetX = 0.5;
+      ctx.shadowOffsetY = 0.25;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetX, 0.5, "ctx.shadowOffsetX", "0.5");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetY, 0.25, "ctx.shadowOffsetY", "0.25");
+      
+      ctx.shadowOffsetX = -0.5;
+      ctx.shadowOffsetY = -0.25;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetX, -0.5, "ctx.shadowOffsetX", "-0.5");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetY, -0.25, "ctx.shadowOffsetY", "-0.25");
+      
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetX, 0, "ctx.shadowOffsetX", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetY, 0, "ctx.shadowOffsetY", "0");
+      
+      ctx.shadowOffsetX = 1e6;
+      ctx.shadowOffsetY = 1e6;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetX, 1e6, "ctx.shadowOffsetX", "1e6");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetY, 1e6, "ctx.shadowOffsetY", "1e6");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_416_content"
+  data-contexts="1"
+  data-id="416"
+  data-name="2d.shadow.attributes.shadowOffset.valid"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.attributes.shadowOffset.valid">&nbsp;</div><br />
+
+<div id="test_416_status">&nbsp;</div>
+
+[<a href="?runTests=416&noCleanup#416" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="454" href="#454"\>454</a>: 2d.shadow.gradient.basic (Shadows are drawn for gradient fills)</p>
+
+<script>
+  async function test_454_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var gradient = ctx.createLinearGradient(0, 0, 100, 0);
+      gradient.addColorStop(0, '#f00');
+      gradient.addColorStop(1, '#f00');
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowColor = '#0f0';
+      ctx.shadowOffsetY = 50;
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, -50, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_454_content"
+  data-contexts="1"
+  data-id="454"
+  data-name="2d.shadow.gradient.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.gradient.basic (Shadows are drawn for gradient fills)">&nbsp;</div><br />
+
+<div id="test_454_status">&nbsp;</div>
+
+[<a href="?runTests=454&noCleanup#454" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="413" href="#413"\>413</a>: 2d.shadow.attributes.shadowBlur.valid</p>
+
+<script>
+  async function test_413_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.shadowBlur = 1;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowBlur, 1, "ctx.shadowBlur", "1");
+      
+      ctx.shadowBlur = 0.5;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowBlur, 0.5, "ctx.shadowBlur", "0.5");
+      
+      ctx.shadowBlur = 1e6;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowBlur, 1e6, "ctx.shadowBlur", "1e6");
+      
+      ctx.shadowBlur = 0;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowBlur, 0, "ctx.shadowBlur", "0");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_413_content"
+  data-contexts="1"
+  data-id="413"
+  data-name="2d.shadow.attributes.shadowBlur.valid"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.attributes.shadowBlur.valid">&nbsp;</div><br />
+
+<div id="test_413_status">&nbsp;</div>
+
+[<a href="?runTests=413&noCleanup#413" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="442" href="#442"\>442</a>: 2d.shadow.image.transparent.2 (Shadows are not drawn for transparent parts of images)</p>
+
+<script>
+  async function test_442_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('redtransparent.png')
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(50, 0, 50, 50);
+      ctx.shadowOffsetY = 50;
+      ctx.shadowColor = '#0f0';
+      ctx.drawImage(_AssetRef0, 50, -50);
+      ctx.shadowColor = '#f00';
+      ctx.drawImage(_AssetRef0, -50, -50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_442_content"
+  data-contexts="1"
+  data-id="442"
+  data-name="2d.shadow.image.transparent.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.image.transparent.2 (Shadows are not drawn for transparent parts of images)">&nbsp;</div><br />
+
+<div id="test_442_status">&nbsp;</div>
+
+[<a href="?runTests=442&noCleanup#442" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="414" href="#414"\>414</a>: 2d.shadow.attributes.shadowBlur.invalid</p>
+
+<script>
+  async function test_414_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.shadowBlur = 1;
+      ctx.shadowBlur = -2;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowBlur, 1, "ctx.shadowBlur", "1");
+      
+      ctx.shadowBlur = 1;
+      ctx.shadowBlur = Infinity;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowBlur, 1, "ctx.shadowBlur", "1");
+      
+      ctx.shadowBlur = 1;
+      ctx.shadowBlur = -Infinity;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowBlur, 1, "ctx.shadowBlur", "1");
+      
+      ctx.shadowBlur = 1;
+      ctx.shadowBlur = NaN;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowBlur, 1, "ctx.shadowBlur", "1");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_414_content"
+  data-contexts="1"
+  data-id="414"
+  data-name="2d.shadow.attributes.shadowBlur.invalid"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.attributes.shadowBlur.invalid">&nbsp;</div><br />
+
+<div id="test_414_status">&nbsp;</div>
+
+[<a href="?runTests=414&noCleanup#414" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="450" href="#450"\>450</a>: 2d.shadow.pattern.basic (Shadows are drawn for fill patterns)</p>
+
+<script>
+  async function test_450_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          let _AssetRef0 = await getAsset('red.png')
+      var pattern = ctx.createPattern(_AssetRef0, 'repeat');
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowColor = '#0f0';
+      ctx.shadowOffsetY = 50;
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, -50, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_450_content"
+  data-contexts="1"
+  data-id="450"
+  data-name="2d.shadow.pattern.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.pattern.basic (Shadows are drawn for fill patterns)">&nbsp;</div><br />
+
+<div id="test_450_status">&nbsp;</div>
+
+[<a href="?runTests=450&noCleanup#450" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="458" href="#458"\>458</a>: 2d.shadow.transform.1 (Shadows take account of transformations)</p>
+
+<script>
+  async function test_458_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowOffsetY = 50;
+      ctx.shadowColor = '#0f0';
+      ctx.translate(100, 100);
+      ctx.fillRect(-100, -150, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_458_content"
+  data-contexts="1"
+  data-id="458"
+  data-name="2d.shadow.transform.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.transform.1 (Shadows take account of transformations)">&nbsp;</div><br />
+
+<div id="test_458_status">&nbsp;</div>
+
+[<a href="?runTests=458&noCleanup#458" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="459" href="#459"\>459</a>: 2d.shadow.transform.2 (Shadow offsets are not affected by transformations)</p>
+
+<script>
+  async function test_459_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowOffsetY = 50;
+      ctx.shadowColor = '#0f0';
+      ctx.rotate(Math.PI)
+      ctx.fillRect(-100, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_459_content"
+  data-contexts="1"
+  data-id="459"
+  data-name="2d.shadow.transform.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.transform.2 (Shadow offsets are not affected by transformations)">&nbsp;</div><br />
+
+<div id="test_459_status">&nbsp;</div>
+
+[<a href="?runTests=459&noCleanup#459" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="412" href="#412"\>412</a>: 2d.shadow.attributes.shadowBlur.initial</p>
+
+<script>
+  async function test_412_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowBlur, 0, "ctx.shadowBlur", "0");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_412_content"
+  data-contexts="1"
+  data-id="412"
+  data-name="2d.shadow.attributes.shadowBlur.initial"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.attributes.shadowBlur.initial">&nbsp;</div><br />
+
+<div id="test_412_status">&nbsp;</div>
+
+[<a href="?runTests=412&noCleanup#412" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="467" href="#467"\>467</a>: 2d.shadow.composite.1 (Shadows are drawn using globalCompositeOperation)</p>
+
+<script>
+  async function test_467_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'xor';
+      ctx.shadowColor = '#f00';
+      ctx.shadowOffsetX = 100;
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(-100, 0, 200, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_467_content"
+  data-contexts="1"
+  data-id="467"
+  data-name="2d.shadow.composite.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.composite.1 (Shadows are drawn using globalCompositeOperation)">&nbsp;</div><br />
+
+<div id="test_467_status">&nbsp;</div>
+
+[<a href="?runTests=467&noCleanup#467" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="461" href="#461"\>461</a>: 2d.shadow.blur.high (Shadows look correct for large blurs)</p>
+
+<script>
+  async function test_461_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#ff0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowColor = '#00f';
+      ctx.shadowOffsetY = 0;
+      ctx.shadowBlur = 100;
+      ctx.fillRect(-200, -200, 200, 400);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_461_content"
+  data-contexts="1"
+  data-id="461"
+  data-name="2d.shadow.blur.high"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.blur.high (Shadows look correct for large blurs)">&nbsp;</div><br />
+
+<div id="test_461_status">&nbsp;</div>
+
+[<a href="?runTests=461&noCleanup#461" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="469" href="#469"\>469</a>: 2d.shadow.composite.3 (Areas outside shadows are drawn correctly with destination-out)</p>
+
+<script>
+  async function test_469_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.shadowColor = '#f00';
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(200, 0, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 5,5, 0,255,0,255, "5,5", "0,255,0,255", 2);
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_469_content"
+  data-contexts="1"
+  data-id="469"
+  data-name="2d.shadow.composite.3"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.composite.3 (Areas outside shadows are drawn correctly with destination-out)">&nbsp;</div><br />
+
+<div id="test_469_status">&nbsp;</div>
+
+[<a href="?runTests=469&noCleanup#469" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="457" href="#457"\>457</a>: 2d.shadow.gradient.alpha (Shadows are drawn correctly for partially-transparent gradient fills)</p>
+
+<script>
+  async function test_457_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var gradient = ctx.createLinearGradient(0, 0, 100, 0);
+      gradient.addColorStop(0, 'rgba(255,0,0,0.5)');
+      gradient.addColorStop(1, 'rgba(255,0,0,0.5)');
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.shadowOffsetY = 50;
+      ctx.shadowColor = '#00f';
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, -50, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixelApprox(t, ctx, 50,25, 127,0,127,255, "50,25", "127,0,127,255", 2);
+      
+  }
+</script>
+
+<div class="test"
+  id="test_457_content"
+  data-contexts="1"
+  data-id="457"
+  data-name="2d.shadow.gradient.alpha"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.gradient.alpha (Shadows are drawn correctly for partially-transparent gradient fills)">&nbsp;</div><br />
+
+<div id="test_457_status">&nbsp;</div>
+
+[<a href="?runTests=457&noCleanup#457" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="415" href="#415"\>415</a>: 2d.shadow.attributes.shadowOffset.initial</p>
+
+<script>
+  async function test_415_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetX, 0, "ctx.shadowOffsetX", "0");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetY, 0, "ctx.shadowOffsetY", "0");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_415_content"
+  data-contexts="1"
+  data-id="415"
+  data-name="2d.shadow.attributes.shadowOffset.initial"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.attributes.shadowOffset.initial">&nbsp;</div><br />
+
+<div id="test_415_status">&nbsp;</div>
+
+[<a href="?runTests=415&noCleanup#415" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="435" href="#435"\>435</a>: 2d.shadow.stroke.cap.1 (Shadows are not drawn for areas outside stroke caps)</p>
+
+<script>
+  async function test_435_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.strokeStyle = '#f00';
+      ctx.shadowColor = '#f00';
+      ctx.shadowOffsetY = 50;
+      ctx.beginPath();
+      ctx.lineWidth = 50;
+      ctx.lineCap = 'butt';
+      ctx.moveTo(-50, -25);
+      ctx.lineTo(0, -25);
+      ctx.moveTo(100, -25);
+      ctx.lineTo(150, -25);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,25, 0,255,0,255, "1,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 98,25, 0,255,0,255, "98,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_435_content"
+  data-contexts="1"
+  data-id="435"
+  data-name="2d.shadow.stroke.cap.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.stroke.cap.1 (Shadows are not drawn for areas outside stroke caps)">&nbsp;</div><br />
+
+<div id="test_435_status">&nbsp;</div>
+
+[<a href="?runTests=435&noCleanup#435" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="422" href="#422"\>422</a>: 2d.shadow.enable.off.2 (Shadows are not drawn when only shadowColor is set)</p>
+
+<script>
+  async function test_422_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.globalCompositeOperation = 'destination-atop';
+      ctx.shadowColor = '#f00';
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_422_content"
+  data-contexts="1"
+  data-id="422"
+  data-name="2d.shadow.enable.off.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.enable.off.2 (Shadows are not drawn when only shadowColor is set)">&nbsp;</div><br />
+
+<div id="test_422_status">&nbsp;</div>
+
+[<a href="?runTests=422&noCleanup#422" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="456" href="#456"\>456</a>: 2d.shadow.gradient.transparent.2 (Shadows are not drawn for transparent parts of gradient fills)</p>
+
+<script>
+  async function test_456_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          var gradient = ctx.createLinearGradient(0, 0, 100, 0);
+      gradient.addColorStop(0, '#f00');
+      gradient.addColorStop(0.499, '#f00');
+      gradient.addColorStop(0.5, 'rgba(0,0,0,0)');
+      gradient.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 50, 50);
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(50, 0, 50, 50);
+      ctx.shadowOffsetY = 50;
+      ctx.shadowColor = '#0f0';
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, -50, 100, 50);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_456_content"
+  data-contexts="1"
+  data-id="456"
+  data-name="2d.shadow.gradient.transparent.2"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.gradient.transparent.2 (Shadows are not drawn for transparent parts of gradient fills)">&nbsp;</div><br />
+
+<div id="test_456_status">&nbsp;</div>
+
+[<a href="?runTests=456&noCleanup#456" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+<!-- DISABLED: TODO implement shadows
+<p><a id="421" href="#421"\>421</a>: 2d.shadow.enable.off.1 (Shadows are not drawn when only shadowColor is set)</p>
+
+<script>
+  async function test_421_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.shadowColor = '#f00';
+      ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_421_content"
+  data-contexts="1"
+  data-id="421"
+  data-name="2d.shadow.enable.off.1"
+  data-width="100"
+  data-height="50"
+  data-description="2d.shadow.enable.off.1 (Shadows are not drawn when only shadowColor is set)">&nbsp;</div><br />
+
+<div id="test_421_status">&nbsp;</div>
+
+[<a href="?runTests=421&noCleanup#421" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+
+<br /><br />
+&lt;3
+
+</body>
+</html>

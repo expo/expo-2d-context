@@ -1,0 +1,2089 @@
+<html>
+
+<head>
+<title>2d.line // WebGL2DContext conformance</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<style>
+  div {
+    padding: 5px;
+  }
+  canvas {
+    border: 1px black solid;
+  }
+  .progress {
+    font: 100% monospace;
+  }
+  .failure {
+    background-color: red;
+    color: white;
+    font: 100% sans-serif;
+  }
+  .success {
+    background-color: #88FF88;
+    font: 100% sans-serif;
+  }
+  .failure a:link {
+    color: white
+  }
+  .failure a:visited {
+    color: white
+  }
+</style>
+
+<script type="text/javascript" src="bundle.js"></script>
+<script type="text/javascript" src="assets.js"></script>
+<script type="text/javascript" src="asserts.js"></script>
+
+<script type="text/javascript">
+    async function getAsset(name) {
+      return new Promise((resolve, reject) => {
+        let img = document.createElement("IMG")
+        img.onload = () => resolve(img)
+        img.onerror = reject
+        img.src = rawImageAssets[name]
+      })
+    }
+
+    function bootCanvas(container, id, width, height) {
+        var canvas = document.createElement("CANVAS")
+        canvas.setAttribute("id", id)
+        canvas.setAttribute("width", width)
+        canvas.setAttribute("height", height)
+
+        container.appendChild(canvas)
+
+        var gl = canvas.getContext("webgl2", {
+          stencil: 8,
+          preserveDrawingBuffer: true
+        });
+        gl.viewportWidth = canvas.width;
+        gl.viewportHeight = canvas.height;
+        if (!gl) {
+            console.log("Could not initialise WebGL, sorry :-(")
+            return null;
+        }
+
+        gl.clearColor(1.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        /* TODO: figure out how to pass some gradient tests that need
+         * more grad stops: */
+        let ctx = new Expo2DContext.default(gl, maxGradStops=50)
+        ctx.getContext = () => {return ctx;}
+        
+        return [canvas, gl, ctx]
+    }
+
+    function spinner_graphic(i) {
+      let anim = ["/","&ndash;","\\","|","/","&ndash;","\\", "|"]
+      return anim[i%anim.length]
+    }
+
+    var testContexts = {};
+
+    function focusTest (num) {
+      window.ctx = testContexts[num][0]
+    }
+    window.onhashchange = () => {
+      var url = new URL(window.location)
+      var hashVal = url.hash.substr(1)
+      if (hashVal in testContexts) {
+        focusTest(hashVal)
+      }
+    }
+
+    async function runTests() {
+
+      // TODO: assets??
+
+      if (!window.testComplete) {
+        window.testComplete = (testResults, completedTests, totalTests) =>
+          { /* PUPPETEER STUB */ };
+      }
+
+      testContexts = {};
+
+      var tests = document.getElementsByClassName("test")
+
+      var url = new URL(window.location)
+      if (url.searchParams.get("runTests") != null) {
+        selected_test_ids = url.searchParams.get("runTests").split(",").map((x) => parseInt(x))
+        tests = selected_test_ids.map((x) => document.getElementById("test_"+x+"_content")) 
+      }
+
+      var cleanUp = url.searchParams.get("noCleanup") == null
+
+      let suite_status = document.getElementById("suite_status")
+
+      var failures = new Set();
+      var failureSummaryHTML = "Failed:<ul>"
+
+      let i = 0;
+
+      var testIteration = async (i) => {
+
+        if (i >= tests.length) {
+          finishTests();
+          return;
+        }
+
+        let test_area = tests[i]
+        let test = test_area.dataset
+    
+        // TODO: how to un-convert-from-string numbers in dataset
+        
+        let allCanvases = []
+        let allWebGLContexts = []
+        let allContexts = []
+        
+        let failureMessages = []
+
+        for (let j=0; j<parseInt(test.contexts); j++) {
+          let [canvas, gl, ctx] = bootCanvas(
+            test_area,
+            "canvas_"+test.id+"_"+j,
+            parseInt(test.width),
+            parseInt(test.height)
+          )
+          // Install fake getContext wrapper to allow context objects to be
+          // used in place of canvas objects for our tests:
+          ctx.getContext = (unused) => {return ctx};
+          allCanvases.push(canvas)
+          allWebGLContexts.push(gl)
+          allContexts.push(ctx)
+        }
+
+        let onFail = TriggerObject((message) => {
+          let status_box = document.getElementById("test_"+test.id+"_status")
+
+          status_box.setAttribute("class","failure")
+          status_box.innerHTML += message + "<br />";
+          failureMessages.push(message)
+
+          if (!failures.has(test.id)) {
+            failureSummaryHTML += "<li><a href='#"+test.id+"'>"+test.id+": "+test.description+"</a></li>"
+            failures.add(test.id);
+          }
+        })
+
+        try {
+          let test_fn = eval("test_"+test.id+"_body");
+          await test_fn(onFail, allCanvases, allContexts);
+        } catch (err) {
+          onFail.trigger(false, err.toString());
+        }
+
+        if (cleanUp) {
+          // Copy the resulting drawings out of the original canvas and
+          // safely trash the old gl context, to free up resources:
+          for (let j=0; j<parseInt(test.contexts); j++) {
+            let canvas_clone = allCanvases[j].cloneNode(true);
+            let clone_ctx = canvas_clone.getContext('2d');
+            clone_ctx.drawImage(allCanvases[j], 0, 0);
+
+            allCanvases[j].replaceWith(canvas_clone);
+
+            allWebGLContexts[j].getExtension('WEBGL_lose_context').loseContext();
+            allWebGLContexts[j] = null;
+          }
+        } else {
+          testContexts[test.id] = allContexts
+        }
+
+        suite_status.innerHTML = "["+ spinner_graphic(i) + "] Tests run: " + (i+1) + " / " + tests.length;
+
+        window.testComplete(
+          Object.assign({
+            "failureMessages": failureMessages
+          }, test), i+1, tests.length);
+
+        setTimeout(() => { testIteration(i+1) }, 1);
+      }
+
+      var finishTests = () => {
+        if (failures.size > 0) {
+          failureSummaryHTML += "</ul><br />"
+          suite_status.setAttribute("class","failure")
+          suite_status.innerHTML = failureSummaryHTML
+        } else {
+          suite_status.setAttribute("class","success")
+          suite_status.innerHTML = "[:)] All tests pass !" 
+        }
+
+        if (!cleanUp && tests.length==1){
+          focusTest(tests[0].dataset.id)
+        } else {
+          window.onhashchange()
+        }
+      };
+
+      testIteration(0);
+
+    }
+
+</script>
+</head>
+<body onload="runTests();">
+<h1> 2d.line </h1>
+<div id="suite_status" class="progress">&nbsp;</div>
+<hr />
+
+<p><a id="395" href="#395"\>395</a>: 2d.line.join.round (lineJoin 'round' is rendered correctly)</p>
+
+<script>
+  async function test_395_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var tol = 1; // tolerance to avoid antialiasing artifacts
+      
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 20;
+      
+      ctx.fillStyle = '#f00';
+      ctx.strokeStyle = '#0f0';
+      
+      ctx.fillRect(10, 10, 20, 20);
+      ctx.fillRect(20, 20, 20, 20);
+      ctx.beginPath();
+      ctx.moveTo(30, 20);
+      ctx.arc(30, 20, 10-tol, 0, 2*Math.PI, true);
+      ctx.fill();
+      
+      ctx.beginPath();
+      ctx.moveTo(10, 20);
+      ctx.lineTo(30, 20);
+      ctx.lineTo(30, 40);
+      ctx.stroke();
+      
+      
+      ctx.fillStyle = '#0f0';
+      ctx.strokeStyle = '#f00';
+      
+      ctx.beginPath();
+      ctx.moveTo(60, 20);
+      ctx.lineTo(80, 20);
+      ctx.lineTo(80, 40);
+      ctx.stroke();
+      
+      ctx.fillRect(60, 10, 20, 20);
+      ctx.fillRect(70, 20, 20, 20);
+      ctx.beginPath();
+      ctx.moveTo(80, 20);
+      ctx.arc(80, 20, 10+tol, 0, 2*Math.PI, true);
+      ctx.fill();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 36,14, 0,255,0,255, "36,14", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 36,13, 0,255,0,255, "36,13", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 37,13, 0,255,0,255, "37,13", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 38,13, 0,255,0,255, "38,13", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 38,12, 0,255,0,255, "38,12", "0,255,0,255");
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 86,14, 0,255,0,255, "86,14", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 86,13, 0,255,0,255, "86,13", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 87,13, 0,255,0,255, "87,13", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 88,13, 0,255,0,255, "88,13", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 88,12, 0,255,0,255, "88,12", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_395_content"
+  data-contexts="1"
+  data-id="395"
+  data-name="2d.line.join.round"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.join.round (lineJoin 'round' is rendered correctly)">&nbsp;</div><br />
+
+<div id="test_395_status">&nbsp;</div>
+
+[<a href="?runTests=395&noCleanup#395" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="400" href="#400"\>400</a>: 2d.line.join.valid (Setting lineJoin to valid values works)</p>
+
+<script>
+  async function test_400_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.lineJoin = 'bevel'
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineJoin, 'bevel', "ctx.lineJoin", "'bevel'");
+      
+      ctx.lineJoin = 'round';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineJoin, 'round', "ctx.lineJoin", "'round'");
+      
+      ctx.lineJoin = 'miter';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineJoin, 'miter', "ctx.lineJoin", "'miter'");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_400_content"
+  data-contexts="1"
+  data-id="400"
+  data-name="2d.line.join.valid"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.join.valid (Setting lineJoin to valid values works)">&nbsp;</div><br />
+
+<div id="test_400_status">&nbsp;</div>
+
+[<a href="?runTests=400&noCleanup#400" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="392" href="#392"\>392</a>: 2d.line.cap.valid (Setting lineCap to valid values works)</p>
+
+<script>
+  async function test_392_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.lineCap = 'butt'
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineCap, 'butt', "ctx.lineCap", "'butt'");
+      
+      ctx.lineCap = 'round';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineCap, 'round', "ctx.lineCap", "'round'");
+      
+      ctx.lineCap = 'square';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineCap, 'square', "ctx.lineCap", "'square'");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_392_content"
+  data-contexts="1"
+  data-id="392"
+  data-name="2d.line.cap.valid"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.cap.valid (Setting lineCap to valid values works)">&nbsp;</div><br />
+
+<div id="test_392_status">&nbsp;</div>
+
+[<a href="?runTests=392&noCleanup#392" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="410" href="#410"\>410</a>: 2d.line.cross</p>
+
+<script>
+  async function test_410_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.lineWidth = 200;
+      ctx.lineJoin = 'bevel';
+      
+      ctx.strokeStyle = '#f00';
+      ctx.beginPath();
+      ctx.moveTo(110, 50);
+      ctx.lineTo(110, 60);
+      ctx.lineTo(100, 60);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,1, 0,255,0,255, "48,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,48, 0,255,0,255, "48,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_410_content"
+  data-contexts="1"
+  data-id="410"
+  data-name="2d.line.cross"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.cross">&nbsp;</div><br />
+
+<div id="test_410_status">&nbsp;</div>
+
+[<a href="?runTests=410&noCleanup#410" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="391" href="#391"\>391</a>: 2d.line.cap.closed (Line caps are not drawn at the corners of an unclosed rectangle)</p>
+
+<script>
+  async function test_391_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.strokeStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.lineJoin = 'bevel';
+      ctx.lineCap = 'square';
+      ctx.lineWidth = 400;
+      
+      ctx.beginPath();
+      ctx.moveTo(200, 200);
+      ctx.lineTo(200, 1000);
+      ctx.lineTo(1000, 1000);
+      ctx.lineTo(1000, 200);
+      ctx.closePath();
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,1, 0,255,0,255, "48,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,48, 0,255,0,255, "48,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_391_content"
+  data-contexts="1"
+  data-id="391"
+  data-name="2d.line.cap.closed"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.cap.closed (Line caps are not drawn at the corners of an unclosed rectangle)">&nbsp;</div><br />
+
+<div id="test_391_status">&nbsp;</div>
+
+[<a href="?runTests=391&noCleanup#391" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="389" href="#389"\>389</a>: 2d.line.cap.square (lineCap 'square' is rendered correctly)</p>
+
+<script>
+  async function test_389_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.lineCap = 'square';
+      ctx.lineWidth = 20;
+      
+      ctx.fillStyle = '#f00';
+      ctx.strokeStyle = '#0f0';
+      ctx.fillRect(15, 5, 20, 40);
+      ctx.beginPath();
+      ctx.moveTo(25, 15);
+      ctx.lineTo(25, 35);
+      ctx.stroke();
+      
+      ctx.fillStyle = '#0f0';
+      ctx.strokeStyle = '#f00';
+      ctx.beginPath();
+      ctx.moveTo(75, 15);
+      ctx.lineTo(75, 35);
+      ctx.stroke();
+      ctx.fillRect(65, 5, 20, 40);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,4, 0,255,0,255, "25,4", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,5, 0,255,0,255, "25,5", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,6, 0,255,0,255, "25,6", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,44, 0,255,0,255, "25,44", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,45, 0,255,0,255, "25,45", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,46, 0,255,0,255, "25,46", "0,255,0,255");
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,4, 0,255,0,255, "75,4", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,5, 0,255,0,255, "75,5", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,6, 0,255,0,255, "75,6", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,44, 0,255,0,255, "75,44", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,45, 0,255,0,255, "75,45", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,46, 0,255,0,255, "75,46", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_389_content"
+  data-contexts="1"
+  data-id="389"
+  data-name="2d.line.cap.square"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.cap.square (lineCap 'square' is rendered correctly)">&nbsp;</div><br />
+
+<div id="test_389_status">&nbsp;</div>
+
+[<a href="?runTests=389&noCleanup#389" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="394" href="#394"\>394</a>: 2d.line.join.bevel (lineJoin 'bevel' is rendered correctly)</p>
+
+<script>
+  async function test_394_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var tol = 1; // tolerance to avoid antialiasing artifacts
+      
+      ctx.lineJoin = 'bevel';
+      ctx.lineWidth = 20;
+      
+      ctx.fillStyle = '#f00';
+      ctx.strokeStyle = '#0f0';
+      
+      ctx.fillRect(10, 10, 20, 20);
+      ctx.fillRect(20, 20, 20, 20);
+      ctx.beginPath();
+      ctx.moveTo(30, 20);
+      ctx.lineTo(40-tol, 20);
+      ctx.lineTo(30, 10+tol);
+      ctx.fill();
+      
+      ctx.beginPath();
+      ctx.moveTo(10, 20);
+      ctx.lineTo(30, 20);
+      ctx.lineTo(30, 40);
+      ctx.stroke();
+      
+      
+      ctx.fillStyle = '#0f0';
+      ctx.strokeStyle = '#f00';
+      
+      ctx.beginPath();
+      ctx.moveTo(60, 20);
+      ctx.lineTo(80, 20);
+      ctx.lineTo(80, 40);
+      ctx.stroke();
+      
+      ctx.fillRect(60, 10, 20, 20);
+      ctx.fillRect(70, 20, 20, 20);
+      ctx.beginPath();
+      ctx.moveTo(80, 20);
+      ctx.lineTo(90+tol, 20);
+      ctx.lineTo(80, 10-tol);
+      ctx.fill();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 34,16, 0,255,0,255, "34,16", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 34,15, 0,255,0,255, "34,15", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 35,15, 0,255,0,255, "35,15", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 36,15, 0,255,0,255, "36,15", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 36,14, 0,255,0,255, "36,14", "0,255,0,255");
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 84,16, 0,255,0,255, "84,16", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 84,15, 0,255,0,255, "84,15", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 85,15, 0,255,0,255, "85,15", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 86,15, 0,255,0,255, "86,15", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 86,14, 0,255,0,255, "86,14", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_394_content"
+  data-contexts="1"
+  data-id="394"
+  data-name="2d.line.join.bevel"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.join.bevel (lineJoin 'bevel' is rendered correctly)">&nbsp;</div><br />
+
+<div id="test_394_status">&nbsp;</div>
+
+[<a href="?runTests=394&noCleanup#394" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="385" href="#385"\>385</a>: 2d.line.width.valid (Setting lineWidth to valid values works)</p>
+
+<script>
+  async function test_385_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.lineWidth = 1.5;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineWidth, 1.5, "ctx.lineWidth", "1.5");
+      
+      ctx.lineWidth = "1e1";
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineWidth, 10, "ctx.lineWidth", "10");
+      
+      ctx.lineWidth = 1/1024;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineWidth, 1/1024, "ctx.lineWidth", "1/1024");
+      
+      ctx.lineWidth = 1000;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineWidth, 1000, "ctx.lineWidth", "1000");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_385_content"
+  data-contexts="1"
+  data-id="385"
+  data-name="2d.line.width.valid"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.width.valid (Setting lineWidth to valid values works)">&nbsp;</div><br />
+
+<div id="test_385_status">&nbsp;</div>
+
+[<a href="?runTests=385&noCleanup#385" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="403" href="#403"\>403</a>: 2d.line.miter.acute (Miter joins are drawn correctly with acute angles)</p>
+
+<script>
+  async function test_403_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.lineWidth = 200;
+      ctx.lineJoin = 'miter';
+      
+      ctx.strokeStyle = '#0f0';
+      ctx.miterLimit = 2.614;
+      ctx.beginPath();
+      ctx.moveTo(100, 1000);
+      ctx.lineTo(100, 100);
+      ctx.lineTo(1000, 1000);
+      ctx.stroke();
+      
+      ctx.strokeStyle = '#f00';
+      ctx.miterLimit = 2.613;
+      ctx.beginPath();
+      ctx.moveTo(100, 1000);
+      ctx.lineTo(100, 100);
+      ctx.lineTo(1000, 1000);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,1, 0,255,0,255, "48,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,48, 0,255,0,255, "48,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_403_content"
+  data-contexts="1"
+  data-id="403"
+  data-name="2d.line.miter.acute"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.miter.acute (Miter joins are drawn correctly with acute angles)">&nbsp;</div><br />
+
+<div id="test_403_status">&nbsp;</div>
+
+[<a href="?runTests=403&noCleanup#403" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="401" href="#401"\>401</a>: 2d.line.join.invalid (Setting lineJoin to invalid values is ignored)</p>
+
+<script>
+  async function test_401_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.lineJoin = 'bevel'
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineJoin, 'bevel', "ctx.lineJoin", "'bevel'");
+      
+      ctx.lineJoin = 'bevel';
+      ctx.lineJoin = 'invalid';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineJoin, 'bevel', "ctx.lineJoin", "'bevel'");
+      
+      ctx.lineJoin = 'bevel';
+      ctx.lineJoin = 'ROUND';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineJoin, 'bevel', "ctx.lineJoin", "'bevel'");
+      
+      ctx.lineJoin = 'bevel';
+      ctx.lineJoin = 'round\0';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineJoin, 'bevel', "ctx.lineJoin", "'bevel'");
+      
+      ctx.lineJoin = 'bevel';
+      ctx.lineJoin = 'round ';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineJoin, 'bevel', "ctx.lineJoin", "'bevel'");
+      
+      ctx.lineJoin = 'bevel';
+      ctx.lineJoin = "";
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineJoin, 'bevel', "ctx.lineJoin", "'bevel'");
+      
+      ctx.lineJoin = 'bevel';
+      ctx.lineJoin = 'butt';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineJoin, 'bevel', "ctx.lineJoin", "'bevel'");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_401_content"
+  data-contexts="1"
+  data-id="401"
+  data-name="2d.line.join.invalid"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.join.invalid (Setting lineJoin to invalid values is ignored)">&nbsp;</div><br />
+
+<div id="test_401_status">&nbsp;</div>
+
+[<a href="?runTests=401&noCleanup#401" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="398" href="#398"\>398</a>: 2d.line.join.closed (Line joins are drawn at the corner of a closed rectangle)</p>
+
+<script>
+  async function test_398_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.strokeStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.lineJoin = 'miter';
+      ctx.lineWidth = 200;
+      
+      ctx.beginPath();
+      ctx.moveTo(100, 50);
+      ctx.lineTo(100, 1000);
+      ctx.lineTo(1000, 1000);
+      ctx.lineTo(1000, 50);
+      ctx.closePath();
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,1, 0,255,0,255, "48,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,48, 0,255,0,255, "48,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_398_content"
+  data-contexts="1"
+  data-id="398"
+  data-name="2d.line.join.closed"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.join.closed (Line joins are drawn at the corner of a closed rectangle)">&nbsp;</div><br />
+
+<div id="test_398_status">&nbsp;</div>
+
+[<a href="?runTests=398&noCleanup#398" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="383" href="#383"\>383</a>: 2d.line.width.transformed (Line stroke widths are affected by scale transformations)</p>
+
+<script>
+  async function test_383_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.lineWidth = 4;
+      // Draw a green line over a red box, to check the line is not too small
+      ctx.fillStyle = '#f00';
+      ctx.strokeStyle = '#0f0';
+      ctx.fillRect(15, 15, 20, 20);
+      ctx.save();
+       ctx.scale(5, 1);
+       ctx.beginPath();
+       ctx.moveTo(5, 15);
+       ctx.lineTo(5, 35);
+       ctx.stroke();
+      ctx.restore();
+      
+      // Draw a green box over a red line, to check the line is not too large
+      ctx.fillStyle = '#0f0';
+      ctx.strokeStyle = '#f00';
+      ctx.save();
+       ctx.scale(-5, 1);
+       ctx.beginPath();
+       ctx.moveTo(-15, 15);
+       ctx.lineTo(-15, 35);
+       ctx.stroke();
+      ctx.restore();
+      ctx.fillRect(65, 15, 20, 20);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 14,25, 0,255,0,255, "14,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 15,25, 0,255,0,255, "15,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 16,25, 0,255,0,255, "16,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 34,25, 0,255,0,255, "34,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 35,25, 0,255,0,255, "35,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 36,25, 0,255,0,255, "36,25", "0,255,0,255");
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 64,25, 0,255,0,255, "64,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 65,25, 0,255,0,255, "65,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 66,25, 0,255,0,255, "66,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 84,25, 0,255,0,255, "84,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 85,25, 0,255,0,255, "85,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 86,25, 0,255,0,255, "86,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_383_content"
+  data-contexts="1"
+  data-id="383"
+  data-name="2d.line.width.transformed"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.width.transformed (Line stroke widths are affected by scale transformations)">&nbsp;</div><br />
+
+<div id="test_383_status">&nbsp;</div>
+
+[<a href="?runTests=383&noCleanup#383" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="393" href="#393"\>393</a>: 2d.line.cap.invalid (Setting lineCap to invalid values is ignored)</p>
+
+<script>
+  async function test_393_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.lineCap = 'butt'
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineCap, 'butt', "ctx.lineCap", "'butt'");
+      
+      ctx.lineCap = 'butt';
+      ctx.lineCap = 'invalid';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineCap, 'butt', "ctx.lineCap", "'butt'");
+      
+      ctx.lineCap = 'butt';
+      ctx.lineCap = 'ROUND';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineCap, 'butt', "ctx.lineCap", "'butt'");
+      
+      ctx.lineCap = 'butt';
+      ctx.lineCap = 'round\0';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineCap, 'butt', "ctx.lineCap", "'butt'");
+      
+      ctx.lineCap = 'butt';
+      ctx.lineCap = 'round ';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineCap, 'butt', "ctx.lineCap", "'butt'");
+      
+      ctx.lineCap = 'butt';
+      ctx.lineCap = "";
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineCap, 'butt', "ctx.lineCap", "'butt'");
+      
+      ctx.lineCap = 'butt';
+      ctx.lineCap = 'bevel';
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineCap, 'butt', "ctx.lineCap", "'butt'");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_393_content"
+  data-contexts="1"
+  data-id="393"
+  data-name="2d.line.cap.invalid"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.cap.invalid (Setting lineCap to invalid values is ignored)">&nbsp;</div><br />
+
+<div id="test_393_status">&nbsp;</div>
+
+[<a href="?runTests=393&noCleanup#393" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="408" href="#408"\>408</a>: 2d.line.miter.valid (Setting miterLimit to valid values works)</p>
+
+<script>
+  async function test_408_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.miterLimit = 1.5;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.miterLimit, 1.5, "ctx.miterLimit", "1.5");
+      
+      ctx.miterLimit = "1e1";
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.miterLimit, 10, "ctx.miterLimit", "10");
+      
+      ctx.miterLimit = 1/1024;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.miterLimit, 1/1024, "ctx.miterLimit", "1/1024");
+      
+      ctx.miterLimit = 1000;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.miterLimit, 1000, "ctx.miterLimit", "1000");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_408_content"
+  data-contexts="1"
+  data-id="408"
+  data-name="2d.line.miter.valid"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.miter.valid (Setting miterLimit to valid values works)">&nbsp;</div><br />
+
+<div id="test_408_status">&nbsp;</div>
+
+[<a href="?runTests=408&noCleanup#408" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="402" href="#402"\>402</a>: 2d.line.miter.exceeded (Miter joins are not drawn when the miter limit is exceeded)</p>
+
+<script>
+  async function test_402_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.lineWidth = 400;
+      ctx.lineJoin = 'miter';
+      
+      ctx.strokeStyle = '#f00';
+      ctx.miterLimit = 1.414;
+      ctx.beginPath();
+      ctx.moveTo(200, 1000);
+      ctx.lineTo(200, 200);
+      ctx.lineTo(1000, 201); // slightly non-right-angle to avoid being a special case
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,1, 0,255,0,255, "48,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,48, 0,255,0,255, "48,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_402_content"
+  data-contexts="1"
+  data-id="402"
+  data-name="2d.line.miter.exceeded"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.miter.exceeded (Miter joins are not drawn when the miter limit is exceeded)">&nbsp;</div><br />
+
+<div id="test_402_status">&nbsp;</div>
+
+[<a href="?runTests=402&noCleanup#402" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="384" href="#384"\>384</a>: 2d.line.width.scaledefault (Default lineWidth strokes are affected by scale transformations)</p>
+
+<script>
+  async function test_384_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.scale(50, 50);
+      ctx.strokeStyle = '#0f0';
+      ctx.moveTo(0, 0.5);
+      ctx.lineTo(2, 0.5);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,25, 0,255,0,255, "50,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,5, 0,255,0,255, "50,5", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 50,45, 0,255,0,255, "50,45", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_384_content"
+  data-contexts="1"
+  data-id="384"
+  data-name="2d.line.width.scaledefault"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.width.scaledefault (Default lineWidth strokes are affected by scale transformations)">&nbsp;</div><br />
+
+<div id="test_384_status">&nbsp;</div>
+
+[<a href="?runTests=384&noCleanup#384" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="409" href="#409"\>409</a>: 2d.line.miter.invalid (Setting miterLimit to invalid values is ignored)</p>
+
+<script>
+  async function test_409_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.miterLimit = 1.5;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.miterLimit, 1.5, "ctx.miterLimit", "1.5");
+      
+      ctx.miterLimit = 1.5;
+      ctx.miterLimit = 0;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.miterLimit, 1.5, "ctx.miterLimit", "1.5");
+      
+      ctx.miterLimit = 1.5;
+      ctx.miterLimit = -1;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.miterLimit, 1.5, "ctx.miterLimit", "1.5");
+      
+      ctx.miterLimit = 1.5;
+      ctx.miterLimit = Infinity;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.miterLimit, 1.5, "ctx.miterLimit", "1.5");
+      
+      ctx.miterLimit = 1.5;
+      ctx.miterLimit = -Infinity;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.miterLimit, 1.5, "ctx.miterLimit", "1.5");
+      
+      ctx.miterLimit = 1.5;
+      ctx.miterLimit = NaN;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.miterLimit, 1.5, "ctx.miterLimit", "1.5");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_409_content"
+  data-contexts="1"
+  data-id="409"
+  data-name="2d.line.miter.invalid"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.miter.invalid (Setting miterLimit to invalid values is ignored)">&nbsp;</div><br />
+
+<div id="test_409_status">&nbsp;</div>
+
+[<a href="?runTests=409&noCleanup#409" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="386" href="#386"\>386</a>: 2d.line.width.invalid (Setting lineWidth to invalid values is ignored)</p>
+
+<script>
+  async function test_386_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.lineWidth = 1.5;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineWidth, 1.5, "ctx.lineWidth", "1.5");
+      
+      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 0;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineWidth, 1.5, "ctx.lineWidth", "1.5");
+      
+      ctx.lineWidth = 1.5;
+      ctx.lineWidth = -1;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineWidth, 1.5, "ctx.lineWidth", "1.5");
+      
+      ctx.lineWidth = 1.5;
+      ctx.lineWidth = Infinity;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineWidth, 1.5, "ctx.lineWidth", "1.5");
+      
+      ctx.lineWidth = 1.5;
+      ctx.lineWidth = -Infinity;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineWidth, 1.5, "ctx.lineWidth", "1.5");
+      
+      ctx.lineWidth = 1.5;
+      ctx.lineWidth = NaN;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineWidth, 1.5, "ctx.lineWidth", "1.5");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_386_content"
+  data-contexts="1"
+  data-id="386"
+  data-name="2d.line.width.invalid"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.width.invalid (Setting lineWidth to invalid values is ignored)">&nbsp;</div><br />
+
+<div id="test_386_status">&nbsp;</div>
+
+[<a href="?runTests=386&noCleanup#386" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="405" href="#405"\>405</a>: 2d.line.miter.rightangle (Miter joins are not drawn when the miter limit is exceeded, on exact right angles)</p>
+
+<script>
+  async function test_405_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.lineWidth = 400;
+      ctx.lineJoin = 'miter';
+      
+      ctx.strokeStyle = '#f00';
+      ctx.miterLimit = 1.414;
+      ctx.beginPath();
+      ctx.moveTo(200, 1000);
+      ctx.lineTo(200, 200);
+      ctx.lineTo(1000, 200);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,1, 0,255,0,255, "48,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,48, 0,255,0,255, "48,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_405_content"
+  data-contexts="1"
+  data-id="405"
+  data-name="2d.line.miter.rightangle"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.miter.rightangle (Miter joins are not drawn when the miter limit is exceeded, on exact right angles)">&nbsp;</div><br />
+
+<div id="test_405_status">&nbsp;</div>
+
+[<a href="?runTests=405&noCleanup#405" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="382" href="#382"\>382</a>: 2d.line.width.basic (lineWidth determines the width of line strokes)</p>
+
+<script>
+  async function test_382_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.lineWidth = 20;
+      // Draw a green line over a red box, to check the line is not too small
+      ctx.fillStyle = '#f00';
+      ctx.strokeStyle = '#0f0';
+      ctx.fillRect(15, 15, 20, 20);
+      ctx.beginPath();
+      ctx.moveTo(25, 15);
+      ctx.lineTo(25, 35);
+      ctx.stroke();
+      
+      // Draw a green box over a red line, to check the line is not too large
+      ctx.fillStyle = '#0f0';
+      ctx.strokeStyle = '#f00';
+      ctx.beginPath();
+      ctx.moveTo(75, 15);
+      ctx.lineTo(75, 35);
+      ctx.stroke();
+      ctx.fillRect(65, 15, 20, 20);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 14,25, 0,255,0,255, "14,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 15,25, 0,255,0,255, "15,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 16,25, 0,255,0,255, "16,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,25, 0,255,0,255, "25,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 34,25, 0,255,0,255, "34,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 35,25, 0,255,0,255, "35,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 36,25, 0,255,0,255, "36,25", "0,255,0,255");
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 64,25, 0,255,0,255, "64,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 65,25, 0,255,0,255, "65,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 66,25, 0,255,0,255, "66,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,25, 0,255,0,255, "75,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 84,25, 0,255,0,255, "84,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 85,25, 0,255,0,255, "85,25", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 86,25, 0,255,0,255, "86,25", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_382_content"
+  data-contexts="1"
+  data-id="382"
+  data-name="2d.line.width.basic"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.width.basic (lineWidth determines the width of line strokes)">&nbsp;</div><br />
+
+<div id="test_382_status">&nbsp;</div>
+
+[<a href="?runTests=382&noCleanup#382" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="399" href="#399"\>399</a>: 2d.line.join.parallel (Line joins are drawn at 180-degree joins)</p>
+
+<script>
+  async function test_399_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 300;
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-100, 25);
+      ctx.lineTo(0, 25);
+      ctx.lineTo(-100, 25);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,1, 0,255,0,255, "48,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,48, 0,255,0,255, "48,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_399_content"
+  data-contexts="1"
+  data-id="399"
+  data-name="2d.line.join.parallel"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.join.parallel (Line joins are drawn at 180-degree joins)">&nbsp;</div><br />
+
+<div id="test_399_status">&nbsp;</div>
+
+[<a href="?runTests=399&noCleanup#399" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="406" href="#406"\>406</a>: 2d.line.miter.lineedge (Miter joins are not drawn when the miter limit is exceeded at the corners of a zero-height rectangle)</p>
+
+<script>
+  async function test_406_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.lineWidth = 200;
+      ctx.lineJoin = 'miter';
+      
+      ctx.strokeStyle = '#f00';
+      ctx.miterLimit = 1.414;
+      ctx.beginPath();
+      ctx.strokeRect(100, 25, 200, 0);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,1, 0,255,0,255, "48,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,48, 0,255,0,255, "48,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_406_content"
+  data-contexts="1"
+  data-id="406"
+  data-name="2d.line.miter.lineedge"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.miter.lineedge (Miter joins are not drawn when the miter limit is exceeded at the corners of a zero-height rectangle)">&nbsp;</div><br />
+
+<div id="test_406_status">&nbsp;</div>
+
+[<a href="?runTests=406&noCleanup#406" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="396" href="#396"\>396</a>: 2d.line.join.miter (lineJoin 'miter' is rendered correctly)</p>
+
+<script>
+  async function test_396_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.lineJoin = 'miter';
+      ctx.lineWidth = 20;
+      
+      ctx.fillStyle = '#f00';
+      ctx.strokeStyle = '#0f0';
+      
+      ctx.fillStyle = '#f00';
+      ctx.strokeStyle = '#0f0';
+      
+      ctx.fillRect(10, 10, 30, 20);
+      ctx.fillRect(20, 10, 20, 30);
+      
+      ctx.beginPath();
+      ctx.moveTo(10, 20);
+      ctx.lineTo(30, 20);
+      ctx.lineTo(30, 40);
+      ctx.stroke();
+      
+      
+      ctx.fillStyle = '#0f0';
+      ctx.strokeStyle = '#f00';
+      
+      ctx.beginPath();
+      ctx.moveTo(60, 20);
+      ctx.lineTo(80, 20);
+      ctx.lineTo(80, 40);
+      ctx.stroke();
+      
+      ctx.fillRect(60, 10, 30, 20);
+      ctx.fillRect(70, 10, 20, 30);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 38,12, 0,255,0,255, "38,12", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 39,11, 0,255,0,255, "39,11", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 40,10, 0,255,0,255, "40,10", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 41,9, 0,255,0,255, "41,9", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 42,8, 0,255,0,255, "42,8", "0,255,0,255");
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 88,12, 0,255,0,255, "88,12", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 89,11, 0,255,0,255, "89,11", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 90,10, 0,255,0,255, "90,10", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 91,9, 0,255,0,255, "91,9", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 92,8, 0,255,0,255, "92,8", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_396_content"
+  data-contexts="1"
+  data-id="396"
+  data-name="2d.line.join.miter"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.join.miter (lineJoin 'miter' is rendered correctly)">&nbsp;</div><br />
+
+<div id="test_396_status">&nbsp;</div>
+
+[<a href="?runTests=396&noCleanup#396" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="404" href="#404"\>404</a>: 2d.line.miter.obtuse (Miter joins are drawn correctly with obtuse angles)</p>
+
+<script>
+  async function test_404_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.lineWidth = 1600;
+      ctx.lineJoin = 'miter';
+      
+      ctx.strokeStyle = '#0f0';
+      ctx.miterLimit = 1.083;
+      ctx.beginPath();
+      ctx.moveTo(800, 10000);
+      ctx.lineTo(800, 300);
+      ctx.lineTo(10000, -8900);
+      ctx.stroke();
+      
+      ctx.strokeStyle = '#f00';
+      ctx.miterLimit = 1.082;
+      ctx.beginPath();
+      ctx.moveTo(800, 10000);
+      ctx.lineTo(800, 300);
+      ctx.lineTo(10000, -8900);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,1, 0,255,0,255, "48,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,48, 0,255,0,255, "48,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_404_content"
+  data-contexts="1"
+  data-id="404"
+  data-name="2d.line.miter.obtuse"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.miter.obtuse (Miter joins are drawn correctly with obtuse angles)">&nbsp;</div><br />
+
+<div id="test_404_status">&nbsp;</div>
+
+[<a href="?runTests=404&noCleanup#404" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="407" href="#407"\>407</a>: 2d.line.miter.within (Miter joins are drawn when the miter limit is not quite exceeded)</p>
+
+<script>
+  async function test_407_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.lineWidth = 400;
+      ctx.lineJoin = 'miter';
+      
+      ctx.strokeStyle = '#0f0';
+      ctx.miterLimit = 1.416;
+      ctx.beginPath();
+      ctx.moveTo(200, 1000);
+      ctx.lineTo(200, 200);
+      ctx.lineTo(1000, 201);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,1, 0,255,0,255, "48,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,48, 0,255,0,255, "48,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_407_content"
+  data-contexts="1"
+  data-id="407"
+  data-name="2d.line.miter.within"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.miter.within (Miter joins are drawn when the miter limit is not quite exceeded)">&nbsp;</div><br />
+
+<div id="test_407_status">&nbsp;</div>
+
+[<a href="?runTests=407&noCleanup#407" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="387" href="#387"\>387</a>: 2d.line.cap.butt (lineCap 'butt' is rendered correctly)</p>
+
+<script>
+  async function test_387_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.lineCap = 'butt';
+      ctx.lineWidth = 20;
+      
+      ctx.fillStyle = '#f00';
+      ctx.strokeStyle = '#0f0';
+      ctx.fillRect(15, 15, 20, 20);
+      ctx.beginPath();
+      ctx.moveTo(25, 15);
+      ctx.lineTo(25, 35);
+      ctx.stroke();
+      
+      ctx.fillStyle = '#0f0';
+      ctx.strokeStyle = '#f00';
+      ctx.beginPath();
+      ctx.moveTo(75, 15);
+      ctx.lineTo(75, 35);
+      ctx.stroke();
+      ctx.fillRect(65, 15, 20, 20);
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,14, 0,255,0,255, "25,14", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,15, 0,255,0,255, "25,15", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,16, 0,255,0,255, "25,16", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,34, 0,255,0,255, "25,34", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,35, 0,255,0,255, "25,35", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,36, 0,255,0,255, "25,36", "0,255,0,255");
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,14, 0,255,0,255, "75,14", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,15, 0,255,0,255, "75,15", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,16, 0,255,0,255, "75,16", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,34, 0,255,0,255, "75,34", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,35, 0,255,0,255, "75,35", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,36, 0,255,0,255, "75,36", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_387_content"
+  data-contexts="1"
+  data-id="387"
+  data-name="2d.line.cap.butt"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.cap.butt (lineCap 'butt' is rendered correctly)">&nbsp;</div><br />
+
+<div id="test_387_status">&nbsp;</div>
+
+[<a href="?runTests=387&noCleanup#387" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="390" href="#390"\>390</a>: 2d.line.cap.open (Line caps are drawn at the corners of an unclosed rectangle)</p>
+
+<script>
+  async function test_390_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.strokeStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.lineJoin = 'bevel';
+      ctx.lineCap = 'square';
+      ctx.lineWidth = 400;
+      
+      ctx.beginPath();
+      ctx.moveTo(200, 200);
+      ctx.lineTo(200, 1000);
+      ctx.lineTo(1000, 1000);
+      ctx.lineTo(1000, 200);
+      ctx.lineTo(200, 200);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,1, 0,255,0,255, "48,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,48, 0,255,0,255, "48,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_390_content"
+  data-contexts="1"
+  data-id="390"
+  data-name="2d.line.cap.open"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.cap.open (Line caps are drawn at the corners of an unclosed rectangle)">&nbsp;</div><br />
+
+<div id="test_390_status">&nbsp;</div>
+
+[<a href="?runTests=390&noCleanup#390" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="411" href="#411"\>411</a>: 2d.line.union</p>
+
+<script>
+  async function test_411_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.lineWidth = 100;
+      ctx.lineCap = 'round';
+      
+      ctx.strokeStyle = '#0f0';
+      ctx.beginPath();
+      ctx.moveTo(0, 24);
+      ctx.lineTo(100, 25);
+      ctx.lineTo(0, 26);
+      ctx.closePath();
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,1, 0,255,0,255, "25,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,1, 0,255,0,255, "48,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,1, 0,255,0,255, "25,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,48, 0,255,0,255, "48,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_411_content"
+  data-contexts="1"
+  data-id="411"
+  data-name="2d.line.union"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.union">&nbsp;</div><br />
+
+<div id="test_411_status">&nbsp;</div>
+
+[<a href="?runTests=411&noCleanup#411" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="388" href="#388"\>388</a>: 2d.line.cap.round (lineCap 'round' is rendered correctly)</p>
+
+<script>
+  async function test_388_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      var tol = 1; // tolerance to avoid antialiasing artifacts
+      
+      ctx.lineCap = 'round';
+      ctx.lineWidth = 20;
+      
+      
+      ctx.fillStyle = '#f00';
+      ctx.strokeStyle = '#0f0';
+      
+      ctx.beginPath();
+      ctx.moveTo(35-tol, 15);
+      ctx.arc(25, 15, 10-tol, 0, Math.PI, true);
+      ctx.arc(25, 35, 10-tol, Math.PI, 0, true);
+      ctx.fill();
+      
+      ctx.beginPath();
+      ctx.moveTo(25, 15);
+      ctx.lineTo(25, 35);
+      ctx.stroke();
+      
+      
+      ctx.fillStyle = '#0f0';
+      ctx.strokeStyle = '#f00';
+      
+      ctx.beginPath();
+      ctx.moveTo(75, 15);
+      ctx.lineTo(75, 35);
+      ctx.stroke();
+      
+      ctx.beginPath();
+      ctx.moveTo(85+tol, 15);
+      ctx.arc(75, 15, 10+tol, 0, Math.PI, true);
+      ctx.arc(75, 35, 10+tol, Math.PI, 0, true);
+      ctx.fill();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 17,6, 0,255,0,255, "17,6", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,6, 0,255,0,255, "25,6", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 32,6, 0,255,0,255, "32,6", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 17,43, 0,255,0,255, "17,43", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 25,43, 0,255,0,255, "25,43", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 32,43, 0,255,0,255, "32,43", "0,255,0,255");
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 67,6, 0,255,0,255, "67,6", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,6, 0,255,0,255, "75,6", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 82,6, 0,255,0,255, "82,6", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 67,43, 0,255,0,255, "67,43", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 75,43, 0,255,0,255, "75,43", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 82,43, 0,255,0,255, "82,43", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_388_content"
+  data-contexts="1"
+  data-id="388"
+  data-name="2d.line.cap.round"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.cap.round (lineCap 'round' is rendered correctly)">&nbsp;</div><br />
+
+<div id="test_388_status">&nbsp;</div>
+
+[<a href="?runTests=388&noCleanup#388" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="381" href="#381"\>381</a>: 2d.line.defaults</p>
+
+<script>
+  async function test_381_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineWidth, 1, "ctx.lineWidth", "1");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineCap, 'butt', "ctx.lineCap", "'butt'");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineJoin, 'miter', "ctx.lineJoin", "'miter'");
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.miterLimit, 10, "ctx.miterLimit", "10");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_381_content"
+  data-contexts="1"
+  data-id="381"
+  data-name="2d.line.defaults"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.defaults">&nbsp;</div><br />
+
+<div id="test_381_status">&nbsp;</div>
+
+[<a href="?runTests=381&noCleanup#381" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+<p><a id="397" href="#397"\>397</a>: 2d.line.join.open (Line joins are not drawn at the corner of an unclosed rectangle)</p>
+
+<script>
+  async function test_397_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          ctx.fillStyle = '#0f0';
+      ctx.strokeStyle = '#f00';
+      ctx.fillRect(0, 0, 100, 50);
+      
+      ctx.lineJoin = 'miter';
+      ctx.lineWidth = 200;
+      
+      ctx.beginPath();
+      ctx.moveTo(100, 50);
+      ctx.lineTo(100, 1000);
+      ctx.lineTo(1000, 1000);
+      ctx.lineTo(1000, 50);
+      ctx.lineTo(100, 50);
+      ctx.stroke();
+      
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,1, 0,255,0,255, "1,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,1, 0,255,0,255, "48,1", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 48,48, 0,255,0,255, "48,48", "0,255,0,255");
+      ctx.flush()
+      canvasAssert._assertPixel(t, ctx, 1,48, 0,255,0,255, "1,48", "0,255,0,255");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_397_content"
+  data-contexts="1"
+  data-id="397"
+  data-name="2d.line.join.open"
+  data-width="100"
+  data-height="50"
+  data-description="2d.line.join.open (Line joins are not drawn at the corner of an unclosed rectangle)">&nbsp;</div><br />
+
+<div id="test_397_status">&nbsp;</div>
+
+[<a href="?runTests=397&noCleanup#397" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+
+<br /><br />
+&lt;3
+
+</body>
+</html>

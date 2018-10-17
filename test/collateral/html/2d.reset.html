@@ -1,0 +1,362 @@
+<html>
+
+<head>
+<title>2d.reset // WebGL2DContext conformance</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<style>
+  div {
+    padding: 5px;
+  }
+  canvas {
+    border: 1px black solid;
+  }
+  .progress {
+    font: 100% monospace;
+  }
+  .failure {
+    background-color: red;
+    color: white;
+    font: 100% sans-serif;
+  }
+  .success {
+    background-color: #88FF88;
+    font: 100% sans-serif;
+  }
+  .failure a:link {
+    color: white
+  }
+  .failure a:visited {
+    color: white
+  }
+</style>
+
+<script type="text/javascript" src="bundle.js"></script>
+<script type="text/javascript" src="assets.js"></script>
+<script type="text/javascript" src="asserts.js"></script>
+
+<script type="text/javascript">
+    async function getAsset(name) {
+      return new Promise((resolve, reject) => {
+        let img = document.createElement("IMG")
+        img.onload = () => resolve(img)
+        img.onerror = reject
+        img.src = rawImageAssets[name]
+      })
+    }
+
+    function bootCanvas(container, id, width, height) {
+        var canvas = document.createElement("CANVAS")
+        canvas.setAttribute("id", id)
+        canvas.setAttribute("width", width)
+        canvas.setAttribute("height", height)
+
+        container.appendChild(canvas)
+
+        var gl = canvas.getContext("webgl2", {
+          stencil: 8,
+          preserveDrawingBuffer: true
+        });
+        gl.viewportWidth = canvas.width;
+        gl.viewportHeight = canvas.height;
+        if (!gl) {
+            console.log("Could not initialise WebGL, sorry :-(")
+            return null;
+        }
+
+        gl.clearColor(1.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        /* TODO: figure out how to pass some gradient tests that need
+         * more grad stops: */
+        let ctx = new Expo2DContext.default(gl, maxGradStops=50)
+        ctx.getContext = () => {return ctx;}
+        
+        return [canvas, gl, ctx]
+    }
+
+    function spinner_graphic(i) {
+      let anim = ["/","&ndash;","\\","|","/","&ndash;","\\", "|"]
+      return anim[i%anim.length]
+    }
+
+    var testContexts = {};
+
+    function focusTest (num) {
+      window.ctx = testContexts[num][0]
+    }
+    window.onhashchange = () => {
+      var url = new URL(window.location)
+      var hashVal = url.hash.substr(1)
+      if (hashVal in testContexts) {
+        focusTest(hashVal)
+      }
+    }
+
+    async function runTests() {
+
+      // TODO: assets??
+
+      if (!window.testComplete) {
+        window.testComplete = (testResults, completedTests, totalTests) =>
+          { /* PUPPETEER STUB */ };
+      }
+
+      testContexts = {};
+
+      var tests = document.getElementsByClassName("test")
+
+      var url = new URL(window.location)
+      if (url.searchParams.get("runTests") != null) {
+        selected_test_ids = url.searchParams.get("runTests").split(",").map((x) => parseInt(x))
+        tests = selected_test_ids.map((x) => document.getElementById("test_"+x+"_content")) 
+      }
+
+      var cleanUp = url.searchParams.get("noCleanup") == null
+
+      let suite_status = document.getElementById("suite_status")
+
+      var failures = new Set();
+      var failureSummaryHTML = "Failed:<ul>"
+
+      let i = 0;
+
+      var testIteration = async (i) => {
+
+        if (i >= tests.length) {
+          finishTests();
+          return;
+        }
+
+        let test_area = tests[i]
+        let test = test_area.dataset
+    
+        // TODO: how to un-convert-from-string numbers in dataset
+        
+        let allCanvases = []
+        let allWebGLContexts = []
+        let allContexts = []
+        
+        let failureMessages = []
+
+        for (let j=0; j<parseInt(test.contexts); j++) {
+          let [canvas, gl, ctx] = bootCanvas(
+            test_area,
+            "canvas_"+test.id+"_"+j,
+            parseInt(test.width),
+            parseInt(test.height)
+          )
+          // Install fake getContext wrapper to allow context objects to be
+          // used in place of canvas objects for our tests:
+          ctx.getContext = (unused) => {return ctx};
+          allCanvases.push(canvas)
+          allWebGLContexts.push(gl)
+          allContexts.push(ctx)
+        }
+
+        let onFail = TriggerObject((message) => {
+          let status_box = document.getElementById("test_"+test.id+"_status")
+
+          status_box.setAttribute("class","failure")
+          status_box.innerHTML += message + "<br />";
+          failureMessages.push(message)
+
+          if (!failures.has(test.id)) {
+            failureSummaryHTML += "<li><a href='#"+test.id+"'>"+test.id+": "+test.description+"</a></li>"
+            failures.add(test.id);
+          }
+        })
+
+        try {
+          let test_fn = eval("test_"+test.id+"_body");
+          await test_fn(onFail, allCanvases, allContexts);
+        } catch (err) {
+          onFail.trigger(false, err.toString());
+        }
+
+        if (cleanUp) {
+          // Copy the resulting drawings out of the original canvas and
+          // safely trash the old gl context, to free up resources:
+          for (let j=0; j<parseInt(test.contexts); j++) {
+            let canvas_clone = allCanvases[j].cloneNode(true);
+            let clone_ctx = canvas_clone.getContext('2d');
+            clone_ctx.drawImage(allCanvases[j], 0, 0);
+
+            allCanvases[j].replaceWith(canvas_clone);
+
+            allWebGLContexts[j].getExtension('WEBGL_lose_context').loseContext();
+            allWebGLContexts[j] = null;
+          }
+        } else {
+          testContexts[test.id] = allContexts
+        }
+
+        suite_status.innerHTML = "["+ spinner_graphic(i) + "] Tests run: " + (i+1) + " / " + tests.length;
+
+        window.testComplete(
+          Object.assign({
+            "failureMessages": failureMessages
+          }, test), i+1, tests.length);
+
+        setTimeout(() => { testIteration(i+1) }, 1);
+      }
+
+      var finishTests = () => {
+        if (failures.size > 0) {
+          failureSummaryHTML += "</ul><br />"
+          suite_status.setAttribute("class","failure")
+          suite_status.innerHTML = failureSummaryHTML
+        } else {
+          suite_status.setAttribute("class","success")
+          suite_status.innerHTML = "[:)] All tests pass !" 
+        }
+
+        if (!cleanUp && tests.length==1){
+          focusTest(tests[0].dataset.id)
+        } else {
+          window.onhashchange()
+        }
+      };
+
+      testIteration(0);
+
+    }
+
+</script>
+</head>
+<body onload="runTests();">
+<h1> 2d.reset </h1>
+<div id="suite_status" class="progress">&nbsp;</div>
+<hr />
+
+<!-- DISABLED: TODO should we/can we reset canvas state when the surrounding GLView size changes?
+<p><a id="30" href="#30"\>30</a>: initial.reset.2dstate (Resetting the canvas state resets 2D state variables)</p>
+
+<script>
+  async function test_30_body(t, allCanvases, allContexts) {
+    
+    
+    // TODO: make sure we deal with multiple contexts properly
+    let ctx = allContexts[0];
+    let canvas = allCanvases[0];
+
+          await ctx.initializeText();
+      canvas.width = 100;
+      var default_val;
+      
+      default_val = ctx.strokeStyle;
+      ctx.strokeStyle = "#ff0000";
+      canvas.width = 100;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.strokeStyle, default_val, "ctx.strokeStyle", "default_val");
+      
+      default_val = ctx.fillStyle;
+      ctx.fillStyle = "#ff0000";
+      canvas.width = 100;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.fillStyle, default_val, "ctx.fillStyle", "default_val");
+      
+      default_val = ctx.globalAlpha;
+      ctx.globalAlpha = 0.5;
+      canvas.width = 100;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalAlpha, default_val, "ctx.globalAlpha", "default_val");
+      
+      default_val = ctx.lineWidth;
+      ctx.lineWidth = 0.5;
+      canvas.width = 100;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineWidth, default_val, "ctx.lineWidth", "default_val");
+      
+      default_val = ctx.lineCap;
+      ctx.lineCap = "round";
+      canvas.width = 100;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineCap, default_val, "ctx.lineCap", "default_val");
+      
+      default_val = ctx.lineJoin;
+      ctx.lineJoin = "round";
+      canvas.width = 100;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.lineJoin, default_val, "ctx.lineJoin", "default_val");
+      
+      default_val = ctx.miterLimit;
+      ctx.miterLimit = 0.5;
+      canvas.width = 100;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.miterLimit, default_val, "ctx.miterLimit", "default_val");
+      
+      default_val = ctx.shadowOffsetX;
+      ctx.shadowOffsetX = 5;
+      canvas.width = 100;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetX, default_val, "ctx.shadowOffsetX", "default_val");
+      
+      default_val = ctx.shadowOffsetY;
+      ctx.shadowOffsetY = 5;
+      canvas.width = 100;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowOffsetY, default_val, "ctx.shadowOffsetY", "default_val");
+      
+      default_val = ctx.shadowBlur;
+      ctx.shadowBlur = 5;
+      canvas.width = 100;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowBlur, default_val, "ctx.shadowBlur", "default_val");
+      
+      default_val = ctx.shadowColor;
+      ctx.shadowColor = "#ff0000";
+      canvas.width = 100;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.shadowColor, default_val, "ctx.shadowColor", "default_val");
+      
+      default_val = ctx.globalCompositeOperation;
+      ctx.globalCompositeOperation = "copy";
+      canvas.width = 100;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.globalCompositeOperation, default_val, "ctx.globalCompositeOperation", "default_val");
+      
+      default_val = ctx.font;
+      ctx.font = "25px serif";
+      canvas.width = 100;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.font, default_val, "ctx.font", "default_val");
+      
+      default_val = ctx.textAlign;
+      ctx.textAlign = "center";
+      canvas.width = 100;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.textAlign, default_val, "ctx.textAlign", "default_val");
+      
+      default_val = ctx.textBaseline;
+      ctx.textBaseline = "bottom";
+      canvas.width = 100;
+      ctx.flush()
+      canvasAssert._assertSame(t, ctx.textBaseline, default_val, "ctx.textBaseline", "default_val");
+      
+  }
+</script>
+
+<div class="test"
+  id="test_30_content"
+  data-contexts="1"
+  data-id="30"
+  data-name="initial.reset.2dstate"
+  data-width="100"
+  data-height="50"
+  data-description="initial.reset.2dstate (Resetting the canvas state resets 2D state variables)">&nbsp;</div><br />
+
+<div id="test_30_status">&nbsp;</div>
+
+[<a href="?runTests=30&noCleanup#30" onclick="window.location.reload()">solo run</a>]
+
+<hr />
+
+-->
+
+
+<br /><br />
+&lt;3
+
+</body>
+</html>
