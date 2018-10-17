@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 var ArgumentParser = require('argparse').ArgumentParser;
+var fs = require('fs');
 const puppeteer = require('puppeteer');
 
 process.on('unhandledRejection', error => {
@@ -8,7 +9,7 @@ process.on('unhandledRejection', error => {
 
 var suiteResults = {}
 
-var runTestSuite = async (suite_name, suite_url) => {
+var runTestSuite = async (suite) => {
   const browser = await puppeteer.launch({headless: true});
   const page = await browser.newPage();
 
@@ -23,18 +24,18 @@ var runTestSuite = async (suite_name, suite_url) => {
         console.error("    "+testResults.failureMessages[errIdx])
       }
       testId = testResults.id
-      console.error("  Solo run: " + suite_url + "?runTests=" + testId + "&noCleanup#" + testId)
+      console.error("  Solo run: " + suite.href + "?runTests=" + testId + "&noCleanup#" + testId)
     }
     allTestResults.push(testResults)
     console.log("Tests run: " + testsRun + " / " + testsLength)
   });
 
-  await page.goto(suite_url, {waitUntil: 'networkidle2'});
+  await page.goto(suite.href, {waitUntil: 'networkidle2'});
   await page.waitForFunction('document.getElementById("suite_status").className != "progress"');
 
   let success = (await page.evaluate('document.getElementById("suite_status").className')) == "success"
 
-  let failureInspectionURL = suite_url + "?noCleanup&runTests="
+  let failureInspectionURL = suite.href + "?noCleanup&runTests="
   let failedTests = []
   for (let testIdx = 0; testIdx < allTestResults.length; testIdx++) {
     let testResults = allTestResults[testIdx];
@@ -47,8 +48,8 @@ var runTestSuite = async (suite_name, suite_url) => {
     failureInspectionURL = null;
   } 
 
-  suiteResults[suite_name] = {
-    "name": suite_name,
+  suiteResults[suite.name] = {
+    "name": suite.name,
     "succeeded": success,
     "failureInspectionURL": failureInspectionURL,
     "failedTests": failedTests,
@@ -59,48 +60,147 @@ var runTestSuite = async (suite_name, suite_url) => {
 
 };
 
+var getSubsuites = async (suite_url) => {
+  const browser = await puppeteer.launch({headless: true});
+  const page = await browser.newPage();
+  await page.goto(suite_url, {waitUntil: 'networkidle2'});
+
+  const test_list = await page.evaluate(() => {
+    const anchors = Array.from(document.getElementsByTagName("a"));
+    return anchors.map(anchor => {
+      const title = anchor.dataset.name;
+      return {"href": anchor.href, "name": anchor.dataset.name, "count": anchor.dataset.count}
+    });
+  });
+
+  var test_map = {}
+  for (var i=0; i < test_list.length; i++) {
+    test_map[test_list[i].name] = test_list[i]
+  }
+
+  await browser.close();
+
+  return test_map
+}
 
 (async () => {
+
+
 
   var parser = new ArgumentParser({
     version: '0.0.1',
     addHelp:true,
     description: 'expo-2d-context test suite runner'
   });
+
+  defaultResultsFile="results.json"
+  parser.addArgument(
+    [ '--resultsFile' ],
+    {
+      help: "Filename to output results to [default: "+defaultResultsFile+"]",
+      defaultValue: defaultResultsFile
+    }
+  );
+
+  defaultResultsFormat="basic"
+  parser.addArgument(
+    [ '--resultsFormat' ],
+    {
+      help: "Format of result output {basic, TBD} [default: "+defaultResultsFormat+"]",
+      defaultValue: defaultResultsFormat
+    }
+  );
+
+  parser.addArgument(
+    [ '--quiet' ],
+    {
+      help: "Don't print human-readable progress information to stdout/stderr",
+      action: "storeTrue"
+    }
+  );
+
+  let defaultUrl = "http://127.0.0.1:8081/"
   parser.addArgument(
     [ '--base-url' ],
     {
-      help: 'Base URL to load test suites from',
-      defaultValue: 'http://127.0.0.1:8081/'
+      help: 'Base URL to load test suites from [default:'+defaultUrl+']',
+      defaultValue: defaultUrl
     }
   );
+
   parser.addArgument(
     [ 'suite' ],
     {
-      nargs: '+',
-      help: 'Name of suite(s) to run',
-      defaultValue: 'http://127.0.0.1:8081/'
+      nargs: '*',
+      help: 'Name of suite(s) to run, "all" to run all, or not specified, to list available suites)',
+      defaultValue: []
     }
   );
   var args = parser.parseArgs();  
 
-  for (var i=0; i<args["suite"].length; i++) {
-    try {
-      let suite_url = args["base_url"]+args["suite"][i]+".html"
-      console.log("Launching suite "+args["suite"][i]+" ("+suite_url+")")
-      await runTestSuite(args["suite"][i], suite_url);
-    } catch (error) {
-      console.error(error);
+
+  if (args.quiet) {
+    console.log = (val) => {}
+    console.error = (val) => {}
+  }
+  console.log("Loading test harness at "+args["base_url"])
+  var subsuites = await getSubsuites(args["base_url"]);
+  if (args["suite"].length == 1 && args["suite"][0] == "all") {
+    args["suite"] = Object.keys(subsuites)
+  }
+  if (args["suite"].length == 0){
+    console.log(subsuites)
+  } else {
+
+    let notRunSuites = []
+    for (var i=0; i<args["suite"].length; i++) {
+      if (args["suite"][i] in subsuites) {
+        try {
+          let subsuite = subsuites[args["suite"][i]]
+          console.log("Launching suite "+subsuite.name+" ("+subsuite.href+")")
+          await runTestSuite(subsuite);
+        } catch (error) {
+          console.error(error);
+        }
+      } else {
+        console.log("WARNING: suite " + args["suite"][i] + " not found")
+        notRunSuites.push(args["suite"][i])
+      }
+      console.log("~~")
     }
-    console.log("~~")
+    let succeededSuites = Object.keys(suiteResults).filter(key => suiteResults[key]["succeeded"]==true)
+    let failedSuites = Object.keys(suiteResults).filter(key => suiteResults[key]["succeeded"]==false)
+    
+    let basicSummary = {
+      "succeeded": succeededSuites,
+      "failed": failedSuites,
+      "notRun": notRunSuites
+    }
+    let basicFailureDetail = {}
+    for (let suiteIdx = 0; suiteIdx < failedSuites.length; suiteIdx++) {
+      let failedSuite = suiteResults[failedSuites[suiteIdx]] 
+      basicFailureDetail[failedSuites[suiteIdx]] = failedSuite
+    }
+    let basicResults = {
+        "summary": basicSummary,
+        "detail": basicFailureDetail
+    }
+
+    console.log(basicSummary)
+
+    let resultsFileText = ""
+    if (args.resultsFormat == "basic") {
+      fs.writeFile(args.resultsFile, JSON.stringify(basicResults, null, 2), function(err) {
+          if(err) {
+              return console.log(err);
+          }
+      });
+    } else {
+      console.error("Bad output format specified")
+    }
+
   }
-  let succeededSuites = Object.keys(suiteResults).filter(key => suiteResults[key]["succeeded"]==true)
-  let failedSuites = Object.keys(suiteResults).filter(key => suiteResults[key]["succeeded"]==false)
-  console.log("Succeeded: " + succeededSuites)
-  console.log("Failed: " + failedSuites)
-  for (let suiteIdx = 0; suiteIdx < failedSuites.length; suiteIdx++) {
-    let failedSuite = suiteResults[failedSuites[suiteIdx]] 
-    console.log(failedSuite)
-  }
+
+  process.exit(0)
 })();
 

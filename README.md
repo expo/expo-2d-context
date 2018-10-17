@@ -1,10 +1,10 @@
 # expo-2d-context
-A pure-js implementation of the W3C's Canvas-2D Context API that can be run on top of either Expo Graphics or a browser WebGL context.
+A pure-JS implementation of the W3C's Canvas-2D Context API that can be run on top of either Expo Graphics or a browser WebGL context.
 
 ## Intention
 This implementation is currently much slower than native 2D context implementations, and if you're interested in performance it's a better idea to create an Expo WebView and put a canvas in it.
 
-Its primary utility is when you want to use the 2D Context API  in a situation where there is no DOM and it would not be a good idea to scrounge one together.
+Its primary utility is when you want to use the 2D Context API in a situation where there is no DOM and it would not be a good idea to scrounge one together.
 
 Hopefully, it may also serve as a learning tool and alternative implementation to an API that exists mostly only in large rendering engine codebases.
 
@@ -37,7 +37,6 @@ class App extends React.Component {
         );
     }
 
-
     _onGLContextCreate = (gl) => {
         var ctx = new Expo2DContext(gl);
 
@@ -47,16 +46,16 @@ class App extends React.Component {
         ctx.fillRect(30, 100, 20, 30);
         ctx.fillRect(60, 100, 20, 30);
         ctx.fillRect(90, 100, 20, 30);
-        ctx.beginPath()
+        ctx.beginPath();
         ctx.arc(50,70,18,0,2*Math.PI);
         ctx.arc(90,70,18,0,2*Math.PI);
-        ctx.fill()
+        ctx.fill();
 
         ctx.fillStyle = "grey";
-        ctx.beginPath()
+        ctx.beginPath();
         ctx.arc(50,70,8,0,2*Math.PI);
         ctx.arc(90,70,8,0,2*Math.PI);
-        ctx.fill()
+        ctx.fill();
 
         ctx.strokeStyle = "black";
         ctx.beginPath();
@@ -67,6 +66,7 @@ class App extends React.Component {
 
         ctx.flush();
     }
+
 }
 
 Expo.registerRootComponent(App);
@@ -76,7 +76,7 @@ Have fun!
 
 ### Browser
 
-To build a javascript bundle that can be used in a browser environment, run `gulp` in the module's root directory. This should generate a `dist/bundle.js` file that exposes all of the relevant classes and can be included in a webpage. Attach it to a WebGL context with at least 2 bits of stencil buffer:
+To build a JavaScript bundle that can be used in a browser environment, run `gulp` in the module's root directory. This should generate a `dist/bundle.js` file that exposes all of the relevant classes and can be included in a webpage. Attach it to a WebGL context with at least 2 bits of stencil buffer:
 
  
 ```html
@@ -88,7 +88,6 @@ To build a javascript bundle that can be used in a browser environment, run `gul
 <script type="text/javascript" src="bundle.js"></script>
 
 <script type="text/javascript">
-
     function initGL(canvas) {
         gl = canvas.getContext("webgl2", {
             stencil: 8,
@@ -100,10 +99,8 @@ To build a javascript bundle that can be used in a browser environment, run `gul
             alert("Could not initialise WebGL, sorry :-(");
         }
 
-        return gl
+        return gl;
     }
-
-
 
     function ctxStart() {
         var canvas = document.getElementById("ctxcanvas");
@@ -117,16 +114,16 @@ To build a javascript bundle that can be used in a browser environment, run `gul
         ctx.fillRect(30, 100, 20, 30);
         ctx.fillRect(60, 100, 20, 30);
         ctx.fillRect(90, 100, 20, 30);
-        ctx.beginPath()
+        ctx.beginPath();
         ctx.arc(50,70,18,0,2*Math.PI);
         ctx.arc(90,70,18,0,2*Math.PI);
-        ctx.fill()
+        ctx.fill();
 
         ctx.fillStyle = "grey";
-        ctx.beginPath()
+        ctx.beginPath();
         ctx.arc(50,70,8,0,2*Math.PI);
         ctx.arc(90,70,8,0,2*Math.PI);
-        ctx.fill()
+        ctx.fill();
 
         ctx.strokeStyle = "black";
         ctx.beginPath();
@@ -136,8 +133,6 @@ To build a javascript bundle that can be used in a browser environment, run `gul
         ctx.stroke();
 
         ctx.flush();
-
-
     }
 
 </script>
@@ -146,7 +141,6 @@ To build a javascript bundle that can be used in a browser environment, run `gul
     <canvas id="ctxcanvas" width="600" height="600"></canvas>
 </body>
 </html>
-
 ```
 
 ### Drawing Text
@@ -154,7 +148,7 @@ To build a javascript bundle that can be used in a browser environment, run `gul
 To use the API's font drawing functions, first call `ctx.initializeText()`, which will load the necessary resources:
 
 ```javascript
-await ctx.initializeText()
+await ctx.initializeText();
 ctx.fillStyle = "blue";
 ctx.font = "italic 72pt sans-serif";
 ctx.fillText("Hey Galaxy", 10, 10);
@@ -186,7 +180,7 @@ Conformance is checked against the web platform tests here:
 
 <https://github.com/web-platform-tests/wpt/tree/master/2dcontext>
 
-A slightly adapted version of the above test suite is included in this repo's `test` directory, which can generate testing code for both browser and expo environments.
+A slightly adapted version of the above test suite is included in this repo's `test` directory, which can generate testing code for both browser and Expo environments.
 
 ### Running tests in a browser
 
@@ -194,5 +188,5 @@ Run `test/build_html.sh`, start an HTTP server in `test/collateral`, and then in
 
 ### Running tests in Expo
 
-Run `test/build_expo.sh` and copy the resulting js source and assets into Expo's jasmine-based unit test app template.
+Run `test/build_expo.sh` and copy the resulting source and assets into Expo's jasmine-based unit test app template.
 

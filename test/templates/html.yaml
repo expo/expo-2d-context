@@ -277,6 +277,16 @@ assets: |
     %assetlist%
   }
 
+index_item: |
+        <li><a data-name="2d.%name%" data-count="%count%" href="%filename%">2d.%name%</a> (%count% tests)</li>
+
+index: |
+  <html><body>
+    <ul>
+    %indexlist%
+    </ul>
+  </body></html>
+
 filenames: |
   %name%.html
 

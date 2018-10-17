@@ -348,10 +348,12 @@ def genTestUtils(SPECFILE, DISABLEDFILE, TEMPLATESFILE, TESTSFILES, TESTOUTPUTDI
         category_tests = categorized_tests.setdefault(category, {})
         category_tests[name] = test
 
+    index = []
     for category, tests in categorized_tests.items():
         test_filename = re.sub(r"\s","",templates["filenames"]).format(**{
                 "name": "2d." + category
         })
+        index.append((test_filename, category, len(tests)))
         with open(os.path.join(TESTOUTPUTDIR, test_filename), "w") as f:
             tests_concat = []
 
@@ -382,6 +384,21 @@ def genTestUtils(SPECFILE, DISABLEDFILE, TEMPLATESFILE, TESTSFILES, TESTOUTPUTDI
 
             f.write(spec);
             print("Generated %d tests for %s" % (len(tests), "2d." + category))
+
+    if "index" in templates:
+        index_filename = re.sub(r"\s","",templates["filenames"]).format(**{
+                    "name": "index"
+        })
+        with open(os.path.join(TESTOUTPUTDIR, index_filename), "w") as f:
+            index_list = "\n".join(map(lambda test: templates["index_item"].format(**{
+                "filename": test[0],
+                "name": test[1],
+                "count": test[2]
+            }), index))
+            f.write(templates["index"].format(**{
+                "indexlist": index_list,
+            }))
+
 
     with open(os.path.join(TESTOUTPUTDIR, "assets.js"), "w") as f:
         asset_list = []
