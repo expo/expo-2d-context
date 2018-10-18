@@ -4,6 +4,10 @@
   "description": "A pure-js implementation of the W3C's Canvas-2D Context API that can run on top of either Expo Graphics or a browser WebGL context.",
   "author": "Naomi Alterman",
   "main": "Expo2DContext.js",
+  "repository": {
+      "type" : "git",
+      "url" : "https://github.com/expo/expo-2d-context.git"
+  },
   "dependencies": {
     "adaptive-bezier-curve": "1.0.3",
     "adaptive-quadratic-curve": "1.0.2",
