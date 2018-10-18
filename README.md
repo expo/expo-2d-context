@@ -184,7 +184,7 @@ A slightly adapted version of the above test suite is included in this repo's `t
 
 ### Running tests in a browser
 
-Run `test/build_html.sh`, start an HTTP server in `test/collateral`, and then in a terminal run `node test/collateral/runSuite.js [suite names here]`. Alternatively, you can just navigate to the HTML files in `test/collateral` directly in a web browser.
+Run `test/build_html.sh`, start an HTTP server in `test/collateral/html`, and then in a terminal run `node test/collateral/runSuite.js all`. Alternatively, you can just navigate to the HTML files directly in a web browser.
 
 ### Running tests in Expo
 
