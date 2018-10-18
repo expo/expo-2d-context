@@ -76,7 +76,7 @@ Have fun!
 
 ### Browser
 
-To build a JavaScript bundle that can be used in a browser environment, run `gulp` in the module's root directory. This should generate a `dist/bundle.js` file that exposes all of the relevant classes and can be included in a webpage. Attach it to a WebGL context with at least 2 bits of stencil buffer:
+To build a JavaScript bundle that can be used in a browser environment, run `gulp es6` in the module's root directory. This should generate a `dist/bundle.js` file that exposes all of the relevant classes and can be included in a webpage. Attach it to a WebGL context with at least 2 bits of stencil buffer:
 
  
 ```html
@@ -188,5 +188,5 @@ Run `test/build_html.sh`, start an HTTP server in `test/collateral/html`, and th
 
 ### Running tests in Expo
 
-Run `test/build_expo.sh` and copy the resulting source and assets into Expo's jasmine-based unit test app template.
+Run `test/build_expo.sh` and copy the resulting source and assets in `test/collateral/expo` into Expo's jasmine-based unit test app template.
 
