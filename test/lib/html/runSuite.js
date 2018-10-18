@@ -186,15 +186,13 @@ var getSubsuites = async (suite_url) => {
         "detail": basicFailureDetail
     }
 
-    console.log(basicSummary)
+    console.log(JSON.stringify(basicResults, null, 2))
 
-    let resultsFileText = ""
     if (args.resultsFormat == "basic") {
-      fs.writeFile(args.resultsFile, JSON.stringify(basicResults, null, 2), function(err) {
-          if(err) {
-              return console.log(err);
-          }
-      });
+      let err = fs.writeFileSync(args.resultsFile, JSON.stringify(basicResults, null, 2))
+      if (err) {
+        console.error(err);
+      }
     } else {
       console.error("Bad output format specified")
     }
