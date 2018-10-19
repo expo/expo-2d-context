@@ -1,4 +1,4 @@
-# expo-2d-context
+# expo-2d-context [![CircleCI](https://circleci.com/gh/expo/expo-2d-context/tree/master.svg?style=svg)](https://circleci.com/gh/expo/expo-2d-context/tree/master)
 A pure-JS implementation of the W3C's Canvas-2D Context API that can be run on top of either Expo Graphics or a browser WebGL context.
 
 ## Intention
