@@ -49,7 +49,7 @@ jobs:
       - run:
           name: Run test suites
           command: |
-            node ./test/collateral/html/runSuite.js --base-url "http://127.0.0.1:8080" 2d.fillRect 2d.gradient
+            node ./test/collateral/html/runSuite.js --base-url "http://127.0.0.1:8080" all
 
       - store-artifacts:
           path: ./results.json
