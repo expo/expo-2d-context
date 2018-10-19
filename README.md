@@ -151,7 +151,7 @@ To use the API's font drawing functions, first call `ctx.initializeText()`, whic
 await ctx.initializeText();
 ctx.fillStyle = "blue";
 ctx.font = "italic 72pt sans-serif";
-ctx.fillText("Hey Galaxy", 10, 10);
+ctx.fillText("Hey Galaxy", 10, 100);
 ctx.flush();
 ``` 
 
