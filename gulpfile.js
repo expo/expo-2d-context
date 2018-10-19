@@ -4,6 +4,7 @@
  
 var gulp = require('gulp');
 var browserify = require('browserify');
+var imgurify = require('imgurify');
 var babelify = require('babelify');
 var source = require('vinyl-source-stream');
 var gutil = require('gulp-util');
@@ -14,6 +15,7 @@ gulp.task('es6', function() {
         expose: 'Expo2DContext',
         debug: true
     })
+    .transform(imgurify)
     .transform(babelify, {presets: ["es2015"]})
     .on('error',gutil.log)
     .bundle()

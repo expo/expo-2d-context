@@ -1,12 +1,33 @@
+import { getEnvironment } from './environment';
+
 var fntParseASCII = require('parse-bmfont-ascii')
 // // TODO: why does this break loading??
 // //var fntParseXML = require('parse-bmfont-xml')
 var fntParseBinary = require('parse-bmfont-binary')
 
+// Web-only loader code:
+async function getWebAsset(name, url) {
+  return new Promise((resolve, reject) => {
+    let img = document.createElement("IMG")
+    img.dataset.name = name
+    img.onload = () => resolve(img)
+    img.onerror = reject
+    img.src = url
+  })
+}
+
 export class BMFont {
   constructor(descriptor_text, image_assets, thresholds) {
     this.descriptor = descriptor_text;
-    this.images = image_assets.map(raw_asset => Expo.Asset.fromModule(raw_asset));
+    if (getEnvironment()==="expo") {
+      let wrapped_assets = {}
+      Object.keys(image_assets).map(function(key, index) {
+         wrapped_assets[key] = Expo.Asset.fromModule(image_assets[key]);
+      });
+      this.images = wrapped_assets
+    } else {
+      this.images = image_assets
+    }
     this.assets_loaded = false;
     this.gl_resources = null
     this.thresholds = thresholds;
@@ -19,7 +40,23 @@ export class BMFont {
   }
 
   async await_assets() {
-    await Promise.all(this.images.map(asset => asset.downloadAsync()));
+    let images = this.images;
+    if (getEnvironment()==="expo") {
+      await Promise.all(
+        Object.keys(images).map(function(key, index) {
+           return images[key].downloadAsync();
+        })
+      );
+    } else {
+      let loaded_assets = await Promise.all(
+        Object.keys(images).map(function(key, index) {
+           return getWebAsset(key, images[key]);
+        })
+      );
+      for (let i = 0; i < loaded_assets.length; i++) {
+        this.images[loaded_assets[i].dataset.name] = loaded_assets[i];
+      } 
+    }
     this.assets_loaded = true;
   }
 
@@ -52,13 +89,8 @@ export class BMFont {
     gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-    let textures_by_name = {}
-    this.images.map(texture_asset => {
-      textures_by_name[texture_asset.name+"."+texture_asset.type] = texture_asset;
-    });
-
     for (let i = 0; i < bmfont_descriptor.pages.length; i++) {
-      let page_texture = textures_by_name[bmfont_descriptor.pages[i]];
+      let page_texture = this.images[bmfont_descriptor.pages[i]];
       if (page_texture) {
         gl.texSubImage3D(
           gl.TEXTURE_2D_ARRAY,
@@ -78,7 +110,7 @@ export class BMFont {
       }
     }
 
-    font_descriptor = {};
+    let font_descriptor = {};
     font_descriptor.textures = texture_array;
     font_descriptor.chars = {};
     bmfont_descriptor.chars.map(char => {

@@ -10187,8 +10187,8 @@ kerning first=1077 second=1083 amount=-1
 kerning first=260 second=368 amount=-1
 kerning first=377 second=334 amount=-1
   `,
-  [require("./assets/fonts/calibri1.png"),
-   require("./assets/fonts/calibri2.png")],
+  {"calibri1.png":require("./assets/fonts/calibri1.png"),
+   "calibri2.png":require("./assets/fonts/calibri2.png")},
   {
     "normal" : 0.5,
     "bold" : 0.2,

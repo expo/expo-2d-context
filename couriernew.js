@@ -545,8 +545,8 @@ char id=8359    x=97   y=102  width=53   height=51   xoffset=-6   yoffset=14   x
 char id=8363    x=708  y=102  width=40   height=47   xoffset=2    yoffset=10   xadvance=51   page=1    chnl=0 
 kernings count=0
  `,
-  [require("./assets/fonts/couriernew1.png"),
-   require("./assets/fonts/couriernew2.png")],
+  {"couriernew1.png":require("./assets/fonts/couriernew1.png"),
+   "couriernew2.png":require("./assets/fonts/couriernew2.png")},
   {
     "normal" : 0.7,
     "bold" : 0.4,

@@ -855,9 +855,6 @@ export default class Expo2DContext {
   async initializeText() {
     if (arguments.length != 0) throw new TypeError();
 
-    if (this.environment === "web") {
-      throw new ReferenceError("Text rendering is not yet supported in-browser")
-    }
     let promises = [];
     let font_objects = Object.values(this.builtinFonts);
     for (let i = 0; i < font_objects.length; i++) {
