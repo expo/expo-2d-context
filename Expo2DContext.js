@@ -2100,6 +2100,9 @@ export default class Expo2DContext {
       gradient: type,
       stops: [],
       addColorStop: function(offset, color) {
+        if (arguments.length != 2) {
+          throw new TypeError('Need to specify offset and color');
+        }
         var parsedColor = cssToGlColor(color);
         if (!parsedColor) {
           throw new DOMException('Bad color value', 'SyntaxError');
