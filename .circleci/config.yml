@@ -35,18 +35,34 @@ jobs:
           command: |
             mkdir -p test/collateral/html
             node ./node_modules/gulp/bin/gulp.js es6
+            cp dist/bundle.js test/collateral/html/bundle.js 2>/dev/null || :
 
       - store-artifacts:
           path: ./dist/bundle.js
 
       - run:
+          name: Start test HTTP server
           command: |
             node ./node_modules/http-server/bin/http-server test/collateral/html
           background: true
 
       - run:
+          name: Run test suites
           command: |
-            node ./test/collateral/html/runSuite.js --base-url "http://127.0.0.1:8080" 2d.fillRect
+            node ./test/collateral/html/runSuite.js --base-url "http://127.0.0.1:8080" 2d.fillRect 2d.gradient
+
+      - store-artifacts:
+          path: ./results.json
+
+      - run:
+          command: |
+            mkdir -p test_results/conformance
+            cp results.json test_results/conformance/
+
+      - run:
+          name: Fail circleci task if any test suits failed
+          command: |
+            python test/process.py results.json
 
       - store-test-results:
-          path: ./results.json
+          path: test_results
