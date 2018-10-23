@@ -36,6 +36,8 @@
 <script type="text/javascript" src="asserts.js"></script>
 
 <script type="text/javascript">
+    window.ImageData = ImageData;
+
     async function getAsset(name) {
       return new Promise((resolve, reject) => {
         let img = document.createElement("IMG")
@@ -84,6 +86,7 @@
 
     function focusTest (num) {
       window.ctx = testContexts[num][0]
+      window.allContexts = testContexts[num]
     }
     window.onhashchange = () => {
       var url = new URL(window.location)
@@ -109,6 +112,7 @@
       var url = new URL(window.location)
       if (url.searchParams.get("runTests") != null) {
         selected_test_ids = url.searchParams.get("runTests").split(",").map((x) => parseInt(x))
+        selected_test_ids = selected_test_ids.filter((elm, idx) => {return isFinite(elm)}).sort()
         tests = selected_test_ids.map((x) => document.getElementById("test_"+x+"_content")) 
       }
 
@@ -1556,6 +1560,7 @@
 
 -->
 
+<!-- DISABLED: TODO svg files aren't supported as assets right now
 <p><a id="649" href="#649"\>649</a>: 2d.drawImage.zerosource.image (drawImage with zero-sized source rectangle from image throws INDEX_SIZE_ERR)</p>
 
 <script>
@@ -1597,6 +1602,8 @@
 [<a href="?runTests=649&noCleanup#649" onclick="window.location.reload()">solo run</a>]
 
 <hr />
+
+-->
 
 <p><a id="640" href="#640"\>640</a>: 2d.drawImage.9arg.destpos</p>
 
@@ -1984,7 +1991,7 @@
 
 <hr />
 
-<!-- DISABLED: TODO svg files aren't supported as assets right now? (or are they??)
+<!-- DISABLED: TODO svg files aren't supported as assets right now
 <p><a id="648" href="#648"\>648</a>: 2d.drawImage.zerosource (drawImage with zero-sized source rectangle draws nothing without exception)</p>
 
 <script>

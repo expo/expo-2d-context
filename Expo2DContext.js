@@ -28,6 +28,8 @@ var bezierQuadraticPoints = require('adaptive-quadratic-curve');
 
 import { StrokeExtruder } from './StrokeExtruder'
 
+import { ImageData } from './utilityObjects'
+
 // TODO: rather than setting vertexattribptr on every draw,
 // create a separate vbo for coords vs pattern coords vs text coords
 // and call once
@@ -39,19 +41,24 @@ import { StrokeExtruder } from './StrokeExtruder'
 
 function isValidCanvasImageSource(asset) {
   var environment = getEnvironment();
+  if (asset === undefined) {
+    return false;
+  }
   if (asset instanceof Expo2DContext) {
     return true;
-  } else if (environment === "expo") {
+  }else if (asset instanceof ImageData) {
+    return true;
+  } else {
     if (asset.hasOwnProperty("width") &&
         asset.hasOwnProperty("height") &&
-        asset.hasOwnProperty("localUri")) {
+        (asset.hasOwnProperty("localUri") || asset.hasOwnProperty("data"))) {
       return true;
     }
-  } else if (environment === "web") {
-    if (asset.nodeName.toLowerCase() === "img" ||
-        asset.nodeName.toLowerCase() === "canvas" ||
-        asset.nodeName.toLowerCase() === "img") {
-      return true;
+    if (environment === "web" && "nodeName" in asset) {
+      if (asset.nodeName.toLowerCase() === "img" ||
+          asset.nodeName.toLowerCase() === "canvas") {
+        return true;
+      }
     }
   }
   return false;
@@ -120,46 +127,6 @@ function outerTangent(p0, r0, p1, r1) {
   }
 
   return o;
-}
-
-
-export class ImageData {
-    constructor() {
-      if (arguments[0] instanceof Uint8ClampedArray) {
-        var dataArray = arguments[0];
-        var width = arguments[1];
-        var height = arguments[2];
-        if (dataArray.length < 4) {
-          throw new DOMException('Bad data array size', 'InvalidStateError');
-        }
-        if (dataArray.length < width * height * 4) {
-          throw new DOMException('Bad data array size', 'IndexSizeError');
-        }
-      } else if (!isNaN(arguments[0])){
-        var width = arguments[0] || 0;
-        var height = arguments[1] || 0;
-        var dataArray = new Uint8ClampedArray(width * height * 4);
-      } else {
-        throw new TypeError("Bad array type");
-      }
-
-      if (!isFinite(width) || width <= 0 || !isFinite(height) || height <= 0) {
-        throw new DOMException('Bad dimensions', 'IndexSizeError');
-      }
-
-      Object.defineProperty(this, "data", {
-        get: ()=>{return dataArray;},
-        set: (val)=>{} // Must be silently read-only
-      });
-      Object.defineProperty(this, "width", {
-        get: ()=>{return width;},
-        set: (val)=>{} // Must be silently read-only
-      });
-      Object.defineProperty(this, "height", {
-        get: ()=>{return height;},
-        set: (val)=>{} // Must be silently read-only
-      });
-    }
 }
 
 export class CanvasPattern {
@@ -471,7 +438,10 @@ export default class Expo2DContext {
 
     var typeError = "";
 
-    if (!(imagedata instanceof ImageData)) {
+    if (imagedata instanceof Expo2DContext) {
+      // TODO: in browsers support canvas tags too
+      imagedata = this._assetFromContext(asset);
+    } else if (!(imagedata instanceof ImageData)) {
       typeError = "Bad imagedata";
     }
 
@@ -623,7 +593,7 @@ export default class Expo2DContext {
 
     if (asset.width == 0 || asset.height == 0) {
       // Zero-sized asset image causes DOMException
-      throw new DOMException('Bad source rectangle', 'IndexSizeError');
+      throw new DOMException('Bad source rectangle', 'InvalidStateError');
     }
 
     var sx = 0;
@@ -2153,6 +2123,17 @@ export default class Expo2DContext {
       return newGrad;
   }
 
+  _assetFromContext(context) {
+      let assetWidth = context.gl.drawingBufferWidth;
+      let assetHeight = context.gl.drawingBufferHeight;
+      let assetImage = context.getImageData(0, 0, assetWidth, assetHeight)
+      return {
+        "width": assetImage.width,
+        "height": assetImage.height,
+        "data":  new Uint8Array(assetImage.data)
+      }
+  }
+
   createPattern(asset, repeat) {
     if (arguments.length != 2) throw new TypeError();
     // TODO: make sure this doesn't pick up asset changes later on
@@ -2164,14 +2145,7 @@ export default class Expo2DContext {
     }
 
     if (asset instanceof Expo2DContext) {
-      let assetWidth = asset.gl.drawingBufferWidth;
-      let assetHeight = asset.gl.drawingBufferHeight;
-      let assetImage = asset.getImageData(0, 0, assetWidth, assetHeight)
-      asset = {
-        "width": assetImage.width,
-        "height": assetImage.height,
-        "data": assetImage.data
-      }
+      asset = this._assetFromContext(asset);
     } else if (!isValidCanvasImageSource(asset)) { 
       throw new TypeError("Bad asset");
     }

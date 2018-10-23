@@ -9,8 +9,10 @@ DISABLED:
     - Images aren't HTML img objects
   - 2d.drawImage.incomplete.reload:
     - Images aren't HTML img objects
+  - 2d.drawImage.zerosource.image:
+    - TODO svg files aren't supported as assets right now
   - 2d.drawImage.zerosource:
-    - TODO svg files aren't supported as assets right now? (or are they??)
+    - TODO svg files aren't supported as assets right now
   - 2d.drawImage.animated.gif:
     - Animated assets aren't supported and probably never will be
   - 2d.drawImage.animated.apng:
@@ -30,10 +32,10 @@ DISABLED:
   - 2d.gradient.object.current:
     - no canvas object
       (TODO should there be a way of grabbing style information from surrounding GLView for css value 'currentColor'??)
-  - 2d.gradient.object.crosscanvas:
-    - TODO support cross-canvas drawing
-  - 2d.imageData.put.cross:
-    - TODO support cross-canvas drawing
+  - 2d.imageData.get.unaffected:
+    - TODO implement shadows and compositing 
+  - 2d.imageData.put.unaffected:
+    - TODO implement shadows and compositing 
   - 2d.path.arc.selfintersect.1:
     - arc stroking is so radically different from the reference, there is no clear way to support this edgecase
   - 2d.path.stroke.prune.curve:
