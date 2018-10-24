@@ -13,6 +13,8 @@ DISABLED:
     - TODO svg files aren't supported as assets right now
   - 2d.drawImage.zerosource:
     - TODO svg files aren't supported as assets right now
+  - 2d.imageData.object.ctor.array.bounds:
+    - Chrome's imageData implementation throws some errors as IndexSizeErrors, while the test suite expects InvalidStateErrors. Oh well, nothing we can do there.
   - 2d.drawImage.animated.gif:
     - Animated assets aren't supported and probably never will be
   - 2d.drawImage.animated.apng:

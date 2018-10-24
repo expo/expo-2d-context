@@ -112,7 +112,7 @@
       var url = new URL(window.location)
       if (url.searchParams.get("runTests") != null) {
         selected_test_ids = url.searchParams.get("runTests").split(",").map((x) => parseInt(x))
-        selected_test_ids = selected_test_ids.filter((elm, idx) => {return isFinite(elm)}).sort()
+        selected_test_ids = selected_test_ids.filter((elm, idx) => {return isFinite(elm)})
         tests = selected_test_ids.map((x) => document.getElementById("test_"+x+"_content")) 
       }
 

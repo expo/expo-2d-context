@@ -440,8 +440,13 @@ export default class Expo2DContext {
 
     if (imagedata instanceof Expo2DContext) {
       // TODO: in browsers support canvas tags too
-      imagedata = this._assetFromContext(asset);
-    } else if (!(imagedata instanceof ImageData)) {
+      var asset = this._assetFromContext(imagedata);
+    } else if (imagedata instanceof ImageData) {
+      var asset = {
+        "width": imagedata.width,
+        "height": imagedata.height,
+        "data": new Uint8Array(imagedata.data.buffer)};
+    } else {
       typeError = "Bad imagedata";
     }
 
@@ -465,13 +470,13 @@ export default class Expo2DContext {
       if (arguments.length >= 6) {
         typeError = "Bad dirtyWidth"; 
       }
-      dirtyWidth = imagedata.width;
+      dirtyWidth = asset.width;
     }
     if (!isFinite(dirtyHeight)) {
       if (arguments.length >= 7) {
         typeError = "Bad dirtyHeight"; 
       }
-      dirtyHeight = imagedata.height;
+      dirtyHeight = asset.height;
     }
     if (typeError != "") {
       throw new TypeError(typeError);
@@ -493,11 +498,11 @@ export default class Expo2DContext {
       dirtyHeight += dirtyY;
       dirtyY = 0;
     }
-    if (dirtyX + dirtyWidth > imagedata.width) {
-      dirtyWidth = imagedata.width - dirtyX;
+    if (dirtyX + dirtyWidth > asset.width) {
+      dirtyWidth = asset.width - dirtyX;
     }
-    if (dirtyY + dirtyHeight > imagedata.height) {
-      dirtyHeight = imagedata.height - dirtyY;
+    if (dirtyY + dirtyHeight > asset.height) {
+      dirtyHeight = asset.height - dirtyY;
     }
 
     dx = Math.floor(dx);
@@ -511,9 +516,7 @@ export default class Expo2DContext {
       return;
     }
 
-    var pattern = this.createPattern(
-      {"width": imagedata.width, "height": imagedata.height, "data": imagedata.data},
-      'src-rect');
+    var pattern = this.createPattern(asset, 'src-rect');
     this._applyStyle(pattern);
     if (this.activeShaderProgram == null) {
       return;
@@ -524,10 +527,10 @@ export default class Expo2DContext {
     var maxScreenX = minScreenX + dirtyWidth;
     var maxScreenY = minScreenY + dirtyHeight;
 
-    var minTexX = dirtyX / imagedata.width;
-    var minTexY = dirtyY / imagedata.height;
-    var maxTexX = minTexX + (dirtyWidth / imagedata.width);
-    var maxTexY = minTexY + (dirtyHeight / imagedata.height);
+    var minTexX = dirtyX / asset.width;
+    var minTexY = dirtyY / asset.height;
+    var maxTexX = minTexX + (dirtyWidth / asset.width);
+    var maxTexY = minTexY + (dirtyHeight / asset.height);
 
     var vertices = [
       minScreenX, minScreenY, minTexX, minTexY,
@@ -934,6 +937,9 @@ export default class Expo2DContext {
 
     gl.disableVertexAttribArray(this.activeShaderProgram.attributes["aTextPageCoord"]);
     gl.uniform1i(this.activeShaderProgram.uniforms["uTextEnabled"], 0);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.nullTextPage);
   }
 
   fillText(text, x, y, maxWidth) {
@@ -2130,7 +2136,7 @@ export default class Expo2DContext {
       return {
         "width": assetImage.width,
         "height": assetImage.height,
-        "data":  new Uint8Array(assetImage.data)
+        "data":  new Uint8Array(assetImage.data.buffer)
       }
   }
 
@@ -2378,6 +2384,35 @@ export default class Expo2DContext {
     this._setShaderProgram(this.flatShaderProgram);
 
     this._applyCompositingState();
+
+    this.nullTextPage = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE1);
+
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.nullTextPage);
+    gl.texStorage3D(gl.TEXTURE_2D_ARRAY,
+      1,
+      gl.RGBA8,
+      1,//w
+      1,//h
+      1
+    );
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texSubImage3D(
+      gl.TEXTURE_2D_ARRAY,
+      0,
+      0,
+      0,
+      0,
+      1,//w
+      1,//h
+      1,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      new Uint8Array([0,0,0,0])
+    );
 
     gl.clearColor(0, 0, 0, 0.0);
     gl.clearStencil(1);

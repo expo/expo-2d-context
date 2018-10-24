@@ -546,15 +546,15 @@ export const patternShaderTxt = {
       void main(void) {
         if ((uRepeatMode == {no-repeat} || uRepeatMode == {src-rect}) && (
           vTexCoord.x < 0.0 || vTexCoord.x > 1.0 ||
-        vTexCoord.y < 0.0 || vTexCoord.y > 1.0))
+          vTexCoord.y < 0.0 || vTexCoord.y > 1.0))
         {
           fragColor = vec4(0,0,0,0);
         } else if (uRepeatMode == {repeat-x} && (
-        vTexCoord.y < 0.0 || vTexCoord.y > 1.0))
+          vTexCoord.y < 0.0 || vTexCoord.y > 1.0))
         {
           fragColor = vec4(0,0,0,0);
         } else if (uRepeatMode == {repeat-y} && (
-        vTexCoord.x < 0.0 || vTexCoord.x > 1.0))
+          vTexCoord.x < 0.0 || vTexCoord.x > 1.0))
         {
           fragColor = vec4(0,0,0,0);
         } else {
