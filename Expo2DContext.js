@@ -17,7 +17,8 @@ const DOMException = require("domexception");
 
 var stringFormat = require('string-format');
 
-var parseColor = require('color-parser');
+var ColorTransformer = require('easy-color');
+
 var parseCssFont = require('css-font-parser');
 
 var earcut = require('earcut');
@@ -66,26 +67,63 @@ function isValidCanvasImageSource(asset) {
 
 function cssToGlColor(cssStr) {
   try {
-    let parsedColor = parseColor(cssStr);
-    // TODO: clean this crap up:
-    if (!parsedColor ||
-        (!("r" in parsedColor && isFinite(parsedColor.r) &&
-          "g" in parsedColor && isFinite(parsedColor.g) &&
-          "b" in parsedColor && isFinite(parsedColor.b)) &&
-         (!("a" in parsedColor) || isFinite(parsedColor.a)))) {
-      throw new SyntaxError('Bad color value');
+    if (cssStr == "" || cssStr === undefined) {
+      throw "Bad Color"
     }
-    if (!('a' in parsedColor)) {
-      parsedColor['a'] = 1.0;
+    let parsedColor = new ColorTransformer(cssStr);
+    if (!parsedColor.success) {
+      if (cssStr.charAt(0)=="#") {
+
+        if (cssStr.length==9) {
+          // Try for 8-hex case
+          parsedColor = new ColorTransformer(cssStr.substring(0,7));
+          parsedColor.alpha = parseInt(cssStr.substring(7), 16);
+          if (!parsedColor.success ||
+              !isFinite(parsedColor.alpha) ||
+              parsedColor.alpha > 255 || 
+              parsedColor.alpha < 0)
+          {
+            throw "Bad Color";
+          }
+          parsedColor.alpha /= 255;
+        } else if (cssStr.length==5) {
+          // Try for 4-hex case
+          let hex6 = ("#" + cssStr.substring(1,2) + cssStr.substring(1,2) +
+                        cssStr.substring(2,3) + cssStr.substring(2,3) +
+                        cssStr.substring(3,4) + cssStr.substring(3,4));
+          parsedColor = new ColorTransformer(hex6);
+          parsedColor.alpha = parseInt(cssStr.substring(4,5) + cssStr.substring(4,5) , 16);
+          if (!parsedColor.success ||
+              !isFinite(parsedColor.alpha) ||
+              parsedColor.alpha > 255 || 
+              parsedColor.alpha < 0)
+          {
+            throw "Bad Color";
+          }
+          parsedColor.alpha /= 255;
+        } else {
+          throw "Bad Color";
+        }
+      } else if (cssStr.includes("(")) {
+        // Try for EOF case
+        parsedColor = new ColorTransformer(cssStr+")");
+        if (!parsedColor.success) {
+          throw "Bad Color";
+        }
+      } else {
+        throw "Bad Color";
+      }
     }
+    let rgb = parsedColor.rgb;
+    let alpha = parsedColor.alpha;
     return [
-      parsedColor['r'] / 255,
-      parsedColor['g'] / 255,
-      parsedColor['b'] / 255,
-      parsedColor['a'],
+      rgb.r / 255,
+      rgb.g / 255,
+      rgb.b / 255,
+      alpha,
     ];
   } catch (e) {
-    throw new SyntaxError('Bad color value');
+    return [];
   }
 }
 
@@ -1788,18 +1826,51 @@ export default class Expo2DContext {
     return this.drawingState.strokeDashOffset;
   }
 
+  // TODO: only set stroke and fill when type is completely
+  //       valid
+  _styleSetter(val) {
+    if (val === undefined || val === null) {
+      return undefined;
+    }
+    if (typeof val === 'string' || val instanceof String) {
+      if (cssToGlColor(val).length == 0) {
+        return undefined;
+      }
+    }
+    return val
+  }
+  _styleGetter(val) {
+    let style = val
+    if (typeof style === 'string' || style instanceof String) {
+      if (cssToGlColor(style)[3] != 1.0) {
+        return (new ColorTransformer(style)).toRGBA();
+      } else {
+        return (new ColorTransformer(style)).toHex();
+      }
+    }
+    return val;
+  }
+
   set strokeStyle(val) {
+    val = this._styleSetter(val)
+    if (val === undefined) {
+      return;
+    }
     this.drawingState.strokeStyle = val;
   }
   get strokeStyle() {
-    return this.drawingState.strokeStyle;
+    return this._styleGetter(this.drawingState.strokeStyle);
   }
 
   set fillStyle(val) {
+    val = this._styleSetter(val)
+    if (val === undefined) {
+      return;
+    }
     this.drawingState.fillStyle = val;
   }
   get fillStyle() {
-    return this.drawingState.fillStyle;
+    return this._styleGetter(this.drawingState.fillStyle);
   }
 
   set font(val) {
@@ -2080,7 +2151,7 @@ export default class Expo2DContext {
           throw new TypeError('Need to specify offset and color');
         }
         var parsedColor = cssToGlColor(color);
-        if (!parsedColor) {
+        if (parsedColor.length == 0) {
           throw new DOMException('Bad color value', 'SyntaxError');
         }
         if (!isFinite(offset)) {
@@ -2101,7 +2172,7 @@ export default class Expo2DContext {
             // one. Otherwise, insert the new from-the-right stop
             // after the from-the-left stop
             if (i < this.stops.length-1 && this.stops[i+1][1] == offset) {
-              this.stops[i+1][0] = cssToGlColor(color);
+              this.stops[i+1][0] = parsedColor;
               i = -1;
             } else {
               i++;
@@ -2112,7 +2183,7 @@ export default class Expo2DContext {
           }
         }
         if (i > -1) {
-          this.stops.splice(i, 0, [cssToGlColor(color), offset]);
+          this.stops.splice(i, 0, [parsedColor, offset]);
         }
       },
     };

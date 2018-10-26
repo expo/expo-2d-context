@@ -207,6 +207,7 @@
 
       var finishTests = () => {
         if (failures.size > 0) {
+          failureSummaryHTML = (tests.length-failures.size) + "/" + tests.length + " tests passed<br />"+failureSummaryHTML 
           failureSummaryHTML += "</ul><br />"
           suite_status.setAttribute("class","failure")
           suite_status.innerHTML = failureSummaryHTML

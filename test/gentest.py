@@ -20,6 +20,7 @@ import shutil
 import sys
 import argparse
 import shutil
+import fnmatch
 
 try:
     import cairocffi as cairo
@@ -362,7 +363,7 @@ def genTestUtils(SPECFILE, DISABLEDFILE, TEMPLATESFILE, TESTSFILES, TESTOUTPUTDI
                 if not test_disabled:
                     # Look for heirarchical matches
                     for key in disabled_tests.keys():
-                        if key.endswith(".*") and name.startswith(key[:-2]):
+                        if fnmatch.fnmatch(name, key):
                             test_disabled = True
                             reason = disabled_tests[key]
                             break
