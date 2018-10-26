@@ -1007,28 +1007,15 @@ export default class Expo2DContext {
       return;
     }
 
-    if (
-      x <= 0.0 &&
-      y <= 0.0 &&
-      x + w >= gl.drawingBufferWidth &&
-      y + h >= gl.drawingBufferHeight &&
-      this.drawingState.clippingPaths.length == 0
-    ) {
-      this.gl.clear(
-        this.gl.COLOR_BUFFER_BIT |
-          this.gl.DEPTH_BUFFER_BIT
-      );
-    } else {
-      var old_fill_style = this.drawingState.fillStyle;
+    var old_fill_style = this.drawingState.fillStyle;
 
-      gl.blendFunc(gl.SRC_ALPHA, gl.ZERO);
-      this.drawingState.fillStyle = 'rgba(0,0,0,0);';
+    gl.blendFunc(gl.SRC_ALPHA, gl.ZERO);
+    this.drawingState.fillStyle = 'rgba(0,0,0,0);';
 
-      this.fillRect(x, y, w, h);
+    this.fillRect(x, y, w, h);
 
-      this.drawingState.fillStyle = old_fill_style;
-      this._applyCompositingState()
-    }
+    this.drawingState.fillStyle = old_fill_style;
+    this._applyCompositingState()
   }
 
   fillRect(x, y, w, h) {
