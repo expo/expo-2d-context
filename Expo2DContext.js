@@ -428,6 +428,7 @@ export default class Expo2DContext {
       var rawTexData = new Float32Array(sw * sh * 4);
       var alphaScalar = 256.0;
       var flip_y = false;
+      var include_premultiplied = false;
       gl.readPixels(
         sx,
         sy,
@@ -441,6 +442,7 @@ export default class Expo2DContext {
       var rawTexData = new Uint8Array(sw * sh * 4);
       var alphaScalar = 1.0;
       var flip_y = true;
+      var include_premultiplied = true;
       gl.readPixels(
         sx,
         gl.drawingBufferHeight-sh-sy, // have to y-flip the coordinate system 
@@ -451,7 +453,13 @@ export default class Expo2DContext {
         rawTexData
       );
     }
-    
+
+    if (include_premultiplied) {    
+      // Store premultiplied alpha to support lossless putImageData(getImageData(...))
+      // even when color depth isn't high enough to do so without rounding error
+      imageDataObj._premultipliedData = new Uint8Array(sw*sh*4);
+    }
+
     // Undo premultiplied alpha
     // (TODO: is there any way to do this with the GPU??)
     // (TODO: does this work on systems where the bg color is black?)
@@ -465,6 +473,13 @@ export default class Expo2DContext {
         imageDataObj.data[dst+1] = Math.floor((rawTexData[src+1] / rawTexData[src+3]) * 256.0);
         imageDataObj.data[dst+2] = Math.floor((rawTexData[src+2] / rawTexData[src+3]) * 256.0);
         imageDataObj.data[dst+3] = Math.floor(rawTexData[src+3] * alphaScalar);
+
+        if (include_premultiplied) {
+          imageDataObj._premultipliedData[dst+0] = rawTexData[src+0];
+          imageDataObj._premultipliedData[dst+1] = rawTexData[src+1];
+          imageDataObj._premultipliedData[dst+2] = rawTexData[src+2];
+          imageDataObj._premultipliedData[dst+3] = rawTexData[src+3];
+        }
       }
     }
 
@@ -480,10 +495,20 @@ export default class Expo2DContext {
       // TODO: in browsers support canvas tags too
       var asset = this._assetFromContext(imagedata);
     } else if (imagedata instanceof ImageData) {
+      var isPremultiplied = imagedata.hasOwnProperty("_premultipliedData");
+      if (isPremultiplied) {
+        var imagedataRaw = imagedata._premultipliedData.buffer
+      } else {
+        var imagedataRaw = imagedata.data.buffer
+      }
+
       var asset = {
         "width": imagedata.width,
         "height": imagedata.height,
-        "data": new Uint8Array(imagedata.data.buffer)};
+        "data": new Uint8Array(imagedataRaw),
+        "premultiplied": isPremultiplied
+      };
+
     } else {
       typeError = "Bad imagedata";
     }
@@ -601,8 +626,13 @@ export default class Expo2DContext {
     if (this.stencilsEnabled == true) {
       gl.disable(gl.STENCIL_TEST);
     }
+
     gl.uniform1f(this.activeShaderProgram.uniforms['uGlobalAlpha'], 1.0);
-    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ZERO, gl.ONE, gl.ZERO);
+    if (!isPremultiplied) {
+      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ZERO, gl.ONE, gl.ZERO);
+    } else {
+      gl.blendFuncSeparate(gl.ONE, gl.ZERO, gl.ONE, gl.ZERO);
+    }
 
     gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -612,9 +642,8 @@ export default class Expo2DContext {
     if (this.stencilsEnabled == true) {
       gl.enable(gl.STENCIL_TEST);
     }
- 
-    this._applyCompositingState();
 
+    this._applyCompositingState();
   }
 
   /**************************************************
@@ -2191,10 +2220,17 @@ export default class Expo2DContext {
       let assetWidth = context.gl.drawingBufferWidth;
       let assetHeight = context.gl.drawingBufferHeight;
       let assetImage = context.getImageData(0, 0, assetWidth, assetHeight)
+      let assetIsPremultiplied = assetImage.hasOwnProperty("_premultipliedData");
+      if (assetIsPremultiplied) {
+        var assetImageData = assetImage._premultipliedData.buffer
+      } else {
+        var assetImageData = assetImage.data.buffer
+      }
       return {
         "width": assetImage.width,
         "height": assetImage.height,
-        "data":  new Uint8Array(assetImage.data.buffer)
+        "data":  new Uint8Array(assetImageData),
+        "premultiplied": assetIsPremultiplied
       }
   }
 
@@ -2207,13 +2243,11 @@ export default class Expo2DContext {
     } else if (!(repeat in patternShaderRepeatValues)) {
       throw new DOMException('Bad repeat value', 'SyntaxError');
     }
-
     if (asset instanceof Expo2DContext) {
       asset = this._assetFromContext(asset);
     } else if (!isValidCanvasImageSource(asset)) { 
       throw new TypeError("Bad asset");
     }
-
     return new CanvasPattern(asset, repeat)
   }
 
