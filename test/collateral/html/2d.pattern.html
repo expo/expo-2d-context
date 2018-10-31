@@ -47,7 +47,7 @@
       })
     }
 
-    function bootCanvas(container, id, width, height) {
+    function bootCanvas(container, id, width, height, needsHighBitDepth) {
         var canvas = document.createElement("CANVAS")
         canvas.setAttribute("id", id)
         canvas.setAttribute("width", width)
@@ -71,7 +71,7 @@
 
         /* TODO: figure out how to pass some gradient tests that need
          * more grad stops: */
-        let ctx = new Expo2DContext.default(gl, maxGradStops=50)
+        let ctx = new Expo2DContext.default(gl, maxGradStops=50, renderWithOffscreenBuffer=needsHighBitDepth)
         ctx.getContext = () => {return ctx;}
         
         return [canvas, gl, ctx]
@@ -143,12 +143,17 @@
         
         let failureMessages = []
 
+        let test_fn = eval("test_"+test.id+"_body");
+        let needsHighBitDepth = test_fn.toString().includes("getImageData");
+
         for (let j=0; j<parseInt(test.contexts); j++) {
+
           let [canvas, gl, ctx] = bootCanvas(
             test_area,
             "canvas_"+test.id+"_"+j,
             parseInt(test.width),
-            parseInt(test.height)
+            parseInt(test.height),
+            needsHighBitDepth
           )
           // Install fake getContext wrapper to allow context objects to be
           // used in place of canvas objects for our tests:
@@ -172,7 +177,6 @@
         })
 
         try {
-          let test_fn = eval("test_"+test.id+"_body");
           await test_fn(onFail, allCanvases, allContexts);
         } catch (err) {
           onFail.trigger(false, err.toString());

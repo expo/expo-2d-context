@@ -421,45 +421,18 @@ export default class Expo2DContext {
 
     var imageDataObj = new ImageData(sw, sh);
 
-    // TODO: intelligently decide this, not just based
-    //       off of the current environment 
-
-    if (this.renderWithOffscreenBuffer) {
-      var rawTexData = new Float32Array(sw * sh * 4);
-      var alphaScalar = 256.0;
-      var flip_y = false;
-      var include_premultiplied = false;
-      gl.readPixels(
-        sx,
-        sy,
-        sw,
-        sh,
-        gl.RGBA,
-        gl.FLOAT,
-        rawTexData
-      );
-    } else {
-      var rawTexData = new Uint8Array(sw * sh * 4);
-      var alphaScalar = 1.0;
-      var flip_y = true;
-      var include_premultiplied = true;
-      gl.readPixels(
-        sx,
-        gl.drawingBufferHeight-sh-sy, // have to y-flip the coordinate system 
-        sw,
-        sh,
-        gl.RGBA,
-        gl.UNSIGNED_BYTE,
-        rawTexData
-      );
-    }
-
-    if (include_premultiplied) {    
-      // Store premultiplied alpha to support lossless putImageData(getImageData(...))
-      // even when color depth isn't high enough to do so without rounding error
-      imageDataObj._premultipliedData = new Uint8Array(sw*sh*4);
-    }
-
+    var rawTexData = new this._framebuffer_format.typed_array(sw * sh * 4);
+    var flip_y = !this.renderWithOffscreenBuffer;
+    gl.readPixels(
+      sx,
+      sy,
+      sw,
+      sh,
+      gl.RGBA,
+      this._framebuffer_format.type,
+      rawTexData
+    );
+ 
     // Undo premultiplied alpha
     // (TODO: is there any way to do this with the GPU??)
     // (TODO: does this work on systems where the bg color is black?)
@@ -472,14 +445,7 @@ export default class Expo2DContext {
         imageDataObj.data[dst+0] = Math.floor((rawTexData[src+0] / rawTexData[src+3]) * 256.0);
         imageDataObj.data[dst+1] = Math.floor((rawTexData[src+1] / rawTexData[src+3]) * 256.0);
         imageDataObj.data[dst+2] = Math.floor((rawTexData[src+2] / rawTexData[src+3]) * 256.0);
-        imageDataObj.data[dst+3] = Math.floor(rawTexData[src+3] * alphaScalar);
-
-        if (include_premultiplied) {
-          imageDataObj._premultipliedData[dst+0] = rawTexData[src+0];
-          imageDataObj._premultipliedData[dst+1] = rawTexData[src+1];
-          imageDataObj._premultipliedData[dst+2] = rawTexData[src+2];
-          imageDataObj._premultipliedData[dst+3] = rawTexData[src+3];
-        }
+        imageDataObj.data[dst+3] = Math.floor((rawTexData[src+3]/this._framebuffer_format.max_alpha)*256.0);
       }
     }
 
@@ -495,18 +461,10 @@ export default class Expo2DContext {
       // TODO: in browsers support canvas tags too
       var asset = this._assetFromContext(imagedata);
     } else if (imagedata instanceof ImageData) {
-      var isPremultiplied = imagedata.hasOwnProperty("_premultipliedData");
-      if (isPremultiplied) {
-        var imagedataRaw = imagedata._premultipliedData.buffer
-      } else {
-        var imagedataRaw = imagedata.data.buffer
-      }
-
       var asset = {
         "width": imagedata.width,
         "height": imagedata.height,
-        "data": new Uint8Array(imagedataRaw),
-        "premultiplied": isPremultiplied
+        "data": new Uint8Array(imagedata.data.buffer)
       };
 
     } else {
@@ -628,11 +586,7 @@ export default class Expo2DContext {
     }
 
     gl.uniform1f(this.activeShaderProgram.uniforms['uGlobalAlpha'], 1.0);
-    if (!isPremultiplied) {
-      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ZERO, gl.ONE, gl.ZERO);
-    } else {
-      gl.blendFuncSeparate(gl.ONE, gl.ZERO, gl.ONE, gl.ZERO);
-    }
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ZERO, gl.ONE, gl.ZERO);
 
     gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -2220,17 +2174,10 @@ export default class Expo2DContext {
       let assetWidth = context.gl.drawingBufferWidth;
       let assetHeight = context.gl.drawingBufferHeight;
       let assetImage = context.getImageData(0, 0, assetWidth, assetHeight)
-      let assetIsPremultiplied = assetImage.hasOwnProperty("_premultipliedData");
-      if (assetIsPremultiplied) {
-        var assetImageData = assetImage._premultipliedData.buffer
-      } else {
-        var assetImageData = assetImage.data.buffer
-      }
       return {
         "width": assetImage.width,
         "height": assetImage.height,
-        "data":  new Uint8Array(assetImageData),
-        "premultiplied": assetIsPremultiplied
+        "data":  new Uint8Array(assetImage.data.buffer),
       }
   }
 
@@ -2347,6 +2294,14 @@ export default class Expo2DContext {
     // TODO: this is to work around gl.readPixels not working on the ios default
     // framebuffer - remove once that's fixed
     let gl = this.gl;
+    let buffer_format = {
+      origin: "texture",
+      internal_format: null,
+      type: null,
+      buffer_format: null,
+      max_alpha: null
+    }
+
     this.framebuffer = gl.createFramebuffer();
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
@@ -2368,19 +2323,34 @@ export default class Expo2DContext {
     // We're using HALF_FLOAT/16F for the moment because of iOS limitations:
     // https://github.com/pex-gl/pex-glu/issues/3
     //
+    // TODO: maybe instead of choosing texture formats based on environement,
+    //       have an ordered list of good-to-bad ones and try them in a loop,
+    //       falling back as necessary? and log appropriately
     if (this.environment === "web") {
-      // TODO: maybe instead of choosing texture formats based on environement,
-      //       have an ordered list of good-to-bad ones and try them in a loop,
-      //       falling back as necessary? and log appropriately
-      // TODO: up the precision here:
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA,
-                    this.framebuffer.width, this.framebuffer.height,
-                    0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      let ext = gl.getExtension("EXT_color_buffer_float");
+      if (!ext) {
+        console.log("WARNING: Could not get float framebuffer, getImageData() may be lossy")
+        buffer_format.internal_format = gl.RGBA
+        buffer_format.type = gl.UNSIGNED_BYTE
+        buffer_format.typed_array = Uint8Array
+        buffer_format.max_alpha = 256.0;
+      } else {
+        buffer_format.internal_format = gl.RGBA32F
+        buffer_format.type = gl.FLOAT
+        buffer_format.typed_array = Float32Array
+        buffer_format.max_alpha = 1.0;
+      }
     } else {
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F,
-                    this.framebuffer.width, this.framebuffer.height,
-                    0, gl.RGBA, gl.HALF_FLOAT, null);
+      buffer_format.internal_format = gl.RGBA16F
+      buffer_format.type = gl.HALF_FLOAT 
+      buffer_format.typed_array = Float32Array
+      buffer_format.max_alpha = 1.0;
     }
+    gl.texImage2D(gl.TEXTURE_2D, 0, buffer_format.internal_format,
+                  this.framebuffer.width, this.framebuffer.height,
+                  0, gl.RGBA, buffer_format.type, null);
+
+
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.framebufferTexture, 0);
     gl.bindTexture(gl.TEXTURE_2D, null);
     var renderbuffer = gl.createRenderbuffer();
@@ -2389,6 +2359,8 @@ export default class Expo2DContext {
                            this.framebuffer.width, this.framebuffer.height);
     gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, renderbuffer);
     gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+
+    return buffer_format
   }
 
   /**************************************************
@@ -2456,7 +2428,7 @@ export default class Expo2DContext {
     this._initDrawingState();
 
     if (this.renderWithOffscreenBuffer) {
-      this._initOffscreenBuffer();
+      this._framebuffer_format = this._initOffscreenBuffer();
       // top and bottom are swapped while drawOffscreenBuffer() is in use
       glm.mat4.ortho(
         this.pMatrix,
@@ -2465,6 +2437,13 @@ export default class Expo2DContext {
         -1, 1
       );
     } else {
+      this._framebuffer_format = {
+        origin: "internal",
+        internal_format: gl.RGBA,
+        typed_array: Uint8Array,
+        type: gl.UNSIGNED_BYTE,
+        max_alpha: 256.0
+      }
       glm.mat4.ortho(
         this.pMatrix,
         0, gl.drawingBufferWidth,
