@@ -8,11 +8,18 @@ var fntParseBinary = require('parse-bmfont-binary')
 // Web-only loader code:
 async function getWebAsset(name, url) {
   return new Promise((resolve, reject) => {
-    let img = document.createElement("IMG")
-    img.dataset.name = name
-    img.onload = () => resolve(img)
-    img.onerror = reject
-    img.src = url
+    let dom_elem_name = "__expo2dcontext_bmfont_resource_"+name;
+    let img = document.getElementById(dom_elem_name)
+    if (img == null) {
+      img = document.createElement("IMG")
+      img.id = dom_elem_name
+      img.dataset.name = name
+      img.onload = () => resolve(img)
+      img.onerror = () => {console.log("OH NO "+name); reject}
+      img.src = url
+    } else {
+      resolve(img)
+    }
   })
 }
 
@@ -41,6 +48,9 @@ export class BMFont {
 
   async await_assets() {
     let images = this.images;
+    if (this.assets_loaded) {
+      return;
+    }
     if (getEnvironment()==="expo") {
       await Promise.all(
         Object.keys(images).map(function(key, index) {
