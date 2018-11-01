@@ -435,7 +435,6 @@ export default class Expo2DContext {
  
     // Undo premultiplied alpha
     // (TODO: is there any way to do this with the GPU??)
-    // (TODO: does this work on systems where the bg color is black?)
     for (let y = 0; y < imageDataObj.height; y += 1) {
       let src_base = y * imageDataObj.width * 4;
       let dst_base = (flip_y ? imageDataObj.height - y - 1: y) * imageDataObj.width * 4;
@@ -911,27 +910,6 @@ export default class Expo2DContext {
     gl.bindTexture(gl.TEXTURE_2D_ARRAY, font.textures);
     gl.uniform1i(this.activeShaderProgram.uniforms["uTextPages"], 1);
 
-    // TODO: debug code, delete:
-    // const texture = gl.createTexture();
-    // gl.activeTexture(gl.TEXTURE1);
-    // gl.bindTexture(gl.TEXTURE_2D, texture);
-    // gl.uniform1i(this.activeShaderProgram.uniforms["uTextPages"], 1);
-    // gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    // gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    // gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    // gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    // gl.texImage2D(
-    //   gl.TEXTURE_2D,
-    //   0,
-    //   gl.RGBA,
-    //   x.width,
-    //   x.height,
-    //   0,
-    //   gl.RGBA,
-    //   gl.UNSIGNED_BYTE,
-    //   x
-    // );
-
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
     gl.bufferData(
       gl.ARRAY_BUFFER,
@@ -991,13 +969,14 @@ export default class Expo2DContext {
     }
 
     var old_fill_style = this.drawingState.fillStyle;
+    var old_global_alpha = this.drawingState.globalAlpha;
 
     gl.blendFunc(gl.SRC_ALPHA, gl.ZERO);
-    this.drawingState.fillStyle = 'rgba(0,0,0,0);';
-
+    this.drawingState.fillStyle = 'rgba(0,0,0,0)';
     this.fillRect(x, y, w, h);
 
     this.drawingState.fillStyle = old_fill_style;
+    this.drawingState.globalAlpha = old_global_alpha;
     this._applyCompositingState()
   }
 
@@ -1700,15 +1679,39 @@ export default class Expo2DContext {
     return this.drawingState.globalAlpha;
   }
 
-  // TODO: this compositing code is eons away from primetime,
-  // so it seems like a good idea to just have references to the
-  // property fail
+  set shadowColor(val) {
+    throw new SyntaxError('Property not supported');
+  }
+  get shadowColor() {
+    throw new SyntaxError('Property not supported');
+  }
+  set shadowBlur(val) {
+    throw new SyntaxError('Property not supported');
+  }
+  get shadowBlur() {
+    throw new SyntaxError('Property not supported');
+  }
+  set shadowOffsetX(val) {
+    throw new SyntaxError('Property not supported');
+  }
+  get shadowOffsetX() {
+    throw new SyntaxError('Property not supported');
+  }
+  set shadowOffsetY(val) {
+    throw new SyntaxError('Property not supported');
+  }
+  get shadowOffsetY() {
+    throw new SyntaxError('Property not supported');
+  }
+
   set globalCompositeOperation(val) {
     throw new SyntaxError('Property not supported');
   }
   get globalCompositeOperation() {
     throw new SyntaxError('Property not supported');
   }
+  // TODO: some day, use an off-screen rendering target to support
+  //       these --
   // set globalCompositeOperation(val) {
   //   let gl = this.gl;
   //   if (val == 'source-atop') {

@@ -103,6 +103,8 @@ DISABLED:
     - expected to fail (DOM/canvas tag doesn't exist)
   - 2d.clearRect.globalcomposite:
     - TODO implement compositing
+  - 2d.clearRect.shadow:
+    - TODO implement shadows
   - 2d.fillRect.shadow:
     - TODO implement shadows
   - 2d.fillStyle.parse.current.*:
