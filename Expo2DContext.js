@@ -425,7 +425,7 @@ export default class Expo2DContext {
     var flip_y = !this.renderWithOffscreenBuffer;
     gl.readPixels(
       sx,
-      sy,
+      (flip_y) ? (gl.drawingBufferHeight-sh-sy) : sy,
       sw,
       sh,
       gl.RGBA,
