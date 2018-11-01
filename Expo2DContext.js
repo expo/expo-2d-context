@@ -1031,12 +1031,21 @@ export default class Expo2DContext {
     let topLeft = this._getTransformedPt(x,y);
     let bottomRight = this._getTransformedPt(x+w,y+h);
 
-    var polyline = [
-      topLeft[0], topLeft[1],
-      bottomRight[0], topLeft[1],
-      bottomRight[0], bottomRight[1],
-      topLeft[0], bottomRight[1],
-    ];
+    if (w==0 || h==0) {
+      var oldLineCap = this.lineCap;
+      this.lineCap = 'butt';
+      var polyline = [
+        topLeft[0], topLeft[1],
+        bottomRight[0], bottomRight[1]
+      ]
+    } else {
+      var polyline = [
+        topLeft[0], topLeft[1],
+        bottomRight[0], topLeft[1],
+        bottomRight[0], bottomRight[1],
+        topLeft[0], bottomRight[1],
+      ];
+    }
 
     gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
 
@@ -1046,6 +1055,10 @@ export default class Expo2DContext {
     var vertices = this.strokeExtruder.build(polyline);
 
     this._drawStenciled(vertices);
+
+    if (w==0 || h==0) {
+      this.lineCap = oldLineCap;
+    }
   }
 
   /**************************************************
