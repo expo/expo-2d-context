@@ -66,6 +66,8 @@ function isValidCanvasImageSource(asset) {
 }
 
 function cssToGlColor(cssStr) {
+  // TODO: Every CSS color parser/transformer in NPM is a mess.
+  //       Implement a custom one at some point that is more robust.
   try {
     if (cssStr == "" || cssStr === undefined) {
       throw "Bad Color"
