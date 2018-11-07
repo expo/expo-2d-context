@@ -17,7 +17,7 @@ const DOMException = require("domexception");
 
 var stringFormat = require('string-format');
 
-var ColorTransformer = require('easy-color');
+var colorConverter = require('color-convert');
 
 var parseCssFont = require('css-font-parser');
 
@@ -65,11 +65,29 @@ function isValidCanvasImageSource(asset) {
   return false;
 }
 
-function cssToGlColor(cssStr) {
+// TODO: move into a standalone js file: 
+export function cssToGlColor(cssStr) {
+  // TODO: Every CSS color parser/transformer in NPM is a mess.
+  //       Implement a custom one at some point that is more robust.
   try {
     if (cssStr == "" || cssStr === undefined) {
       throw "Bad Color"
     }
+
+    // <color> = <rgb()> | <rgba()> | <hsl()> | <hsla()> |
+    //       <hwb()> | <gray()> | <device-cmyk()> |
+    //       <hex-color> | <named-color> 
+
+
+    if (cssStr.charAt(0) == "#") {
+      // Hex      
+    } else {
+      var regExp = /\(([^)]+)\)/;
+      var matches = /[A-Za-z\-]\(([^)]+)\)/.exec(cssStr);
+    }
+
+
+
     let parsedColor = new ColorTransformer(cssStr);
     if (!parsedColor.success) {
       if (cssStr.charAt(0)=="#") {

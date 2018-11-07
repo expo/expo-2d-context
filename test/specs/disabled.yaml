@@ -107,7 +107,5 @@ DISABLED:
     - TODO implement shadows
   - 2d.fillRect.shadow:
     - TODO implement shadows
-  - 2d.fillStyle.parse.current.*:
-    - TODO implement currentColor
-  - 2d.fillStyle.parse.*clamp*:
-    - TODO implement color clamping
+  - 2d.fillStyle.*:
+    - TODO implement custom CSS color parser/transformer

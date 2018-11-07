@@ -278,7 +278,7 @@ export const radialGradShaderTxt = {
         vec2 radialP1;
         if (lf < s) {
           if (lf + s >= 0.0) {
-            s = -s;
+            //s = -s;
             // TODO: tangent pt. wtf.
           }
           // TODO: else no intersection? wtf?
