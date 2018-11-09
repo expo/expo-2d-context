@@ -80,8 +80,9 @@ export class StrokeExtruder {
       let secondToLastPt = this._vec(points, secondToLastPtIdx)
 
       let endConnectorSeg = this._segmentDescriptor(lastPt, firstPt);
-      if (arcs.length > 0 && arcs[arcs.length-1].endIdx >= lastPtIdx) {
-        endConnectorSeg.arc = arcs[arcs.length-1];
+      let finalSegArc = null;
+      if (arcs.length > 0 && arcs[arcs.length-1].endIdx > lastPt) {
+        finalSegArc = arcs[arcs.length-1];
       }
 
       prevSeg = endConnectorSeg;
@@ -94,7 +95,7 @@ export class StrokeExtruder {
 
       this._segmentGeometry(triangles, 
         endConnectorSeg,
-        this._segmentDescriptor(secondToLastPt, lastPt, endConnectorSeg.arc),
+        this._segmentDescriptor(secondToLastPt, lastPt, finalSegArc),
         endConnectorSegDashPosition,
         this._dashStatus(endConnectorSegDashPosition)
       );
@@ -131,7 +132,7 @@ export class StrokeExtruder {
       if (arcIdx < arcs.length) {
         if (i >= arcs[arcIdx].endIdx) {
           arcIdx++;
-        } else if (i >= arcs[arcIdx].startIdx) {
+        } else if (i > arcs[arcIdx].startIdx) {
           seg.arc = arcs[arcIdx]
         }
       }

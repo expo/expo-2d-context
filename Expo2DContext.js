@@ -73,6 +73,9 @@ function cssToGlColor(cssStr) {
       throw "Bad Color"
     }
     let parsedColor = new ColorTransformer(cssStr);
+    if (!parsedColor.success) { 
+      throw "Bad Color";  
+    }
     let rgb = parsedColor.rgb;
     let alpha = parsedColor.alpha;
     return [
