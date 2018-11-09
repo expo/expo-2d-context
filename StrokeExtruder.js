@@ -32,6 +32,10 @@ export class StrokeExtruder {
   }
 
   build(points) {
+    // TODO: proper docstring
+    // Expects points to be a flat array of the form [x0, y0, x1, y1, ...]
+    // Optional points._arcs attribute
+
     // Set buildtime constants
     this._halfThickness = this.thickness / 2;
     this._dashListLength = this.dashList.reduce((x,y)=>{return x+y;}, 0);
@@ -44,8 +48,6 @@ export class StrokeExtruder {
     }
     let dashOn = this._dashStatus(currentPosition);
 
-    // TODO: proper docstring
-    // Expects points to be a flat array of the form [x0, y0, x1, y1, ...]
     if (points.length % 2 != 0) {
       throw new TypeError("Points array length is not a multiple of 2")
     }
@@ -54,7 +56,9 @@ export class StrokeExtruder {
       return [];
     }
 
-    let triangles = []
+    let arcs = points._arcs || [];
+
+    let triangles = [];
 
     let prevL1 = this._vec(points, 0);
     let prevSeg = null;
@@ -76,6 +80,10 @@ export class StrokeExtruder {
       let secondToLastPt = this._vec(points, secondToLastPtIdx)
 
       let endConnectorSeg = this._segmentDescriptor(lastPt, firstPt);
+      if (arcs.length > 0 && arcs[arcs.length-1].endIdx >= lastPtIdx) {
+        endConnectorSeg.arc = arcs[arcs.length-1];
+      }
+
       prevSeg = endConnectorSeg;
 
       let endConnectorSegDashPosition = currentPosition - endConnectorSeg.length;
@@ -86,12 +94,12 @@ export class StrokeExtruder {
 
       this._segmentGeometry(triangles, 
         endConnectorSeg,
-        this._segmentDescriptor(secondToLastPt, lastPt),
+        this._segmentDescriptor(secondToLastPt, lastPt, endConnectorSeg.arc),
         endConnectorSegDashPosition,
         this._dashStatus(endConnectorSegDashPosition)
       );
     } else {
-      let firstPt = this._vec(points, 0);      
+      let firstPt = this._vec(points, 0);
       
       let secondPtIdx = this._nextNonDupIdx(points, firstPt, 2);
       if (secondPtIdx < 0) {
@@ -100,6 +108,9 @@ export class StrokeExtruder {
       let secondPt = this._vec(points, secondPtIdx)
 
       let firstSeg = this._segmentDescriptor(firstPt, secondPt);
+      if (arcs.length > 0 && arcs[0].startIdx == 0) {
+        firstSeg.arc = arcs[0];
+      }
       if (dashOn) {
         if (this.cap == "round") {
           let startTheta = Math.atan2(firstSeg.normal.y, firstSeg.normal.x);
@@ -111,20 +122,31 @@ export class StrokeExtruder {
       }
     }
 
+    let arcIdx = 0;
     for (let i = 2; i < points.length; i+=2) {
       let seg = this._segmentDescriptor(
         prevL1,
         this._vec(points, i)
       );
+      if (arcIdx < arcs.length) {
+        if (i >= arcs[arcIdx].endIdx) {
+          arcIdx++;
+        } else if (i >= arcs[arcIdx].startIdx) {
+          seg.arc = arcs[arcIdx]
+        }
+      }
 
       if (seg.direction.x == 0 && seg.direction.y == 0) {
         continue;
       }
 
       if (!this.closed && i == points.length-2 && this.cap == "square") {
+        // TODO: This might not produce accurate results at the end of an arc,
+        //       but shouldn't bother anyone...
         seg = this._segmentDescriptor(
           seg.L0,
-          seg.L1.add(seg.direction.multiply(halfThickness))
+          seg.L1.add(seg.direction.multiply(halfThickness)),
+          seg.arc
         );
       }
 
@@ -162,7 +184,7 @@ export class StrokeExtruder {
     }
   }
 
-  _segmentDescriptor(L0, L1) {
+  _segmentDescriptor(L0, L1, arc) {
     var halfThickness = this._halfThickness;
 
     let seg = {}
@@ -174,28 +196,41 @@ export class StrokeExtruder {
     seg.direction = L1_L0.unit();
     seg.normal = new Vector(-seg.direction.y, seg.direction.x);
     
-    seg.cornerPoints = this._rectCorners(L0, L1, seg);
+    seg.arc = arc || null;
+
+    seg.cornerPoints = this._rhombusCorners(L0, L1, seg);
 
     return seg;
   }
 
-  _rectCorners(startPt, endPt, seg) {
+  _rhombusCorners(startPt, endPt, seg) {
     var halfThickness = this._halfThickness;
     
-    // TODO: this epsilon removes line artifacts, but makes them
-    //       non-pixel-perfect (and hence fail conformance). figure out
-    //       a good way to deal with artifacts that doesn't involve
-    //       ignorantly expanding rectangles
-    // TODO: make sure that this epsilon works properly when everything
-    //       is scaled
-    //var epsilon = seg.direction; 
-    var epsilon = 0;
-    return [
-      startPt.add(seg.normal.multiply(halfThickness).subtract(epsilon)),
-      startPt.add(seg.normal.multiply(-halfThickness).subtract(epsilon)),
-      endPt.add(seg.normal.multiply(-halfThickness).add(epsilon)),
-      endPt.add(seg.normal.multiply(halfThickness).add(epsilon))
-    ];
+    if (!seg.arc) {
+      // TODO: this epsilon removes line artifacts, but makes them
+      //       non-pixel-perfect (and hence fail conformance). figure out
+      //       a good way to deal with artifacts that doesn't involve
+      //       ignorantly expanding rectangles
+      // TODO: make sure that this epsilon works properly when everything
+      //       is scaled
+      //var epsilon = seg.direction; 
+      var epsilon = 0;
+      return [
+        startPt.add(seg.normal.multiply(halfThickness).subtract(epsilon)),
+        startPt.add(seg.normal.multiply(-halfThickness).subtract(epsilon)),
+        endPt.add(seg.normal.multiply(-halfThickness).add(epsilon)),
+        endPt.add(seg.normal.multiply(halfThickness).add(epsilon))
+      ];
+    } else {
+      let arc = seg.arc;
+      return [
+        arc.center.add(startPt.subtract(arc.center).unit().multiply(arc.radius+halfThickness)),
+        arc.center.add(startPt.subtract(arc.center).unit().multiply(arc.radius-halfThickness)),
+        arc.center.add(endPt.subtract(arc.center).unit().multiply(arc.radius-halfThickness)),
+        arc.center.add(endPt.subtract(arc.center).unit().multiply(arc.radius+halfThickness))
+      ];
+
+    }
   }
 
   _segmentGeometry (triangles, seg, prevSeg, currentPosition, dashOn) {
@@ -203,8 +238,7 @@ export class StrokeExtruder {
 
     // Add a join to the previous line segment, if there is one and the
     // dash was on
-    if (prevSeg && dashOn) {
-      // TODO: can bendDirection be based on miter angle?
+    if (dashOn && prevSeg && !prevSeg.arc && !seg.arc) {
       let bendDirection = prevSeg.direction.negative().cross(seg.direction).z > 0
 
       // TODO: for very tight curves we need joins on both sides :\
@@ -252,7 +286,6 @@ export class StrokeExtruder {
     // Add dashes for the current line segment
     var currentSegPosition = 0;
     while (currentSegPosition < seg.length) {
-      // TODO: disable dashing if dash list is empty:
       var nextSegPosition = currentSegPosition +
                               this._remainingDashLength(currentPosition + currentSegPosition);
 
@@ -282,18 +315,18 @@ export class StrokeExtruder {
           this._fanGeometry(triangles, endPt, startTheta + Math.PI, endTheta + Math.PI);
         }
 
-        let rectPoints = this._rectCorners(startPt, endPt, seg);
+        var segBodyPoints = this._rhombusCorners(startPt, endPt, seg);
     
         // TODO: convert to a triangle strip with restarts, to more
         // efficiently handle degenerate vs. common cases some day
         // (lol, some day, sigh)
-        this._pushPt(triangles, rectPoints[0]);
-        this._pushPt(triangles, rectPoints[1]);
-        this._pushPt(triangles, rectPoints[2]);
+        this._pushPt(triangles, segBodyPoints[0]);
+        this._pushPt(triangles, segBodyPoints[1]);
+        this._pushPt(triangles, segBodyPoints[2]);
 
-        this._pushPt(triangles, rectPoints[0]);
-        this._pushPt(triangles, rectPoints[3]);
-        this._pushPt(triangles, rectPoints[2]);
+        this._pushPt(triangles, segBodyPoints[0]);
+        this._pushPt(triangles, segBodyPoints[3]);
+        this._pushPt(triangles, segBodyPoints[2]);
       }
 
       if (nextSegPosition <= seg.length) {
