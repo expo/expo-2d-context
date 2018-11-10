@@ -17,7 +17,8 @@ const DOMException = require("domexception");
 
 var stringFormat = require('string-format');
 
-var parseColor = require('color-parser');
+var ColorTransformer = require('easy-color');
+
 var parseCssFont = require('css-font-parser');
 
 var earcut = require('earcut');
@@ -27,6 +28,8 @@ var bezierCubicPoints = require('adaptive-bezier-curve');
 var bezierQuadraticPoints = require('adaptive-quadratic-curve');
 
 import { StrokeExtruder } from './StrokeExtruder'
+
+import { ImageData } from './utilityObjects'
 
 // TODO: rather than setting vertexattribptr on every draw,
 // create a separate vbo for coords vs pattern coords vs text coords
@@ -39,46 +42,50 @@ import { StrokeExtruder } from './StrokeExtruder'
 
 function isValidCanvasImageSource(asset) {
   var environment = getEnvironment();
+  if (asset === undefined) {
+    return false;
+  }
   if (asset instanceof Expo2DContext) {
     return true;
-  } else if (environment === "expo") {
+  }else if (asset instanceof ImageData) {
+    return true;
+  } else {
     if (asset.hasOwnProperty("width") &&
         asset.hasOwnProperty("height") &&
-        asset.hasOwnProperty("localUri")) {
+        (asset.hasOwnProperty("localUri") || asset.hasOwnProperty("data"))) {
       return true;
     }
-  } else if (environment === "web") {
-    if (asset.nodeName.toLowerCase() === "img" ||
-        asset.nodeName.toLowerCase() === "canvas" ||
-        asset.nodeName.toLowerCase() === "img") {
-      return true;
+    if (environment === "web" && "nodeName" in asset) {
+      if (asset.nodeName.toLowerCase() === "img" ||
+          asset.nodeName.toLowerCase() === "canvas") {
+        return true;
+      }
     }
   }
   return false;
 }
 
 function cssToGlColor(cssStr) {
+  // TODO: Every CSS color parser/transformer in NPM is a mess.
+  //       Implement a custom one at some point that is more robust.
   try {
-    let parsedColor = parseColor(cssStr);
-    // TODO: clean this crap up:
-    if (!parsedColor ||
-        (!("r" in parsedColor && isFinite(parsedColor.r) &&
-          "g" in parsedColor && isFinite(parsedColor.g) &&
-          "b" in parsedColor && isFinite(parsedColor.b)) &&
-         (!("a" in parsedColor) || isFinite(parsedColor.a)))) {
-      throw new SyntaxError('Bad color value');
+    if (cssStr == "" || cssStr === undefined) {
+      throw "Bad Color"
     }
-    if (!('a' in parsedColor)) {
-      parsedColor['a'] = 1.0;
+    let parsedColor = new ColorTransformer(cssStr);
+    if (!parsedColor.success) { 
+      throw "Bad Color";  
     }
+    let rgb = parsedColor.rgb;
+    let alpha = parsedColor.alpha;
     return [
-      parsedColor['r'] / 255,
-      parsedColor['g'] / 255,
-      parsedColor['b'] / 255,
-      parsedColor['a'],
+      rgb.r / 255,
+      rgb.g / 255,
+      rgb.b / 255,
+      alpha,
     ];
   } catch (e) {
-    throw new SyntaxError('Bad color value');
+    return [];
   }
 }
 
@@ -120,46 +127,6 @@ function outerTangent(p0, r0, p1, r1) {
   }
 
   return o;
-}
-
-
-export class ImageData {
-    constructor() {
-      if (arguments[0] instanceof Uint8ClampedArray) {
-        var dataArray = arguments[0];
-        var width = arguments[1];
-        var height = arguments[2];
-        if (dataArray.length < 4) {
-          throw new DOMException('Bad data array size', 'InvalidStateError');
-        }
-        if (dataArray.length < width * height * 4) {
-          throw new DOMException('Bad data array size', 'IndexSizeError');
-        }
-      } else if (!isNaN(arguments[0])){
-        var width = arguments[0] || 0;
-        var height = arguments[1] || 0;
-        var dataArray = new Uint8ClampedArray(width * height * 4);
-      } else {
-        throw new TypeError("Bad array type");
-      }
-
-      if (!isFinite(width) || width <= 0 || !isFinite(height) || height <= 0) {
-        throw new DOMException('Bad dimensions', 'IndexSizeError');
-      }
-
-      Object.defineProperty(this, "data", {
-        get: ()=>{return dataArray;},
-        set: (val)=>{} // Must be silently read-only
-      });
-      Object.defineProperty(this, "width", {
-        get: ()=>{return width;},
-        set: (val)=>{} // Must be silently read-only
-      });
-      Object.defineProperty(this, "height", {
-        get: ()=>{return height;},
-        set: (val)=>{} // Must be silently read-only
-      });
-    }
 }
 
 export class CanvasPattern {
@@ -416,40 +383,20 @@ export default class Expo2DContext {
 
     var imageDataObj = new ImageData(sw, sh);
 
-    // TODO: intelligently decide this, not just based
-    //       off of the current environment 
-
-    if (this.renderWithOffscreenBuffer) {
-      var rawTexData = new Float32Array(sw * sh * 4);
-      var alphaScalar = 256.0;
-      var flip_y = false;
-      gl.readPixels(
-        sx,
-        sy,
-        sw,
-        sh,
-        gl.RGBA,
-        gl.FLOAT,
-        rawTexData
-      );
-    } else {
-      var rawTexData = new Uint8Array(sw * sh * 4);
-      var alphaScalar = 1.0;
-      var flip_y = true;
-      gl.readPixels(
-        sx,
-        gl.drawingBufferHeight-sh-sy, // have to y-flip the coordinate system 
-        sw,
-        sh,
-        gl.RGBA,
-        gl.UNSIGNED_BYTE,
-        rawTexData
-      );
-    }
-    
+    var rawTexData = new this._framebuffer_format.typed_array(sw * sh * 4);
+    var flip_y = !this.renderWithOffscreenBuffer;
+    gl.readPixels(
+      sx,
+      (flip_y) ? (gl.drawingBufferHeight-sh-sy) : sy,
+      sw,
+      sh,
+      gl.RGBA,
+      this._framebuffer_format.type,
+      rawTexData
+    );
+ 
     // Undo premultiplied alpha
     // (TODO: is there any way to do this with the GPU??)
-    // (TODO: does this work on systems where the bg color is black?)
     for (let y = 0; y < imageDataObj.height; y += 1) {
       let src_base = y * imageDataObj.width * 4;
       let dst_base = (flip_y ? imageDataObj.height - y - 1: y) * imageDataObj.width * 4;
@@ -459,7 +406,7 @@ export default class Expo2DContext {
         imageDataObj.data[dst+0] = Math.floor((rawTexData[src+0] / rawTexData[src+3]) * 256.0);
         imageDataObj.data[dst+1] = Math.floor((rawTexData[src+1] / rawTexData[src+3]) * 256.0);
         imageDataObj.data[dst+2] = Math.floor((rawTexData[src+2] / rawTexData[src+3]) * 256.0);
-        imageDataObj.data[dst+3] = Math.floor(rawTexData[src+3] * alphaScalar);
+        imageDataObj.data[dst+3] = Math.floor((rawTexData[src+3]/this._framebuffer_format.max_alpha)*256.0);
       }
     }
 
@@ -471,7 +418,17 @@ export default class Expo2DContext {
 
     var typeError = "";
 
-    if (!(imagedata instanceof ImageData)) {
+    if (imagedata instanceof Expo2DContext) {
+      // TODO: in browsers support canvas tags too
+      var asset = this._assetFromContext(imagedata);
+    } else if (imagedata instanceof ImageData) {
+      var asset = {
+        "width": imagedata.width,
+        "height": imagedata.height,
+        "data": new Uint8Array(imagedata.data.buffer)
+      };
+
+    } else {
       typeError = "Bad imagedata";
     }
 
@@ -495,13 +452,13 @@ export default class Expo2DContext {
       if (arguments.length >= 6) {
         typeError = "Bad dirtyWidth"; 
       }
-      dirtyWidth = imagedata.width;
+      dirtyWidth = asset.width;
     }
     if (!isFinite(dirtyHeight)) {
       if (arguments.length >= 7) {
         typeError = "Bad dirtyHeight"; 
       }
-      dirtyHeight = imagedata.height;
+      dirtyHeight = asset.height;
     }
     if (typeError != "") {
       throw new TypeError(typeError);
@@ -523,11 +480,11 @@ export default class Expo2DContext {
       dirtyHeight += dirtyY;
       dirtyY = 0;
     }
-    if (dirtyX + dirtyWidth > imagedata.width) {
-      dirtyWidth = imagedata.width - dirtyX;
+    if (dirtyX + dirtyWidth > asset.width) {
+      dirtyWidth = asset.width - dirtyX;
     }
-    if (dirtyY + dirtyHeight > imagedata.height) {
-      dirtyHeight = imagedata.height - dirtyY;
+    if (dirtyY + dirtyHeight > asset.height) {
+      dirtyHeight = asset.height - dirtyY;
     }
 
     dx = Math.floor(dx);
@@ -541,9 +498,7 @@ export default class Expo2DContext {
       return;
     }
 
-    var pattern = this.createPattern(
-      {"width": imagedata.width, "height": imagedata.height, "data": imagedata.data},
-      'src-rect');
+    var pattern = this.createPattern(asset, 'src-rect');
     this._applyStyle(pattern);
     if (this.activeShaderProgram == null) {
       return;
@@ -554,10 +509,10 @@ export default class Expo2DContext {
     var maxScreenX = minScreenX + dirtyWidth;
     var maxScreenY = minScreenY + dirtyHeight;
 
-    var minTexX = dirtyX / imagedata.width;
-    var minTexY = dirtyY / imagedata.height;
-    var maxTexX = minTexX + (dirtyWidth / imagedata.width);
-    var maxTexY = minTexY + (dirtyHeight / imagedata.height);
+    var minTexX = dirtyX / asset.width;
+    var minTexY = dirtyY / asset.height;
+    var maxTexX = minTexX + (dirtyWidth / asset.width);
+    var maxTexY = minTexY + (dirtyHeight / asset.height);
 
     var vertices = [
       minScreenX, minScreenY, minTexX, minTexY,
@@ -590,6 +545,7 @@ export default class Expo2DContext {
     if (this.stencilsEnabled == true) {
       gl.disable(gl.STENCIL_TEST);
     }
+
     gl.uniform1f(this.activeShaderProgram.uniforms['uGlobalAlpha'], 1.0);
     gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ZERO, gl.ONE, gl.ZERO);
 
@@ -601,9 +557,8 @@ export default class Expo2DContext {
     if (this.stencilsEnabled == true) {
       gl.enable(gl.STENCIL_TEST);
     }
- 
-    this._applyCompositingState();
 
+    this._applyCompositingState();
   }
 
   /**************************************************
@@ -623,7 +578,7 @@ export default class Expo2DContext {
 
     if (asset.width == 0 || asset.height == 0) {
       // Zero-sized asset image causes DOMException
-      throw new DOMException('Bad source rectangle', 'IndexSizeError');
+      throw new DOMException('Bad source rectangle', 'InvalidStateError');
     }
 
     var sx = 0;
@@ -855,9 +810,6 @@ export default class Expo2DContext {
   async initializeText() {
     if (arguments.length != 0) throw new TypeError();
 
-    if (this.environment === "web") {
-      throw new ReferenceError("Text rendering is not yet supported in-browser")
-    }
     let promises = [];
     let font_objects = Object.values(this.builtinFonts);
     for (let i = 0; i < font_objects.length; i++) {
@@ -920,27 +872,6 @@ export default class Expo2DContext {
     gl.bindTexture(gl.TEXTURE_2D_ARRAY, font.textures);
     gl.uniform1i(this.activeShaderProgram.uniforms["uTextPages"], 1);
 
-    // TODO: debug code, delete:
-    // const texture = gl.createTexture();
-    // gl.activeTexture(gl.TEXTURE1);
-    // gl.bindTexture(gl.TEXTURE_2D, texture);
-    // gl.uniform1i(this.activeShaderProgram.uniforms["uTextPages"], 1);
-    // gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    // gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    // gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    // gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    // gl.texImage2D(
-    //   gl.TEXTURE_2D,
-    //   0,
-    //   gl.RGBA,
-    //   x.width,
-    //   x.height,
-    //   0,
-    //   gl.RGBA,
-    //   gl.UNSIGNED_BYTE,
-    //   x
-    // );
-
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
     gl.bufferData(
       gl.ARRAY_BUFFER,
@@ -967,6 +898,9 @@ export default class Expo2DContext {
 
     gl.disableVertexAttribArray(this.activeShaderProgram.attributes["aTextPageCoord"]);
     gl.uniform1i(this.activeShaderProgram.uniforms["uTextEnabled"], 0);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.nullTextPage);
   }
 
   fillText(text, x, y, maxWidth) {
@@ -996,28 +930,16 @@ export default class Expo2DContext {
       return;
     }
 
-    if (
-      x <= 0.0 &&
-      y <= 0.0 &&
-      x + w >= gl.drawingBufferWidth &&
-      y + h >= gl.drawingBufferHeight &&
-      this.drawingState.clippingPaths.length == 0
-    ) {
-      this.gl.clear(
-        this.gl.COLOR_BUFFER_BIT |
-          this.gl.DEPTH_BUFFER_BIT
-      );
-    } else {
-      var old_fill_style = this.drawingState.fillStyle;
+    var old_fill_style = this.drawingState.fillStyle;
+    var old_global_alpha = this.drawingState.globalAlpha;
 
-      gl.blendFunc(gl.SRC_ALPHA, gl.ZERO);
-      this.drawingState.fillStyle = 'rgba(0,0,0,0);';
+    gl.blendFunc(gl.SRC_ALPHA, gl.ZERO);
+    this.drawingState.fillStyle = 'rgba(0,0,0,0)';
+    this.fillRect(x, y, w, h);
 
-      this.fillRect(x, y, w, h);
-
-      this.drawingState.fillStyle = old_fill_style;
-      this._applyCompositingState()
-    }
+    this.drawingState.fillStyle = old_fill_style;
+    this.drawingState.globalAlpha = old_global_alpha;
+    this._applyCompositingState()
   }
 
   fillRect(x, y, w, h) {
@@ -1071,12 +993,21 @@ export default class Expo2DContext {
     let topLeft = this._getTransformedPt(x,y);
     let bottomRight = this._getTransformedPt(x+w,y+h);
 
-    var polyline = [
-      topLeft[0], topLeft[1],
-      bottomRight[0], topLeft[1],
-      bottomRight[0], bottomRight[1],
-      topLeft[0], bottomRight[1],
-    ];
+    if (w==0 || h==0) {
+      var oldLineCap = this.lineCap;
+      this.lineCap = 'butt';
+      var polyline = [
+        topLeft[0], topLeft[1],
+        bottomRight[0], bottomRight[1]
+      ]
+    } else {
+      var polyline = [
+        topLeft[0], topLeft[1],
+        bottomRight[0], topLeft[1],
+        bottomRight[0], bottomRight[1],
+        topLeft[0], bottomRight[1],
+      ];
+    }
 
     gl.uniform1i(this.activeShaderProgram.uniforms['uSkipMVTransform'], true);
 
@@ -1086,6 +1017,10 @@ export default class Expo2DContext {
     var vertices = this.strokeExtruder.build(polyline);
 
     this._drawStenciled(vertices);
+
+    if (w==0 || h==0) {
+      this.lineCap = oldLineCap;
+    }
   }
 
   /**************************************************
@@ -1133,7 +1068,7 @@ export default class Expo2DContext {
       }
 
       // TODO: be smarter about tesselator selection
-      if (this.fillTesselation == "fast") {
+      if (!this.accurateFillTesselation) {
         for (let i = 0; i < prunedSubpaths.length; i++) {
           let subpath = prunedSubpaths[i];
           let triangleIndices = earcut(subpath, null);
@@ -1503,17 +1438,20 @@ export default class Expo2DContext {
       endAngle = startAngle + 2*Math.PI;
     }
 
-    // TODO: increment shouldn't be constant when arc has been scaled
-    // anisotropically
-
+    // Figure out angle increment based on the radius transformed along
+    // the most stretched axis, assuming anisotropy
     let xformedOrigin = this._getTransformedPt(0, 0);
-    let xformedVector = this._getTransformedPt(radius, 0);
-    let actualRadius = Math.sqrt(Math.pow(xformedVector[0]-xformedOrigin[0],2) + Math.pow(xformedVector[1]-xformedOrigin[1],2))
-    let increment = (1/actualRadius) * 5.0;
+    let xformedVectorAxis1 = this._getTransformedPt(radius, 0);
+    let xformedVectorAxis2 = this._getTransformedPt(0, radius);
+    let actualRadiusAxis1 = Math.sqrt(Math.pow(xformedVectorAxis1[0]-xformedOrigin[0],2) + Math.pow(xformedVectorAxis1[1]-xformedOrigin[1],2))
+    let actualRadiusAxis2 = Math.sqrt(Math.pow(xformedVectorAxis2[0]-xformedOrigin[0],2) + Math.pow(xformedVectorAxis2[1]-xformedOrigin[1],2))
+    let increment = (1/Math.max(actualRadiusAxis1, actualRadiusAxis2)) * 10.0;
     
     if (increment >= Math.abs(startAngle - endAngle)) {
       return;
     }
+
+    let pathStartIdx = this.currentSubpath.length;
 
     var thetaPt = (theta) => {
       let arcPt = this._getTransformedPt(
@@ -1533,16 +1471,14 @@ export default class Expo2DContext {
     while (true) {
       thetaPt(theta);
 
-      let incrementTweak = 0.05 + (1-Math.cos((theta - startAngle)/(endAngle-startAngle)*Math.PI*2))/2;
-
       if (!counterclockwise) {
-        theta += increment * incrementTweak;
+        theta += increment;
         if (theta >= endAngle) {
           theta = endAngle;
           break;
         }
       } else {
-        theta -= increment * incrementTweak;
+        theta -= increment;
         if (theta <= startAngle) {
           theta = startAngle;
           break;
@@ -1551,6 +1487,16 @@ export default class Expo2DContext {
     }
 
     thetaPt(theta);
+
+    let pathEndIdx = this.currentSubpath.length;
+
+    this.currentSubpath._arcs = this.currentSubpath._arcs || []
+    this.currentSubpath._arcs.push({
+      "startIdx": pathStartIdx,
+      "endIdx": pathEndIdx,
+      "center": new Vector(centerPt[0], centerPt[1]),
+      "radius": radius
+    })
 
     this.subpathsModified = true;
 
@@ -1611,7 +1557,10 @@ export default class Expo2DContext {
     var end_angle = Math.atan2(end_pt.y, end_pt.x);
 
     // TODO: not sure how to choose cw/ccw here - this might require more thought
-    this.arc(center_pt.x, center_pt.y, radius, start_angle, end_angle, false);
+    var s_t1 = center_pt.subtract(t1);
+    var t0_t1 = t0.subtract(t1);
+    var clockwise = s_t1.cross(t0_t1).z <= 0
+    this.arc(center_pt.x, center_pt.y, radius, start_angle, end_angle, clockwise);
   }
 
   /**************************************************
@@ -1719,15 +1668,39 @@ export default class Expo2DContext {
     return this.drawingState.globalAlpha;
   }
 
-  // TODO: this compositing code is eons away from primetime,
-  // so it seems like a good idea to just have references to the
-  // property fail
+  set shadowColor(val) {
+    throw new SyntaxError('Property not supported');
+  }
+  get shadowColor() {
+    throw new SyntaxError('Property not supported');
+  }
+  set shadowBlur(val) {
+    throw new SyntaxError('Property not supported');
+  }
+  get shadowBlur() {
+    throw new SyntaxError('Property not supported');
+  }
+  set shadowOffsetX(val) {
+    throw new SyntaxError('Property not supported');
+  }
+  get shadowOffsetX() {
+    throw new SyntaxError('Property not supported');
+  }
+  set shadowOffsetY(val) {
+    throw new SyntaxError('Property not supported');
+  }
+  get shadowOffsetY() {
+    throw new SyntaxError('Property not supported');
+  }
+
   set globalCompositeOperation(val) {
     throw new SyntaxError('Property not supported');
   }
   get globalCompositeOperation() {
     throw new SyntaxError('Property not supported');
   }
+  // TODO: some day, use an off-screen rendering target to support
+  //       these --
   // set globalCompositeOperation(val) {
   //   let gl = this.gl;
   //   if (val == 'source-atop') {
@@ -1815,18 +1788,51 @@ export default class Expo2DContext {
     return this.drawingState.strokeDashOffset;
   }
 
+  // TODO: only set stroke and fill when type is completely
+  //       valid
+  _styleSetter(val) {
+    if (val === undefined || val === null) {
+      return undefined;
+    }
+    if (typeof val === 'string' || val instanceof String) {
+      if (cssToGlColor(val).length == 0) {
+        return undefined;
+      }
+    }
+    return val
+  }
+  _styleGetter(val) {
+    let style = val
+    if (typeof style === 'string' || style instanceof String) {
+      if (cssToGlColor(style)[3] != 1.0) {
+        return (new ColorTransformer(style)).toRGBA();
+      } else {
+        return (new ColorTransformer(style)).toHex();
+      }
+    }
+    return val;
+  }
+
   set strokeStyle(val) {
+    val = this._styleSetter(val)
+    if (val === undefined) {
+      return;
+    }
     this.drawingState.strokeStyle = val;
   }
   get strokeStyle() {
-    return this.drawingState.strokeStyle;
+    return this._styleGetter(this.drawingState.strokeStyle);
   }
 
   set fillStyle(val) {
+    val = this._styleSetter(val)
+    if (val === undefined) {
+      return;
+    }
     this.drawingState.fillStyle = val;
   }
   get fillStyle() {
-    return this.drawingState.fillStyle;
+    return this._styleGetter(this.drawingState.fillStyle);
   }
 
   set font(val) {
@@ -2103,8 +2109,11 @@ export default class Expo2DContext {
       gradient: type,
       stops: [],
       addColorStop: function(offset, color) {
+        if (arguments.length != 2) {
+          throw new TypeError('Need to specify offset and color');
+        }
         var parsedColor = cssToGlColor(color);
-        if (!parsedColor) {
+        if (parsedColor.length == 0) {
           throw new DOMException('Bad color value', 'SyntaxError');
         }
         if (!isFinite(offset)) {
@@ -2125,7 +2134,7 @@ export default class Expo2DContext {
             // one. Otherwise, insert the new from-the-right stop
             // after the from-the-left stop
             if (i < this.stops.length-1 && this.stops[i+1][1] == offset) {
-              this.stops[i+1][0] = cssToGlColor(color);
+              this.stops[i+1][0] = parsedColor;
               i = -1;
             } else {
               i++;
@@ -2136,7 +2145,7 @@ export default class Expo2DContext {
           }
         }
         if (i > -1) {
-          this.stops.splice(i, 0, [cssToGlColor(color), offset]);
+          this.stops.splice(i, 0, [parsedColor, offset]);
         }
       },
     };
@@ -2153,6 +2162,17 @@ export default class Expo2DContext {
       return newGrad;
   }
 
+  _assetFromContext(context) {
+      let assetWidth = context.gl.drawingBufferWidth;
+      let assetHeight = context.gl.drawingBufferHeight;
+      let assetImage = context.getImageData(0, 0, assetWidth, assetHeight)
+      return {
+        "width": assetImage.width,
+        "height": assetImage.height,
+        "data":  new Uint8Array(assetImage.data.buffer),
+      }
+  }
+
   createPattern(asset, repeat) {
     if (arguments.length != 2) throw new TypeError();
     // TODO: make sure this doesn't pick up asset changes later on
@@ -2162,20 +2182,11 @@ export default class Expo2DContext {
     } else if (!(repeat in patternShaderRepeatValues)) {
       throw new DOMException('Bad repeat value', 'SyntaxError');
     }
-
     if (asset instanceof Expo2DContext) {
-      let assetWidth = asset.gl.drawingBufferWidth;
-      let assetHeight = asset.gl.drawingBufferHeight;
-      let assetImage = asset.getImageData(0, 0, assetWidth, assetHeight)
-      asset = {
-        "width": assetImage.width,
-        "height": assetImage.height,
-        "data": assetImage.data
-      }
+      asset = this._assetFromContext(asset);
     } else if (!isValidCanvasImageSource(asset)) { 
       throw new TypeError("Bad asset");
     }
-
     return new CanvasPattern(asset, repeat)
   }
 
@@ -2275,6 +2286,14 @@ export default class Expo2DContext {
     // TODO: this is to work around gl.readPixels not working on the ios default
     // framebuffer - remove once that's fixed
     let gl = this.gl;
+    let buffer_format = {
+      origin: "texture",
+      internal_format: null,
+      type: null,
+      buffer_format: null,
+      max_alpha: null
+    }
+
     this.framebuffer = gl.createFramebuffer();
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
@@ -2296,19 +2315,34 @@ export default class Expo2DContext {
     // We're using HALF_FLOAT/16F for the moment because of iOS limitations:
     // https://github.com/pex-gl/pex-glu/issues/3
     //
+    // TODO: maybe instead of choosing texture formats based on environement,
+    //       have an ordered list of good-to-bad ones and try them in a loop,
+    //       falling back as necessary? and log appropriately
     if (this.environment === "web") {
-      // TODO: maybe instead of choosing texture formats based on environement,
-      //       have an ordered list of good-to-bad ones and try them in a loop,
-      //       falling back as necessary? and log appropriately
-      // TODO: up the precision here:
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA,
-                    this.framebuffer.width, this.framebuffer.height,
-                    0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      let ext = gl.getExtension("EXT_color_buffer_float");
+      if (!ext) {
+        console.log("WARNING: Could not get float framebuffer, getImageData() may be lossy")
+        buffer_format.internal_format = gl.RGBA
+        buffer_format.type = gl.UNSIGNED_BYTE
+        buffer_format.typed_array = Uint8Array
+        buffer_format.max_alpha = 256.0;
+      } else {
+        buffer_format.internal_format = gl.RGBA32F
+        buffer_format.type = gl.FLOAT
+        buffer_format.typed_array = Float32Array
+        buffer_format.max_alpha = 1.0;
+      }
     } else {
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F,
-                    this.framebuffer.width, this.framebuffer.height,
-                    0, gl.RGBA, gl.HALF_FLOAT, null);
+      buffer_format.internal_format = gl.RGBA16F
+      buffer_format.type = gl.HALF_FLOAT 
+      buffer_format.typed_array = Float32Array
+      buffer_format.max_alpha = 1.0;
     }
+    gl.texImage2D(gl.TEXTURE_2D, 0, buffer_format.internal_format,
+                  this.framebuffer.width, this.framebuffer.height,
+                  0, gl.RGBA, buffer_format.type, null);
+
+
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.framebufferTexture, 0);
     gl.bindTexture(gl.TEXTURE_2D, null);
     var renderbuffer = gl.createRenderbuffer();
@@ -2317,22 +2351,24 @@ export default class Expo2DContext {
                            this.framebuffer.width, this.framebuffer.height);
     gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, renderbuffer);
     gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+
+    return buffer_format
   }
 
   /**************************************************
    * Main
    **************************************************/
 
-  constructor(gl, maxGradStops, renderWithOffscreenBuffer) {
+  constructor(gl, maxGradStops, renderWithOffscreenBuffer, accurateFillTesselation) {
     // Paramters
     // TODO: how do we make these parameters more parameterizable
     //       (that is, settable at creation fixed afterwards) ?
+    // TODO: use enums instead of raw strings
     this.maxGradStops = maxGradStops || 128;
     this.renderWithOffscreenBuffer = renderWithOffscreenBuffer || false;
+    this.accurateFillTesselation = accurateFillTesselation || true;
 
-    // TODO: use enums instead of raw strings
     this.environment = getEnvironment();
-    this.fillTesselation = "accurate";
 
     this.builtinFonts = getBuiltinFonts();
 
@@ -2384,7 +2420,7 @@ export default class Expo2DContext {
     this._initDrawingState();
 
     if (this.renderWithOffscreenBuffer) {
-      this._initOffscreenBuffer();
+      this._framebuffer_format = this._initOffscreenBuffer();
       // top and bottom are swapped while drawOffscreenBuffer() is in use
       glm.mat4.ortho(
         this.pMatrix,
@@ -2393,6 +2429,13 @@ export default class Expo2DContext {
         -1, 1
       );
     } else {
+      this._framebuffer_format = {
+        origin: "internal",
+        internal_format: gl.RGBA,
+        typed_array: Uint8Array,
+        type: gl.UNSIGNED_BYTE,
+        max_alpha: 256.0
+      }
       glm.mat4.ortho(
         this.pMatrix,
         0, gl.drawingBufferWidth,
@@ -2404,6 +2447,35 @@ export default class Expo2DContext {
     this._setShaderProgram(this.flatShaderProgram);
 
     this._applyCompositingState();
+
+    this.nullTextPage = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE1);
+
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.nullTextPage);
+    gl.texStorage3D(gl.TEXTURE_2D_ARRAY,
+      1,
+      gl.RGBA8,
+      1,//w
+      1,//h
+      1
+    );
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texSubImage3D(
+      gl.TEXTURE_2D_ARRAY,
+      0,
+      0,
+      0,
+      0,
+      1,//w
+      1,//h
+      1,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      new Uint8Array([0,0,0,0])
+    );
 
     gl.clearColor(0, 0, 0, 0.0);
     gl.clearStencil(1);

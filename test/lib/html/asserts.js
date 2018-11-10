@@ -11,8 +11,6 @@ function same_value(x, y) {
 }
 
 function TriggerObject(triggerCallback) {
-  // TODO: add parameters to this function as more levers show up
-  //       to pull on test failure
   let trigger = (expr, message) => {
     if (expr != true) {
       triggerCallback(message)
@@ -24,7 +22,7 @@ function TriggerObject(triggerCallback) {
       "toBe": (expected) => {trigger(actual === expected, message)},
       "toContain": (expected) => {trigger(actual.includes(expected), message)},
       "toBeLessThan": (expected) => {trigger(actual < expected, message)},
-      "toBeLessThan": (expected) => {trigger(actual > expected, message)},
+      "toBeGreaterThan": (expected) => {trigger(actual > expected, message)},
     }
   }}
 }
@@ -33,7 +31,7 @@ function TriggerObject(triggerCallback) {
 var webAssert = {
   "_assert": (t, expression, description) => 
   {
-      t.expect(description, actual).toBe(true);
+      t.expect(description, expression).toBe(true);
   },
   "assert_true": (t, actual, description) =>
   {
@@ -233,9 +231,9 @@ var webAssert = {
         func.call(this);
         t.expect(description, false).toBe(true);
       } catch (e) {
+          description += " threw " + e
           t.expect(description, typeof e).toBe("object");
           t.expect(description, e !== null).toBe(true);
-
           if (code === null) {
               throw new Error('Test bug: need to pass exception to assert_throws()');
           }
@@ -268,7 +266,6 @@ var webAssert = {
           code_name_map["DATA_CLONE_ERR"] = 'DataCloneError';
 
           var name = code in code_name_map ? code_name_map[code] : code;
-
           var name_code_map = {
               'IndexSizeError': 1,
               'HierarchyRequestError': 3,
@@ -309,24 +306,8 @@ var webAssert = {
               throw new Error('Test bug: unrecognized DOMException code "' + code + '" passed to assert_throws()');
           }
 
-          var required_props = { code: name_code_map[name] };
+          t.expect(description+", expected code "+name_code_map[name]+" but got "+e.code, e.code).toBe(name_code_map[name]);
 
-          if (required_props.code === 0 ||
-             ("name" in e &&
-              e.name !== e.name.toUpperCase() &&
-              e.name !== "DOMException")) {
-              // New style exception: also test the name property.
-              required_props.name = name;
-          }
-
-          //We'd like to test that e instanceof the appropriate interface,
-          //but we can't, because we don't know what window it was created
-          //in.  It might be an instanceof the appropriate interface on some
-          //unknown other window.  TODO: Work around this somehow?
-
-          for (var prop in required_props) {
-              t.expect(description, prop in e && e[prop] == required_props[prop]).toBe(true);
-          }
       }
   },
   "assert_unreached": (t, description) => 

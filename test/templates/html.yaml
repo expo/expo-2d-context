@@ -37,6 +37,8 @@ spec: |
   <script type="text/javascript" src="asserts.js"></script>
 
   <script type="text/javascript">
+      window.ImageData = ImageData;
+
       async function getAsset(name) {
         return new Promise((resolve, reject) => {
           let img = document.createElement("IMG")
@@ -46,7 +48,7 @@ spec: |
         })
       }
 
-      function bootCanvas(container, id, width, height) {
+      function bootCanvas(container, id, width, height, needsHighBitDepth) {
           var canvas = document.createElement("CANVAS")
           canvas.setAttribute("id", id)
           canvas.setAttribute("width", width)
@@ -70,7 +72,7 @@ spec: |
 
           /* TODO: figure out how to pass some gradient tests that need
            * more grad stops: */
-          let ctx = new Expo2DContext.default(gl, maxGradStops=50)
+          let ctx = new Expo2DContext.default(gl, maxGradStops=50, renderWithOffscreenBuffer=needsHighBitDepth)
           ctx.getContext = () => {return ctx;}
           
           return [canvas, gl, ctx]
@@ -85,6 +87,7 @@ spec: |
 
       function focusTest (num) {
         window.ctx = testContexts[num][0]
+        window.allContexts = testContexts[num]
       }
       window.onhashchange = () => {
         var url = new URL(window.location)
@@ -110,6 +113,7 @@ spec: |
         var url = new URL(window.location)
         if (url.searchParams.get("runTests") != null) {
           selected_test_ids = url.searchParams.get("runTests").split(",").map((x) => parseInt(x))
+          selected_test_ids = selected_test_ids.filter((elm, idx) => {return isFinite(elm)})
           tests = selected_test_ids.map((x) => document.getElementById("test_"+x+"_content")) 
         }
 
@@ -140,12 +144,17 @@ spec: |
           
           let failureMessages = []
 
+          let test_fn = eval("test_"+test.id+"_body");
+          let needsHighBitDepth = test_fn.toString().includes("getImageData");
+ 
           for (let j=0; j<parseInt(test.contexts); j++) {
+
             let [canvas, gl, ctx] = bootCanvas(
               test_area,
               "canvas_"+test.id+"_"+j,
               parseInt(test.width),
-              parseInt(test.height)
+              parseInt(test.height),
+              needsHighBitDepth
             )
             // Install fake getContext wrapper to allow context objects to be
             // used in place of canvas objects for our tests:
@@ -169,7 +178,6 @@ spec: |
           })
  
           try {
-            let test_fn = eval("test_"+test.id+"_body");
             await test_fn(onFail, allCanvases, allContexts);
           } catch (err) {
             onFail.trigger(false, err.toString());
@@ -204,6 +212,7 @@ spec: |
 
         var finishTests = () => {
           if (failures.size > 0) {
+            failureSummaryHTML = (tests.length-failures.size) + "/" + tests.length + " tests passed<br />"+failureSummaryHTML 
             failureSummaryHTML += "</ul><br />"
             suite_status.setAttribute("class","failure")
             suite_status.innerHTML = failureSummaryHTML
