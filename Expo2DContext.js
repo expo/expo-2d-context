@@ -1438,13 +1438,14 @@ export default class Expo2DContext {
       endAngle = startAngle + 2*Math.PI;
     }
 
-    // TODO: increment shouldn't be constant when arc has been scaled
-    // anisotropically
-
+    // Figure out angle increment based on the radius transformed along
+    // the most stretched axis, assuming anisotropy
     let xformedOrigin = this._getTransformedPt(0, 0);
-    let xformedVector = this._getTransformedPt(radius, 0);
-    let actualRadius = Math.sqrt(Math.pow(xformedVector[0]-xformedOrigin[0],2) + Math.pow(xformedVector[1]-xformedOrigin[1],2))
-    let increment = (1/actualRadius) * 10.0;
+    let xformedVectorAxis1 = this._getTransformedPt(radius, 0);
+    let xformedVectorAxis2 = this._getTransformedPt(0, radius);
+    let actualRadiusAxis1 = Math.sqrt(Math.pow(xformedVectorAxis1[0]-xformedOrigin[0],2) + Math.pow(xformedVectorAxis1[1]-xformedOrigin[1],2))
+    let actualRadiusAxis2 = Math.sqrt(Math.pow(xformedVectorAxis2[0]-xformedOrigin[0],2) + Math.pow(xformedVectorAxis2[1]-xformedOrigin[1],2))
+    let increment = (1/Math.max(actualRadiusAxis1, actualRadiusAxis2)) * 10.0;
     
     if (increment >= Math.abs(startAngle - endAngle)) {
       return;
@@ -1493,7 +1494,7 @@ export default class Expo2DContext {
     this.currentSubpath._arcs.push({
       "startIdx": pathStartIdx,
       "endIdx": pathEndIdx,
-      "center": new Vector(...this._getTransformedPt(centerPt[0], centerPt[1])),
+      "center": new Vector(centerPt[0], centerPt[1]),
       "radius": radius
     })
 
