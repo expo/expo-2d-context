@@ -70,7 +70,7 @@ spec: |
 
           /* TODO: figure out how to pass some gradient tests that need
            * more grad stops: */
-          let ctx = new Expo2DContext.default(gl, maxGradStops=50)
+          let ctx = new Expo2DContext.default(gl, {maxGradStops: 50})
           ctx.getContext = () => {return ctx;}
           
           return [canvas, gl, ctx]

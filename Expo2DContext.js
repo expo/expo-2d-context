@@ -37,26 +37,6 @@ import { StrokeExtruder } from './StrokeExtruder'
 
 // TODO: use same tex coord attrib array for drawImage and fillText
 
-function isValidCanvasImageSource(asset) {
-  var environment = getEnvironment();
-  if (asset instanceof Expo2DContext) {
-    return true;
-  } else if (environment === "expo") {
-    if (asset.hasOwnProperty("width") &&
-        asset.hasOwnProperty("height") &&
-        asset.hasOwnProperty("localUri")) {
-      return true;
-    }
-  } else if (environment === "web") {
-    if (asset.nodeName.toLowerCase() === "img" ||
-        asset.nodeName.toLowerCase() === "canvas" ||
-        asset.nodeName.toLowerCase() === "img") {
-      return true;
-    }
-  }
-  return false;
-}
-
 function cssToGlColor(cssStr) {
   try {
     let parsedColor = parseColor(cssStr);
@@ -160,6 +140,26 @@ export class ImageData {
         set: (val)=>{} // Must be silently read-only
       });
     }
+}
+
+function isValidCanvasImageSource(asset) {
+  var environment = getEnvironment();
+  if (asset instanceof Expo2DContext) {
+    return true;
+  } else if (environment === "expo") {
+    if (asset.hasOwnProperty("width") &&
+        asset.hasOwnProperty("height") &&
+        (asset.hasOwnProperty("localUri") || asset.hasOwnProperty("data"))) {
+      return true;
+    }
+  } else if (environment === "web") {
+    if (asset.nodeName.toLowerCase() === "img" ||
+        asset.nodeName.toLowerCase() === "canvas" ||
+        asset.nodeName.toLowerCase() === "img") {
+      return true;
+    }
+  }
+  return false;
 }
 
 export class CanvasPattern {
@@ -1133,7 +1133,7 @@ export default class Expo2DContext {
       }
 
       // TODO: be smarter about tesselator selection
-      if (this.fillTesselation == "fast") {
+      if (this.fastFillTesselation) {
         for (let i = 0; i < prunedSubpaths.length; i++) {
           let subpath = prunedSubpaths[i];
           let triangleIndices = earcut(subpath, null);
@@ -2166,7 +2166,7 @@ export default class Expo2DContext {
     if (asset instanceof Expo2DContext) {
       let assetWidth = asset.gl.drawingBufferWidth;
       let assetHeight = asset.gl.drawingBufferHeight;
-      let assetImage = asset.getImageData(0, 0, assetWidth, assetHeight)
+      let assetImage = asset.getImageData(0, 0, assetWidth, assetHeight);
       asset = {
         "width": assetImage.width,
         "height": assetImage.height,
@@ -2322,17 +2322,31 @@ export default class Expo2DContext {
   /**************************************************
    * Main
    **************************************************/
+  get width(){
+    return this.gl.drawingBufferWidth;
+  }
+  set width(val){
+    console.log("WARNING: setting context width/height at runtime is not supported");
+  }
 
-  constructor(gl, maxGradStops, renderWithOffscreenBuffer) {
+  get height(){
+    return this.gl.drawingBufferHeight;
+  }
+  set height(val){
+    console.log("WARNING: setting context width/height at runtime is not supported");
+  }
+
+
+  constructor(gl, options) {
     // Paramters
     // TODO: how do we make these parameters more parameterizable
     //       (that is, settable at creation fixed afterwards) ?
-    this.maxGradStops = maxGradStops || 128;
-    this.renderWithOffscreenBuffer = renderWithOffscreenBuffer || false;
+    options = options || {};
+    this.maxGradStops = options.maxGradStops || 128;
+    this.renderWithOffscreenBuffer = options.renderWithOffscreenBuffer || false;
+    this.fastFillTesselation = options.fastFillTesselation || false;
 
-    // TODO: use enums instead of raw strings
     this.environment = getEnvironment();
-    this.fillTesselation = "accurate";
 
     this.builtinFonts = getBuiltinFonts();
 
