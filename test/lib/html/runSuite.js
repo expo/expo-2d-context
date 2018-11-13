@@ -48,15 +48,15 @@ var runTestSuite = async (suite) => {
     failureInspectionURL = null;
   } 
 
-  suiteResults[suite.name] = {
+  await browser.close();
+
+  return {
     "name": suite.name,
     "succeeded": success,
     "failureInspectionURL": failureInspectionURL,
     "failedTests": failedTests,
     // "allTests": allTestResults // this muddles simple printing and doesn't seem useful
   }
-
-  await browser.close();
 
 };
 
@@ -158,8 +158,13 @@ var getSubsuites = async (suite_url) => {
         try {
           let subsuite = subsuites[args["suite"][i]]
           console.log("Launching suite "+subsuite.name+" ("+subsuite.href+")")
-          await runTestSuite(subsuite);
+          suiteResults[subsuite.name] = await runTestSuite(subsuite);
         } catch (error) {
+          suiteResults[subsuite.name] = {
+            "name": subsuite.name,
+            "succeeded": false,
+            "exception": error
+          }
           console.error(error);
         }
       } else {

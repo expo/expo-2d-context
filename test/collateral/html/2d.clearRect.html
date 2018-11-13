@@ -36,6 +36,8 @@
 <script type="text/javascript" src="asserts.js"></script>
 
 <script type="text/javascript">
+    window.ImageData = ImageData;
+
     async function getAsset(name) {
       return new Promise((resolve, reject) => {
         let img = document.createElement("IMG")
@@ -45,7 +47,7 @@
       })
     }
 
-    function bootCanvas(container, id, width, height) {
+    function bootCanvas(container, id, width, height, needsHighBitDepth) {
         var canvas = document.createElement("CANVAS")
         canvas.setAttribute("id", id)
         canvas.setAttribute("width", width)
@@ -69,7 +71,7 @@
 
         /* TODO: figure out how to pass some gradient tests that need
          * more grad stops: */
-        let ctx = new Expo2DContext.default(gl, maxGradStops=50)
+        let ctx = new Expo2DContext.default(gl, maxGradStops=50, renderWithOffscreenBuffer=needsHighBitDepth)
         ctx.getContext = () => {return ctx;}
         
         return [canvas, gl, ctx]
@@ -84,6 +86,7 @@
 
     function focusTest (num) {
       window.ctx = testContexts[num][0]
+      window.allContexts = testContexts[num]
     }
     window.onhashchange = () => {
       var url = new URL(window.location)
@@ -109,6 +112,7 @@
       var url = new URL(window.location)
       if (url.searchParams.get("runTests") != null) {
         selected_test_ids = url.searchParams.get("runTests").split(",").map((x) => parseInt(x))
+        selected_test_ids = selected_test_ids.filter((elm, idx) => {return isFinite(elm)})
         tests = selected_test_ids.map((x) => document.getElementById("test_"+x+"_content")) 
       }
 
@@ -139,12 +143,17 @@
         
         let failureMessages = []
 
+        let test_fn = eval("test_"+test.id+"_body");
+        let needsHighBitDepth = test_fn.toString().includes("getImageData");
+
         for (let j=0; j<parseInt(test.contexts); j++) {
+
           let [canvas, gl, ctx] = bootCanvas(
             test_area,
             "canvas_"+test.id+"_"+j,
             parseInt(test.width),
-            parseInt(test.height)
+            parseInt(test.height),
+            needsHighBitDepth
           )
           // Install fake getContext wrapper to allow context objects to be
           // used in place of canvas objects for our tests:
@@ -168,7 +177,6 @@
         })
 
         try {
-          let test_fn = eval("test_"+test.id+"_body");
           await test_fn(onFail, allCanvases, allContexts);
         } catch (err) {
           onFail.trigger(false, err.toString());
@@ -203,6 +211,7 @@
 
       var finishTests = () => {
         if (failures.size > 0) {
+          failureSummaryHTML = (tests.length-failures.size) + "/" + tests.length + " tests passed<br />"+failureSummaryHTML 
           failureSummaryHTML += "</ul><br />"
           suite_status.setAttribute("class","failure")
           suite_status.innerHTML = failureSummaryHTML
@@ -422,6 +431,7 @@
 
 <hr />
 
+<!-- DISABLED: TODO implement shadows
 <p><a id="478" href="#478"\>478</a>: 2d.clearRect.shadow (clearRect does not draw shadows)</p>
 
 <script>
@@ -459,6 +469,8 @@
 [<a href="?runTests=478&noCleanup#478" onclick="window.location.reload()">solo run</a>]
 
 <hr />
+
+-->
 
 <p><a id="470" href="#470"\>470</a>: 2d.clearRect.basic (clearRect clears to transparent black)</p>
 
