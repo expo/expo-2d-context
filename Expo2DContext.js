@@ -383,6 +383,7 @@ export default class Expo2DContext {
 
     var imageDataObj = new ImageData(sw, sh);
 
+    console.log(this._framebuffer_format)
     var rawTexData = new this._framebuffer_format.typed_array(sw * sh * 4);
     var flip_y = !this.renderWithOffscreenBuffer;
     gl.readPixels(
@@ -2290,7 +2291,6 @@ export default class Expo2DContext {
       origin: "texture",
       internal_format: null,
       type: null,
-      buffer_format: null,
       max_alpha: null
     }
 
