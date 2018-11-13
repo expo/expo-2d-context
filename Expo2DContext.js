@@ -383,16 +383,15 @@ export default class Expo2DContext {
 
     var imageDataObj = new ImageData(sw, sh);
 
-    console.log(this._framebuffer_format)
     var rawTexData = new this._framebuffer_format.typed_array(sw * sh * 4);
-    var flip_y = !this.renderWithOffscreenBuffer;
+    var flip_y = this._framebuffer_format.origin==="internal";
     gl.readPixels(
       sx,
       (flip_y) ? (gl.drawingBufferHeight-sh-sy) : sy,
       sw,
       sh,
       gl.RGBA,
-      this._framebuffer_format.type,
+      this._framebuffer_format.readpixels_type,
       rawTexData
     );
  
@@ -2329,12 +2328,14 @@ export default class Expo2DContext {
       } else {
         buffer_format.internal_format = gl.RGBA32F
         buffer_format.type = gl.FLOAT
+        buffer_format.readpixels_type = gl.FLOAT
         buffer_format.typed_array = Float32Array
         buffer_format.max_alpha = 1.0;
       }
     } else {
       buffer_format.internal_format = gl.RGBA16F
       buffer_format.type = gl.HALF_FLOAT 
+      buffer_format.readpixels_type = gl.FLOAT 
       buffer_format.typed_array = Float32Array
       buffer_format.max_alpha = 1.0;
     }
@@ -2448,6 +2449,7 @@ export default class Expo2DContext {
         internal_format: gl.RGBA,
         typed_array: Uint8Array,
         type: gl.UNSIGNED_BYTE,
+        readpixels_type: gl.UNSIGNED_BYTE,
         max_alpha: 256.0
       }
       glm.mat4.ortho(
