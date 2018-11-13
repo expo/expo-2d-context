@@ -19,8 +19,8 @@ function getTestModules() {
     // require('./2d.coordinatespace.js'),
     // require('./2d.drawImage.js'),
     // require('./2d.fillRect.js'),
-    require('./2d.fillStyle.js'),
-    require('./2d.getcontext.js'),
+    // require('./2d.fillStyle.js'), // wtf
+    // require('./2d.getcontext.js'),
     require('./2d.gradient.js'),
     // require('./2d.imageData.js'),
     // require('./2d.line.js'),
