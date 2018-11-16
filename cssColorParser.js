@@ -1,4 +1,4 @@
-var colorConverter = require('color-convert');
+var convert = require('color-convert');
 
 var x11ColorTable = {
   'aliceblue': [0.941176,0.972549,1.000000,1.000000],
@@ -152,15 +152,77 @@ var x11ColorTable = {
   'transparent': [0.000000,0.000000,0.000000,0.000000],
 }
 
+const numberRegex = /(-?[0-9]*\.?[0-9]+([eE][0-9]+)?)/
+
+
+function parseAngleArg(arg) {
+  let matches = new RegExp(numberRegex.source + (/([dD][eE][gG]|[gG][rR][aA][dD]|[rR][aA][dD]|[tT][uU][rR][nN])?$/).source).exec(arg)
+  if (!matches) {
+    throw "Bad Color"
+  }
+  let value = Number(matches[1]);
+  if (!isFinite(value)) {
+    throw "Bad Color"
+  }
+  let unit = (matches[3] || "DEG").toUpperCase();
+  if (unit == "DEG") {
+    return value;
+  } else if (unit == "GRAD") {
+    return value * 0.9;
+  } else if (unit == "RAD") {
+    return value * 180 / Math.PI;
+  } else if (unit == "TURN") {
+    return value * 360;
+  } else {
+    throw "Bad Color"
+  }
+}
+
+function parseNumberPercentageArg(arg, opts) {
+  opts.min = opts.min || NaN;
+  opts.max = opts.max || 255;
+  opts.percentageRequired = opts.percentageRequired || false;
+
+  let matches = new RegExp(numberRegex.source + (/(%)?$/).source).exec(arg)
+  if (!matches) {
+    throw "Bad Color"
+  }
+  let value = Number(matches[1]);
+  if (!isFinite(value)) {
+    throw "Bad Color"
+  }
+  if (matches[3]) {
+    value = opts.max * value * .01;
+  } else {
+    if (opts.percentageRequired) {
+      throw "Bad Color"
+    }
+  }
+  if ((isFinite(opts.min) && value < opts.min) || value > opts.max) {
+    throw "Bad Color"
+  }
+  return value
+}
+
+function parseComponentFunctionArgs(args) {
+  let parsedArgs = /^([^\s]+)\s+([^\s]+)\s+([^\s]+)\s*(\/\s*([^\s]+)\s*)?$/.exec(args);
+  if (!parsedArgs) {
+    parsedArgs = /^([^\s]+)\s*,\s*([^\s]+)\s*,\s*([^\s]+)\s*,\s*(,\s*([^\s]+)\s*)?$/.exec(args);
+  }
+  if (!parsedArgs) {
+    throw "Bad Color"
+  }
+  return [parsedArgs[1], parsedArgs[2], parsedArgs[3], parsedArgs[5]]
+}
+
 module.exports = function cssToGlColor(cssStr) {
   if (cssStr == "" || cssStr === undefined) {
     throw "Bad Color"
   }
 
   cssStr = cssStr.trim().toLowerCase();
-  // <color> = <rgb()> | <rgba()> | <hsl()> | <hsla()> |
+  // <color> = hsl()> | <hsla()> |
   //       <hwb()> | <gray()> | <device-cmyk()> |
-  //       <hex-color> | <named-color> 
 
 
   if (cssStr.charAt(0) == "#") {
@@ -213,16 +275,29 @@ module.exports = function cssToGlColor(cssStr) {
     } else {
       // Color function
 
-      // TODO
       let func = matches[1]
       let args = matches[2]
 
       if (func == "rgb" || func == "rgba") {
-        let args = /^([^\s]+)\s([^\s]+)\s+([^\s]+)\s+$/.exec();
-
-
+        let parsedArgs = parseComponentFunctionArgs(args)
+        let r = parseNumberPercentageArg(parsedArgs[0], {min: 0, max: 255}) / 255
+        let g = parseNumberPercentageArg(parsedArgs[1], {min: 0, max: 255}) / 255
+        let b = parseNumberPercentageArg(parsedArgs[2], {min: 0, max: 255}) / 255
+        let a = parseNumberPercentageArg(parsedArgs[3] || 1.0, {min: 0, max: 1})
+        return [r,g,b,a]
       } else if (func == "hsl" || func == "hsla") {
-
+        let parsedArgs = parseComponentFunctionArgs(args)
+        let h = parseAngleArg(parsedArgs[0])
+        let s = parseNumberPercentageArg(parsedArgs[1], {min: 0, max: 1, percentageRequired: true})
+        let l = parseNumberPercentageArg(parsedArgs[2], {min: 0, max: 1, percentageRequired: true})
+        let a = parseNumberPercentageArg(parsedArgs[3] || 1.0, {min: 0, max: 1})
+        let converted = convert.hsl.rgb(h, s*100, l*100)
+        return [
+          converted[0]/255, 
+          converted[1]/255,
+          converted[2]/255,
+          a
+        ]
       } else if (func == "hwb") {
 
       } else if (func == "gray") {

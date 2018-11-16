@@ -73,64 +73,9 @@ export function cssToGlColor(cssStr) {
     if (cssStr == "" || cssStr === undefined) {
       throw "Bad Color"
     }
-
-    // <color> = <rgb()> | <rgba()> | <hsl()> | <hsla()> |
-    //       <hwb()> | <gray()> | <device-cmyk()> |
-    //       <hex-color> | <named-color> 
-
-
-    if (cssStr.charAt(0) == "#") {
-      // Hex      
-    } else {
-      var regExp = /\(([^)]+)\)/;
-      var matches = /[A-Za-z\-]\(([^)]+)\)/.exec(cssStr);
-    }
-
-
-
     let parsedColor = new ColorTransformer(cssStr);
-    if (!parsedColor.success) {
-      if (cssStr.charAt(0)=="#") {
-
-        if (cssStr.length==9) {
-          // Try for 8-hex case
-          parsedColor = new ColorTransformer(cssStr.substring(0,7));
-          parsedColor.alpha = parseInt(cssStr.substring(7), 16);
-          if (!parsedColor.success ||
-              !isFinite(parsedColor.alpha) ||
-              parsedColor.alpha > 255 || 
-              parsedColor.alpha < 0)
-          {
-            throw "Bad Color";
-          }
-          parsedColor.alpha /= 255;
-        } else if (cssStr.length==5) {
-          // Try for 4-hex case
-          let hex6 = ("#" + cssStr.substring(1,2) + cssStr.substring(1,2) +
-                        cssStr.substring(2,3) + cssStr.substring(2,3) +
-                        cssStr.substring(3,4) + cssStr.substring(3,4));
-          parsedColor = new ColorTransformer(hex6);
-          parsedColor.alpha = parseInt(cssStr.substring(4,5) + cssStr.substring(4,5) , 16);
-          if (!parsedColor.success ||
-              !isFinite(parsedColor.alpha) ||
-              parsedColor.alpha > 255 || 
-              parsedColor.alpha < 0)
-          {
-            throw "Bad Color";
-          }
-          parsedColor.alpha /= 255;
-        } else {
-          throw "Bad Color";
-        }
-      } else if (cssStr.includes("(")) {
-        // Try for EOF case
-        parsedColor = new ColorTransformer(cssStr+")");
-        if (!parsedColor.success) {
-          throw "Bad Color";
-        }
-      } else {
-        throw "Bad Color";
-      }
+    if (!parsedColor.success) { 
+      throw "Bad Color";  
     }
     let rgb = parsedColor.rgb;
     let alpha = parsedColor.alpha;
@@ -1124,7 +1069,7 @@ export default class Expo2DContext {
       }
 
       // TODO: be smarter about tesselator selection
-      if (this.fillTesselation == "fast") {
+      if (!this.accurateFillTesselation) {
         for (let i = 0; i < prunedSubpaths.length; i++) {
           let subpath = prunedSubpaths[i];
           let triangleIndices = earcut(subpath, null);
@@ -1494,17 +1439,20 @@ export default class Expo2DContext {
       endAngle = startAngle + 2*Math.PI;
     }
 
-    // TODO: increment shouldn't be constant when arc has been scaled
-    // anisotropically
-
+    // Figure out angle increment based on the radius transformed along
+    // the most stretched axis, assuming anisotropy
     let xformedOrigin = this._getTransformedPt(0, 0);
-    let xformedVector = this._getTransformedPt(radius, 0);
-    let actualRadius = Math.sqrt(Math.pow(xformedVector[0]-xformedOrigin[0],2) + Math.pow(xformedVector[1]-xformedOrigin[1],2))
-    let increment = (1/actualRadius) * 5.0;
+    let xformedVectorAxis1 = this._getTransformedPt(radius, 0);
+    let xformedVectorAxis2 = this._getTransformedPt(0, radius);
+    let actualRadiusAxis1 = Math.sqrt(Math.pow(xformedVectorAxis1[0]-xformedOrigin[0],2) + Math.pow(xformedVectorAxis1[1]-xformedOrigin[1],2))
+    let actualRadiusAxis2 = Math.sqrt(Math.pow(xformedVectorAxis2[0]-xformedOrigin[0],2) + Math.pow(xformedVectorAxis2[1]-xformedOrigin[1],2))
+    let increment = (1/Math.max(actualRadiusAxis1, actualRadiusAxis2)) * 10.0;
     
     if (increment >= Math.abs(startAngle - endAngle)) {
       return;
     }
+
+    let pathStartIdx = this.currentSubpath.length;
 
     var thetaPt = (theta) => {
       let arcPt = this._getTransformedPt(
@@ -1524,16 +1472,14 @@ export default class Expo2DContext {
     while (true) {
       thetaPt(theta);
 
-      let incrementTweak = 0.05 + (1-Math.cos((theta - startAngle)/(endAngle-startAngle)*Math.PI*2))/2;
-
       if (!counterclockwise) {
-        theta += increment * incrementTweak;
+        theta += increment;
         if (theta >= endAngle) {
           theta = endAngle;
           break;
         }
       } else {
-        theta -= increment * incrementTweak;
+        theta -= increment;
         if (theta <= startAngle) {
           theta = startAngle;
           break;
@@ -1542,6 +1488,16 @@ export default class Expo2DContext {
     }
 
     thetaPt(theta);
+
+    let pathEndIdx = this.currentSubpath.length;
+
+    this.currentSubpath._arcs = this.currentSubpath._arcs || []
+    this.currentSubpath._arcs.push({
+      "startIdx": pathStartIdx,
+      "endIdx": pathEndIdx,
+      "center": new Vector(centerPt[0], centerPt[1]),
+      "radius": radius
+    })
 
     this.subpathsModified = true;
 
@@ -1602,7 +1558,10 @@ export default class Expo2DContext {
     var end_angle = Math.atan2(end_pt.y, end_pt.x);
 
     // TODO: not sure how to choose cw/ccw here - this might require more thought
-    this.arc(center_pt.x, center_pt.y, radius, start_angle, end_angle, false);
+    var s_t1 = center_pt.subtract(t1);
+    var t0_t1 = t0.subtract(t1);
+    var clockwise = s_t1.cross(t0_t1).z <= 0
+    this.arc(center_pt.x, center_pt.y, radius, start_angle, end_angle, clockwise);
   }
 
   /**************************************************
@@ -2401,16 +2360,16 @@ export default class Expo2DContext {
    * Main
    **************************************************/
 
-  constructor(gl, maxGradStops, renderWithOffscreenBuffer) {
+  constructor(gl, maxGradStops, renderWithOffscreenBuffer, accurateFillTesselation) {
     // Paramters
     // TODO: how do we make these parameters more parameterizable
     //       (that is, settable at creation fixed afterwards) ?
+    // TODO: use enums instead of raw strings
     this.maxGradStops = maxGradStops || 128;
     this.renderWithOffscreenBuffer = renderWithOffscreenBuffer || false;
+    this.accurateFillTesselation = accurateFillTesselation || true;
 
-    // TODO: use enums instead of raw strings
     this.environment = getEnvironment();
-    this.fillTesselation = "accurate";
 
     this.builtinFonts = getBuiltinFonts();
 

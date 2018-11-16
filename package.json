@@ -15,6 +15,7 @@
     "css-font-parser": "0.2.3",
     "domexception": "1.0.1",
     "earcut": "2.1.1",
+    "easy-color": "^1.0.4",
     "gl-matrix": "^2.4.0",
     "parse-bmfont-ascii": "1.0.6",
     "parse-bmfont-binary": "1.0.6",

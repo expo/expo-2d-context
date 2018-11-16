@@ -107,5 +107,5 @@ DISABLED:
     - TODO implement shadows
   - 2d.fillRect.shadow:
     - TODO implement shadows
-  - 2d.fillStyle.*:
-    - TODO implement custom CSS color parser/transformer
+  - 2d.gradient.radial.touch2:
+    - TODO fix numeric instability in shader that causes this edgecase fail

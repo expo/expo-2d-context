@@ -11,8 +11,6 @@ function same_value(x, y) {
 }
 
 function TriggerObject(triggerCallback) {
-  // TODO: add parameters to this function as more levers show up
-  //       to pull on test failure
   let trigger = (expr, message) => {
     if (expr != true) {
       triggerCallback(message)
