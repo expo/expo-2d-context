@@ -221,9 +221,6 @@ module.exports = function cssToGlColor(cssStr) {
   }
 
   cssStr = cssStr.trim().toLowerCase();
-  // <color> = hsl()> | <hsla()> |
-  //       <hwb()> | <gray()> | <device-cmyk()> |
-
 
   if (cssStr.charAt(0) == "#") {
     // Hex
@@ -274,10 +271,8 @@ module.exports = function cssToGlColor(cssStr) {
       }
     } else {
       // Color function
-
       let func = matches[1]
       let args = matches[2]
-
       if (func == "rgb" || func == "rgba") {
         let parsedArgs = parseComponentFunctionArgs(args)
         let r = parseNumberPercentageArg(parsedArgs[0], {min: 0, max: 255}) / 255
@@ -287,7 +282,7 @@ module.exports = function cssToGlColor(cssStr) {
         return [r,g,b,a]
       } else if (func == "hsl" || func == "hsla") {
         let parsedArgs = parseComponentFunctionArgs(args)
-        let h = parseAngleArg(parsedArgs[0])
+        let h = parseAngleArg(parsedArgs[0]) % 360;
         let s = parseNumberPercentageArg(parsedArgs[1], {min: 0, max: 1, percentageRequired: true})
         let l = parseNumberPercentageArg(parsedArgs[2], {min: 0, max: 1, percentageRequired: true})
         let a = parseNumberPercentageArg(parsedArgs[3] || 1.0, {min: 0, max: 1})
@@ -299,15 +294,31 @@ module.exports = function cssToGlColor(cssStr) {
           a
         ]
       } else if (func == "hwb") {
-
+        // TODO: disallow comma notation?
+        let parsedArgs = parseComponentFunctionArgs(args)
+        let h = parseAngleArg(parsedArgs[0]) % 360;
+        let w = parseNumberPercentageArg(parsedArgs[1], {min: 0, max: 1, percentageRequired: true})
+        let b = parseNumberPercentageArg(parsedArgs[2], {min: 0, max: 1, percentageRequired: true})
+        let a = parseNumberPercentageArg(parsedArgs[3] || 1.0, {min: 0, max: 1})
+        if (w+b > 1) {
+          let ratio = w/b;
+          b = 1/(1+ratio);
+          w = 1 - b;
+        }
+        let converted = convert.hsl.rgb(h, 100, 50)
+        for(var i = 0; i < 3; i++) {
+          converted[i] *= (1 - w - b) / 255;
+          converted[i] += w;
+        }
+        converted.push(a);
+        return converted;
       } else if (func == "gray") {
-
+        throw "Bad Color"
       } else if (func == "device-cmyk") {
-
+        throw "Bad Color"
       } else {
         throw "Bad Color"
       }
-      return  matches[1]
     }
   }
 

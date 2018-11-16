@@ -17,7 +17,7 @@ const DOMException = require("domexception");
 
 var stringFormat = require('string-format');
 
-var colorConverter = require('color-convert');
+var parseColor = require("./cssColorParser")
 
 var parseCssFont = require('css-font-parser');
 
@@ -30,6 +30,7 @@ var bezierQuadraticPoints = require('adaptive-quadratic-curve');
 import { StrokeExtruder } from './StrokeExtruder'
 
 import { ImageData } from './utilityObjects'
+
 
 // TODO: rather than setting vertexattribptr on every draw,
 // create a separate vbo for coords vs pattern coords vs text coords
@@ -65,26 +66,9 @@ function isValidCanvasImageSource(asset) {
   return false;
 }
 
-// TODO: move into a standalone js file: 
 export function cssToGlColor(cssStr) {
-  // TODO: Every CSS color parser/transformer in NPM is a mess.
-  //       Implement a custom one at some point that is more robust.
   try {
-    if (cssStr == "" || cssStr === undefined) {
-      throw "Bad Color"
-    }
-    let parsedColor = new ColorTransformer(cssStr);
-    if (!parsedColor.success) { 
-      throw "Bad Color";  
-    }
-    let rgb = parsedColor.rgb;
-    let alpha = parsedColor.alpha;
-    return [
-      rgb.r / 255,
-      rgb.g / 255,
-      rgb.b / 255,
-      alpha,
-    ];
+    return parseColor(cssStr);
   } catch (e) {
     return [];
   }
