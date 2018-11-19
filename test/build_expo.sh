@@ -9,7 +9,7 @@ mkdir -p collateral/expo
 mkdir -p collateral/expo/assets/conformanceImages
 $TESTDIR/gentest.py \
     --testdir ./collateral/expo \
-    --imagedir ../collateral/expo/assets/conformanceImages \
+    --imagedir ./collateral/expo/assets/conformanceImages \
     --templates ./templates/expo.yaml \
     --libdir ./lib/expo \
     --specfile $TESTDIR/specs/spec.yaml \

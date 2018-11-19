@@ -207,7 +207,7 @@ function parseNumberPercentageArg(arg, opts) {
 function parseComponentFunctionArgs(args) {
   let parsedArgs = /^([^\s]+)\s+([^\s]+)\s+([^\s]+)\s*(\/\s*([^\s]+)\s*)?$/.exec(args);
   if (!parsedArgs) {
-    parsedArgs = /^([^\s]+)\s*,\s*([^\s]+)\s*,\s*([^\s]+)\s*,\s*(,\s*([^\s]+)\s*)?$/.exec(args);
+    parsedArgs = /^([^\s,]+)\s*,\s*([^\s,]+)\s*,\s*([^\s,]+)\s*(,\s*([^\s]+)\s*)?$/.exec(args);
   }
   if (!parsedArgs) {
     throw "Bad Color"
