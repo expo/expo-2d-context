@@ -13,29 +13,29 @@ let { ExponentTest } = NativeModules;
 // the packager to pick them all up.
 function getTestModules() {
   let modules = [
-    // require('./2d.canvas.js'), // good
-    // require('./2d.clearRect.js'), // good
-    // require('./2d.composite.js'), // good
-    // require('./2d.coordinatespace.js'), // good
-    // require('./2d.drawImage.js'), // good
-    // require('./2d.fillRect.js'), // good
-    require('./2d.fillStyle.js'), // wtf baaaaaaaaaaad
-    // require('./2d.getcontext.js'), // good
-    // require('./2d.gradient.js'), // good
-    // require('./2d.imageData.js'), // good
-    // require('./2d.line.js'), // good
-    // require('./2d.missingargs.js'), // good
-    // require('./2d.path.js'), // good
-    // require('./2d.pattern.js'), // good
-    // require('./2d.reset.js'), // good
-    // require('./2d.scaled.js'), // good
-    // require('./2d.shadow.js'), // good
-    // require('./2d.state.js'), // good
-    // require('./2d.strokeRect.js'), // good
-    // require('./2d.strokeStyle.js'), // good
-    // require('./2d.transformation.js'), // good
-    // require('./2d.type.js'), // good
-    // require('./2d.voidreturn.js') // good
+    require('./2d.canvas.js'),
+    require('./2d.clearRect.js'),
+    require('./2d.composite.js'),
+    require('./2d.coordinatespace.js'),
+    require('./2d.drawImage.js'),
+    require('./2d.fillRect.js'),
+    require('./2d.fillStyle.js'),
+    require('./2d.getcontext.js'),
+    require('./2d.gradient.js'),
+    require('./2d.imageData.js'),
+    require('./2d.line.js'),
+    require('./2d.missingargs.js'),
+    require('./2d.path.js'),
+    require('./2d.pattern.js'),
+    require('./2d.reset.js'),
+    require('./2d.scaled.js'),
+    require('./2d.shadow.js'),
+    require('./2d.state.js'),
+    require('./2d.strokeRect.js'),
+    require('./2d.strokeStyle.js'),
+    require('./2d.transformation.js'),
+    require('./2d.type.js'),
+    require('./2d.voidreturn.js')
   ];
   return modules;
 }
