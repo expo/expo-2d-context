@@ -1950,14 +1950,18 @@ export default class Expo2DContext {
       let r1 = val.r1;
       let reverse_stops = false;
 
+      let d = Math.sqrt(
+        Math.pow(p1[0]-p0[0], 2) +
+        Math.pow(p1[1]-p0[1], 2)
+      );
+
       if (val.gradient === 'linear') {
+        if (d <= 0.0001) {
+          // Do nothing for zero-sized gradients
+          return this._applyStyle("transparent");
+        }
         this._setShaderProgram(this.linearGradShaderProgram);
       } else if (val.gradient === 'radial') {
-        let d = Math.sqrt(
-          Math.pow(p1[0]-p0[0], 2) +
-          Math.pow(p1[1]-p0[1], 2)
-        );
-
         // Make sure circle 1 is always the smaller of the two
         if (r0 > r1) {
           let temp = r0;
