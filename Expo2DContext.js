@@ -29,7 +29,8 @@ var bezierQuadraticPoints = require('adaptive-quadratic-curve');
 
 import { StrokeExtruder } from './StrokeExtruder'
 
-import { ImageData } from './utilityObjects'
+import { ImageData as _ImageData } from './utilityObjects'
+export const ImageData = _ImageData;
 
 
 // TODO: rather than setting vertexattribptr on every draw,
@@ -361,6 +362,10 @@ export default class Expo2DContext {
     sw = Math.floor(sw);
     sh = Math.floor(sh);
 
+    if (sw == 0 || sh == 0) {
+      throw new DOMException('Bad geometry', 'IndexSizeError');
+    }
+
     // This flush isn't technically necessary because readPixels should cause
     // an expo gl flush anyway, but here just in case more operations get added
     // to Expo2DContext flush in the future:
@@ -369,14 +374,14 @@ export default class Expo2DContext {
     var imageDataObj = new ImageData(sw, sh);
 
     var rawTexData = new this._framebuffer_format.typed_array(sw * sh * 4);
-    var flip_y = !this.renderWithOffscreenBuffer;
+    var flip_y = this._framebuffer_format.origin==="internal";
     gl.readPixels(
       sx,
       (flip_y) ? (gl.drawingBufferHeight-sh-sy) : sy,
       sw,
       sh,
       gl.RGBA,
-      this._framebuffer_format.type,
+      this._framebuffer_format.readpixels_type,
       rawTexData
     );
  
@@ -1053,7 +1058,7 @@ export default class Expo2DContext {
       }
 
       // TODO: be smarter about tesselator selection
-      if (!this.accurateFillTesselation) {
+      if (this.fastFillTesselation) {
         for (let i = 0; i < prunedSubpaths.length; i++) {
           let subpath = prunedSubpaths[i];
           let triangleIndices = earcut(subpath, null);
@@ -1930,14 +1935,18 @@ export default class Expo2DContext {
       let r1 = val.r1;
       let reverse_stops = false;
 
+      let d = Math.sqrt(
+        Math.pow(p1[0]-p0[0], 2) +
+        Math.pow(p1[1]-p0[1], 2)
+      );
+
       if (val.gradient === 'linear') {
+        if (d <= 0.0001) {
+          // Do nothing for zero-sized gradients
+          return this._applyStyle("transparent");
+        }
         this._setShaderProgram(this.linearGradShaderProgram);
       } else if (val.gradient === 'radial') {
-        let d = Math.sqrt(
-          Math.pow(p1[0]-p0[0], 2) +
-          Math.pow(p1[1]-p0[1], 2)
-        );
-
         // Make sure circle 1 is always the smaller of the two
         if (r0 > r1) {
           let temp = r0;
@@ -2275,7 +2284,6 @@ export default class Expo2DContext {
       origin: "texture",
       internal_format: null,
       type: null,
-      buffer_format: null,
       max_alpha: null
     }
 
@@ -2314,12 +2322,14 @@ export default class Expo2DContext {
       } else {
         buffer_format.internal_format = gl.RGBA32F
         buffer_format.type = gl.FLOAT
+        buffer_format.readpixels_type = gl.FLOAT
         buffer_format.typed_array = Float32Array
         buffer_format.max_alpha = 1.0;
       }
     } else {
       buffer_format.internal_format = gl.RGBA16F
       buffer_format.type = gl.HALF_FLOAT 
+      buffer_format.readpixels_type = gl.FLOAT 
       buffer_format.typed_array = Float32Array
       buffer_format.max_alpha = 1.0;
     }
@@ -2343,15 +2353,29 @@ export default class Expo2DContext {
   /**************************************************
    * Main
    **************************************************/
+  get width(){
+    return this.gl.drawingBufferWidth;
+  }
+  set width(val){
+    console.log("WARNING: setting context width/height at runtime is not supported");
+  }
 
-  constructor(gl, maxGradStops, renderWithOffscreenBuffer, accurateFillTesselation) {
+  get height(){
+    return this.gl.drawingBufferHeight;
+  }
+  set height(val){
+    console.log("WARNING: setting context width/height at runtime is not supported");
+  }
+
+
+  constructor(gl, options) {
     // Paramters
     // TODO: how do we make these parameters more parameterizable
     //       (that is, settable at creation fixed afterwards) ?
-    // TODO: use enums instead of raw strings
-    this.maxGradStops = maxGradStops || 128;
-    this.renderWithOffscreenBuffer = renderWithOffscreenBuffer || false;
-    this.accurateFillTesselation = accurateFillTesselation || true;
+    options = options || {};
+    this.maxGradStops = options.maxGradStops || 128;
+    this.renderWithOffscreenBuffer = options.renderWithOffscreenBuffer || false;
+    this.fastFillTesselation = options.fastFillTesselation || false;
 
     this.environment = getEnvironment();
 
@@ -2419,6 +2443,7 @@ export default class Expo2DContext {
         internal_format: gl.RGBA,
         typed_array: Uint8Array,
         type: gl.UNSIGNED_BYTE,
+        readpixels_type: gl.UNSIGNED_BYTE,
         max_alpha: 256.0
       }
       glm.mat4.ortho(

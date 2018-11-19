@@ -6,10 +6,10 @@ TESTDIR=$LIBDIR/test
 pushd "${0%/*}"
 
 mkdir -p collateral/expo
-mkdir -p collateral/expo/assets/conformanceImages
+mkdir -p collateral/expo/assets
 $TESTDIR/gentest.py \
     --testdir ./collateral/expo \
-    --imagedir ./collateral/expo/assets/conformanceImages \
+    --imagedir ./collateral/expo/assets/ \
     --templates ./templates/expo.yaml \
     --libdir ./lib/expo \
     --specfile $TESTDIR/specs/spec.yaml \

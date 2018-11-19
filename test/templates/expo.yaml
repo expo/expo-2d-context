@@ -5,8 +5,8 @@ spec: |
   import Expo from 'expo';
   import React from 'react';
   import {View} from 'react-native';
-  import Expo2DContext from 'exponent-2d-context';
-  import * as window from 'exponent-2d-context';
+  import Expo2DContext from 'expo-2d-context';
+  import * as window from 'expo-2d-context';
 
   ////////////////////////////////////////////////
   //// Put expected DOM-sourced prototypes here
@@ -56,7 +56,7 @@ test: |
 
         let finishedRendering = new Promise(resolve => {
           let _onGLContextCreate = (gl) => {
-            let newContext = new Expo2DContext(gl);
+            let newContext = new Expo2DContext(gl, {renderWithOffscreenBuffer: true});
             newContext.getContext = () => {return newContext;}
 
             allContexts.push(newContext);
@@ -90,7 +90,7 @@ test: |
   //////////////////////////////////////////////////////////
 
 asset_definition: |
-  "%asset_filename%": require("../../assets/conformanceImages/%asset_filename%")
+  "%asset_filename%": require("./assets/%asset_filename%")
 
 assets: |
   //////////////////////////////////////////////////////////
