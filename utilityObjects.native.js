@@ -1,3 +1,4 @@
+const DOMException = require("domexception");
 
 export class ImageData {
     constructor() {
@@ -11,7 +12,7 @@ export class ImageData {
         if (dataArray.length < width * height * 4) {
           throw new DOMException('Bad data array size', 'IndexSizeError');
         }
-      } else if (!isNaN(arguments[0])){
+      } else if (isFinite(arguments[0])){
         var width = arguments[0] || 0;
         var height = arguments[1] || 0;
         var dataArray = new Uint8ClampedArray(width * height * 4);

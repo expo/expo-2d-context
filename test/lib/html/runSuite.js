@@ -155,9 +155,9 @@ var getSubsuites = async (suite_url) => {
     let notRunSuites = []
     for (var i=0; i<args["suite"].length; i++) {
       if (args["suite"][i] in subsuites) {
+        let subsuite = subsuites[args["suite"][i]]
+        console.log("Launching suite "+subsuite.name+" ("+subsuite.href+")")
         try {
-          let subsuite = subsuites[args["suite"][i]]
-          console.log("Launching suite "+subsuite.name+" ("+subsuite.href+")")
           suiteResults[subsuite.name] = await runTestSuite(subsuite);
         } catch (error) {
           suiteResults[subsuite.name] = {

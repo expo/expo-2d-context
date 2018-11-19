@@ -9,6 +9,8 @@ DISABLED:
     - Images aren't HTML img objects
   - 2d.drawImage.incomplete.reload:
     - Images aren't HTML img objects
+  - 2d.drawImage.zerocanvas:
+    - TODO figure out how to rewrite this test in a way that works in expo
   - 2d.drawImage.zerosource.image:
     - TODO svg files aren't supported as assets right now
   - 2d.drawImage.zerosource:

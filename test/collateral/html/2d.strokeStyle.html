@@ -71,7 +71,7 @@
 
         /* TODO: figure out how to pass some gradient tests that need
          * more grad stops: */
-        let ctx = new Expo2DContext.default(gl, maxGradStops=50, renderWithOffscreenBuffer=needsHighBitDepth)
+        let ctx = new Expo2DContext.default(gl, {maxGradStops: 50, renderWithOffscreenBuffer: needsHighBitDepth})
         ctx.getContext = () => {return ctx;}
         
         return [canvas, gl, ctx]
