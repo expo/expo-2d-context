@@ -29,7 +29,8 @@ var bezierQuadraticPoints = require('adaptive-quadratic-curve');
 
 import { StrokeExtruder } from './StrokeExtruder'
 
-import { ImageData } from './utilityObjects'
+import { ImageData as _ImageData } from './utilityObjects'
+export const ImageData = _ImageData;
 
 // TODO: rather than setting vertexattribptr on every draw,
 // create a separate vbo for coords vs pattern coords vs text coords
@@ -375,6 +376,10 @@ export default class Expo2DContext {
     sy = Math.floor(sy);
     sw = Math.floor(sw);
     sh = Math.floor(sh);
+
+    if (sw == 0 || sh == 0) {
+      throw new DOMException('Bad geometry', 'IndexSizeError');
+    }
 
     // This flush isn't technically necessary because readPixels should cause
     // an expo gl flush anyway, but here just in case more operations get added
