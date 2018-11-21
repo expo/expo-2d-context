@@ -205,7 +205,7 @@ function parseNumberPercentageArg(arg, opts) {
 }
 
 function parseComponentFunctionArgs(args) {
-  let parsedArgs = /^([^\s]+)\s+([^\s]+)\s+([^\s]+)\s*(\/\s*([^\s]+)\s*)?$/.exec(args);
+  let parsedArgs = /^([^\s,]+)\s+([^\s,]+)\s+([^\s,]+)\s*(\/\s*([^\s]+)\s*)?$/.exec(args);
   if (!parsedArgs) {
     parsedArgs = /^([^\s,]+)\s*,\s*([^\s,]+)\s*,\s*([^\s,]+)\s*(,\s*([^\s]+)\s*)?$/.exec(args);
   }
@@ -261,7 +261,7 @@ module.exports = function cssToGlColor(cssStr) {
     }
   } else {
     let regExp = /\(([^)]+)\)/;
-    let matches = /\s*([a-z\-]+)\(([^)]+)\)\s*$/.exec(cssStr);
+    let matches = /\s*([a-z\-]+)\(([^)]+)\)?\s*$/.exec(cssStr);
     if (matches == null) {
       // Named color
       if (cssStr in x11ColorTable) {
