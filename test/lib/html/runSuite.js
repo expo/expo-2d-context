@@ -30,7 +30,7 @@ var runTestSuite = async (suite) => {
     console.log("Tests run: " + testsRun + " / " + testsLength)
   });
 
-  await page.goto(suite.href, {waitUntil: 'networkidle2'});
+  await page.goto(suite.href, {timeout: 240000, waitUntil: 'networkidle2'});
   await page.waitForFunction('document.getElementById("suite_status").className != "progress"');
 
   let success = (await page.evaluate('document.getElementById("suite_status").className')) == "success"
