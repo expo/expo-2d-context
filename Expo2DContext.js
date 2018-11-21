@@ -1794,10 +1794,16 @@ export default class Expo2DContext {
   _styleGetter(val) {
     let style = val
     if (typeof style === 'string' || style instanceof String) {
-      if (cssToGlColor(style)[3] != 1.0) {
-        return (new ColorTransformer(style)).toRGBA();
+      let color = cssToGlColor(style);
+      let alpha = color[3];
+      color = color.map((v)=>v*255);
+      color[3] = alpha;
+      if (alpha != 1.0) {
+        color = color.map((v)=>v.toString(10));
+        return "rgba("+color[0]+", "+color[1]+", "+color[2]+", "+color[3]+")";
       } else {
-        return (new ColorTransformer(style)).toHex();
+        color = color.map((v)=>v.toString(16).padStart(2,'0'));
+        return "#"+color[0]+color[1]+color[2];
       }
     }
     return val;

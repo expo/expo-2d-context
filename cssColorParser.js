@@ -207,9 +207,9 @@ function parseNumberPercentageArg(arg, opts) {
 }
 
 function parseComponentFunctionArgs(args) {
-  let parsedArgs = /^([^\s,]+)\s+([^\s,]+)\s+([^\s,]+)\s*(\/\s*([^\s]+)\s*)?$/.exec(args);
+  let parsedArgs = /^\s*([^\s,]+)\s+([^\s,]+)\s+([^\s,]+)\s*(\/\s*([^\s]+)\s*)?$/.exec(args);
   if (!parsedArgs) {
-    parsedArgs = /^([^\s,]+)\s*,\s*([^\s,]+)\s*,\s*([^\s,]+)\s*(,\s*([^\s]+)\s*)?$/.exec(args);
+    parsedArgs = /^\s*([^\s,]+)\s*,\s*([^\s,]+)\s*,\s*([^\s,]+)\s*(,\s*([^\s]+)\s*)?$/.exec(args);
   }
   if (!parsedArgs) {
     throw "Bad Color"
@@ -277,6 +277,13 @@ module.exports = function cssToGlColor(cssStr) {
       let args = matches[2]
       if (func == "rgb" || func == "rgba") {
         let parsedArgs = parseComponentFunctionArgs(args)
+
+        // Enforce either all are percentages or none are
+        let isPercentage = parsedArgs.map((v)=>(v || "").includes("%"))
+        if (!(isPercentage[0] == isPercentage[1] && isPercentage[1] == isPercentage[2])) {
+          throw "Bad Color"
+        }
+
         let r = parseNumberPercentageArg(parsedArgs[0], {min: 0, max: 255}) / 255
         let g = parseNumberPercentageArg(parsedArgs[1], {min: 0, max: 255}) / 255
         let b = parseNumberPercentageArg(parsedArgs[2], {min: 0, max: 255}) / 255
