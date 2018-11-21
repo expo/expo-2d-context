@@ -188,7 +188,7 @@ function parseNumberPercentageArg(arg, opts) {
     throw "Bad Color"
   }
   let value = Number(matches[1]);
-  if (!isFinite(value)) {
+  if (value == NaN) {
     throw "Bad Color"
   }
   if (matches[3]) {
