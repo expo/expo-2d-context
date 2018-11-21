@@ -179,8 +179,8 @@ function parseAngleArg(arg) {
 }
 
 function parseNumberPercentageArg(arg, opts) {
-  opts.min = opts.min || NaN;
-  opts.max = opts.max || 255;
+  opts.min = isFinite(opts.min) ? opts.min : NaN;
+  opts.max = isFinite(opts.max) ? opts.max : 255;
   opts.percentageRequired = opts.percentageRequired || false;
 
   let matches = new RegExp(numberRegex.source + (/(%)?$/).source).exec(arg)
@@ -198,8 +198,10 @@ function parseNumberPercentageArg(arg, opts) {
       throw "Bad Color"
     }
   }
-  if ((isFinite(opts.min) && value < opts.min) || value > opts.max) {
-    throw "Bad Color"
+  if ((isFinite(opts.min) && value < opts.min)) {
+    value = opts.min;
+  } else if (value > opts.max) {
+    value = opts.max;
   }
   return value
 }
