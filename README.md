@@ -188,5 +188,7 @@ Run `test/build_html.sh`, start an HTTP server in `test/collateral/html`, and th
 
 ### Running tests in Expo
 
-Run `test/build_expo.sh` and copy the resulting source and assets in `test/collateral/expo` into Expo's jasmine-based unit test app template.
+Run `test/build_expo.sh` and start the expo CLI in the resulting `test/collateral/expo` directory. This should spin up an app that runs all relevant conformance tests.
+
+
 
