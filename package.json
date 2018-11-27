@@ -11,6 +11,7 @@
   "dependencies": {
     "adaptive-bezier-curve": "1.0.3",
     "adaptive-quadratic-curve": "1.0.2",
+    "color-convert": "^1.9.3",
     "css-font-parser": "0.2.3",
     "domexception": "1.0.1",
     "earcut": "2.1.1",

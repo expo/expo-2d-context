@@ -109,7 +109,11 @@ DISABLED:
     - TODO implement shadows
   - 2d.fillRect.shadow:
     - TODO implement shadows
-  - 2d.fillStyle.parse.*:
-    - TODO implement custom color parser, existing ones are super touchy
   - 2d.gradient.radial.touch2:
     - TODO fix numeric instability in shader that causes this edgecase fail
+  - 2d.fillStyle.parse.current*:
+    - No DOM, and no equivalent notion of CSS current color
+  - 2d.fillStyle.parse.system:
+    - System color names not supported
+
+

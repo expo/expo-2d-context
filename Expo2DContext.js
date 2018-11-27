@@ -17,7 +17,7 @@ const DOMException = require("domexception");
 
 var stringFormat = require('string-format');
 
-var ColorTransformer = require('easy-color');
+var parseColor = require("./cssColorParser")
 
 var parseCssFont = require('css-font-parser');
 
@@ -31,6 +31,7 @@ import { StrokeExtruder } from './StrokeExtruder'
 
 import { ImageData as _ImageData } from './utilityObjects'
 export const ImageData = _ImageData;
+
 
 // TODO: rather than setting vertexattribptr on every draw,
 // create a separate vbo for coords vs pattern coords vs text coords
@@ -66,25 +67,9 @@ function isValidCanvasImageSource(asset) {
   return false;
 }
 
-function cssToGlColor(cssStr) {
-  // TODO: Every CSS color parser/transformer in NPM is a mess.
-  //       Implement a custom one at some point that is more robust.
+export function cssToGlColor(cssStr) {
   try {
-    if (cssStr == "" || cssStr === undefined) {
-      throw "Bad Color"
-    }
-    let parsedColor = new ColorTransformer(cssStr);
-    if (!parsedColor.success) { 
-      throw "Bad Color";  
-    }
-    let rgb = parsedColor.rgb;
-    let alpha = parsedColor.alpha;
-    return [
-      rgb.r / 255,
-      rgb.g / 255,
-      rgb.b / 255,
-      alpha,
-    ];
+    return parseColor(cssStr);
   } catch (e) {
     return [];
   }
@@ -1809,10 +1794,16 @@ export default class Expo2DContext {
   _styleGetter(val) {
     let style = val
     if (typeof style === 'string' || style instanceof String) {
-      if (cssToGlColor(style)[3] != 1.0) {
-        return (new ColorTransformer(style)).toRGBA();
+      let color = cssToGlColor(style);
+      let alpha = color[3];
+      color = color.map((v)=>v*255);
+      color[3] = alpha;
+      if (alpha != 1.0) {
+        color = color.map((v)=>v.toString(10));
+        return "rgba("+color[0]+", "+color[1]+", "+color[2]+", "+color[3]+")";
       } else {
-        return (new ColorTransformer(style)).toHex();
+        color = color.map((v)=>v.toString(16).padStart(2,'0'));
+        return "#"+color[0]+color[1]+color[2];
       }
     }
     return val;
