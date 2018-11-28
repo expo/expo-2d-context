@@ -22,24 +22,23 @@ Unlike normal 2D context implementations, this one assumes it's drawing within a
 Create a GLView and pass it in as the constructor
 
 ```javascript
-import Expo from 'expo';
+import { GLView } from 'expo';
 import React from 'react';
 import Expo2DContext from 'expo-2d-context';
 
-class App extends React.Component {
-
+export default class App extends React.Component {
     render() {
         return (
-          <Expo.GLView
+          <GLView
             style={{ flex: 1 }}
             onContextCreate={this._onGLContextCreate}
           />
         );
     }
-
     _onGLContextCreate = (gl) => {
         var ctx = new Expo2DContext(gl);
-
+        ctx.translate(50,200)
+        ctx.scale(4,4)
         ctx.fillStyle = "grey";
         ctx.fillRect(20, 40, 100, 100);
         ctx.fillStyle = "white";
@@ -50,26 +49,20 @@ class App extends React.Component {
         ctx.arc(50,70,18,0,2*Math.PI);
         ctx.arc(90,70,18,0,2*Math.PI);
         ctx.fill();
-
         ctx.fillStyle = "grey";
         ctx.beginPath();
         ctx.arc(50,70,8,0,2*Math.PI);
         ctx.arc(90,70,8,0,2*Math.PI);
         ctx.fill();
-
         ctx.strokeStyle = "black";
         ctx.beginPath();
         ctx.moveTo(70,40);
         ctx.lineTo(70,30);
         ctx.arc(70,20,10,0.5*Math.PI,2.5*Math.PI);
         ctx.stroke();
-
         ctx.flush();
     }
-
 }
-
-Expo.registerRootComponent(App);
 ```
 
 Have fun!
