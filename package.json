@@ -23,6 +23,9 @@
     "string-format": "0.5.0",
     "tess2": "^1.0.0"
   },
+  "peerDependency": {
+    "expo-asset": "*"
+  },
   "devDependencies": {
     "argparse": "^1.0.10",
     "babel-core": "^6.26.2",

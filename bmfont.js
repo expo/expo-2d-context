@@ -1,4 +1,5 @@
 import { getEnvironment } from './environment';
+import { Asset } from './utilityObjects';
 
 var fntParseASCII = require('parse-bmfont-ascii')
 // // TODO: why does this break loading??
@@ -29,7 +30,7 @@ export class BMFont {
     if (getEnvironment()==="expo") {
       let wrapped_assets = {}
       Object.keys(image_assets).map(function(key, index) {
-         wrapped_assets[key] = Expo.Asset.fromModule(image_assets[key]);
+         wrapped_assets[key] = Asset.fromModule(image_assets[key]);
       });
       this.images = wrapped_assets
     } else {
