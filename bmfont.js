@@ -1,9 +1,7 @@
 import { getEnvironment } from './environment';
+import { Asset } from './utilityObjects';
 
 var fntParseASCII = require('parse-bmfont-ascii')
-// // TODO: why does this break loading??
-// //var fntParseXML = require('parse-bmfont-xml')
-var fntParseBinary = require('parse-bmfont-binary')
 
 // Web-only loader code:
 async function getWebAsset(name, url) {
@@ -29,7 +27,7 @@ export class BMFont {
     if (getEnvironment()==="expo") {
       let wrapped_assets = {}
       Object.keys(image_assets).map(function(key, index) {
-         wrapped_assets[key] = Expo.Asset.fromModule(image_assets[key]);
+         wrapped_assets[key] = Asset.fromModule(image_assets[key]);
       });
       this.images = wrapped_assets
     } else {
@@ -79,9 +77,6 @@ export class BMFont {
       throw new ReferenceError("Must load font assets before initializing GL resources");
     }
 
-    // TODO: detect whether ascii/xml/etc
-    // TODO: figure out how to actually grab this txt:
-    
     let bmfont_descriptor = fntParseASCII(this.descriptor);
 
     let texture_array = gl.createTexture();

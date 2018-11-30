@@ -1,5 +1,8 @@
 const DOMException = require("domexception");
 
+import { Asset as _Asset } from 'expo-asset';
+export const Asset = _Asset; 
+
 export class ImageData {
     constructor() {
       if (arguments[0] instanceof Uint8ClampedArray) {
