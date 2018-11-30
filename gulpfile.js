@@ -11,12 +11,12 @@ var gutil = require('gulp-util');
 
 gulp.task('es6', function() {
     browserify({
-        entries: './exports.js',
+        entries: [require.resolve('@babel/polyfill'), './exports.js'],
         expose: 'Expo2DContext',
         debug: true
     })
     .transform(imgurify)
-    .transform(babelify, {presets: ["es2015"]})
+    .transform(babelify, {presets: ["@babel/preset-env"]})
     .on('error',gutil.log)
     .bundle()
     .on('error',gutil.log)
