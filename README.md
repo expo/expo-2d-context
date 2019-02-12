@@ -148,7 +148,7 @@ ctx.fillText("Hey Galaxy", 10, 100);
 ctx.flush();
 ``` 
 
-#### Custon Fonts
+#### Custom Fonts
 
 It's possible to use your own font faces with expo-2d-context, but you have to convert them to distance-field bitmap fonts in the [Angel Code format](http://www.angelcode.com/products/bmfont/) first, likely using a tool along the lines of [Hiero](https://github.com/libgdx/libgdx/wiki/Hiero).
 
