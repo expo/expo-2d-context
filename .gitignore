@@ -1,2 +1,4 @@
 dist
 test/collateral/html/bundle.js
+node_modules
+results.json
