@@ -37,6 +37,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-
 
+      - name: Install dependencies
+        run: npm ci
+
       - name: Generate library bundle
         run: |
           mkdir -p test/collateral/html;
