@@ -1,4 +1,6 @@
 import { BMFont } from './bmfont';
+import timesnewroman1 from "./assets/fonts/timesnewroman1.png";
+import timesnewroman2 from "./assets/fonts/timesnewroman2.png";
 
 export const timesnewroman = new BMFont(
   `
@@ -1397,8 +1399,8 @@ kerning first=1077 second=1091 amount=-2
 kerning first=932 second=963 amount=-5
 kerning first=160 second=87 amount=-1
   `,
-  {"timesnewroman1.png":require("./assets/fonts/timesnewroman1.png"),
-   "timesnewroman2.png":require("./assets/fonts/timesnewroman2.png")},
+  {"timesnewroman1.png": timesnewroman1,
+   "timesnewroman2.png": timesnewroman2},
   {
     "normal" : 0.5,
     "bold" : 0.2,

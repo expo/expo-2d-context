@@ -1,4 +1,4 @@
-var stringFormat = require('string-format');
+import stringFormat from 'string-format';
 
 const shaderVersion = `#version 300 es
 `;

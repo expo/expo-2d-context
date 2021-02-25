@@ -1,4 +1,4 @@
-const DOMException = require("domexception");
+import DOMException from "domexception";
 
 import { Asset as _Asset } from 'expo-asset';
 export const Asset = _Asset; 

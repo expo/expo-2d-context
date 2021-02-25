@@ -1,5 +1,5 @@
 'use strict'
-var glm = require('gl-matrix');
+const glm = require('gl-matrix');
 import Vector from './vector';
 
 import { ShaderProgram,
@@ -13,19 +13,19 @@ import { getBuiltinFonts } from './builtinFonts';
 
 import { getEnvironment } from './environment';
 
-const DOMException = require("domexception");
+import DOMException from "domexception";
 
-var stringFormat = require('string-format');
+import stringFormat from 'string-format';
 
-var parseColor = require("./cssColorParser")
+import parseColor from "./cssColorParser";
 
-var parseCssFont = require('css-font-parser');
+import parseCssFont from 'css-font-parser';
 
-var earcut = require('earcut');
-var tess2 = require('tess2');
+import earcut from 'earcut';
+import tess2 from 'tess2';
 
-var bezierCubicPoints = require('adaptive-bezier-curve');
-var bezierQuadraticPoints = require('adaptive-quadratic-curve');
+import bezierCubicPoints from 'adaptive-bezier-curve';
+import bezierQuadraticPoints from 'adaptive-quadratic-curve';
 
 import { StrokeExtruder } from './StrokeExtruder'
 

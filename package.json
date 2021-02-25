@@ -8,6 +8,13 @@
     "type": "git",
     "url": "https://github.com/expo/expo-2d-context.git"
   },
+  "scripts": {
+    "build": "esbuild exports.js --bundle --outfile=dist/bundle.js --loader:.png=dataurl",
+    "test": "npm run test:copy-bundle && npm run test:serve & npm run test:run-suite",
+    "test:run-suite": "node ./test/collateral/html/runSuite.js --base-url 'http://127.0.0.1:8080' all",
+    "test:serve": "http-server test/collateral/html",
+    "test:copy-bundle": "cp dist/bundle.js test/collateral/html/bundle.js"
+  },
   "dependencies": {
     "adaptive-bezier-curve": "1.0.3",
     "adaptive-quadratic-curve": "1.0.2",
@@ -20,25 +27,13 @@
     "string-format": "0.5.0",
     "tess2": "^1.0.0"
   },
-  "peerDependency": {
+  "peerDependencies": {
     "expo-asset": "*"
   },
   "devDependencies": {
-    "@babel/core": "^7.0.0",
-    "@babel/polyfill": "^7.0.0",
-    "@babel/preset-env": "^7.0.0",
     "argparse": "^1.0.10",
-    "babelify": "^9.0.0",
-    "browserify": "^16.2.2",
-    "gulp": "^3.9.1",
-    "gulp-babel": "^8.0.0",
-    "gulp-util": "^3.0.8",
-    "http-server": "^0.11.1",
-    "imgurify": "^2.0.1",
-    "puppeteer": "^1.9.0",
-    "vinyl-source-stream": "^2.0.0"
-  },
-  "engines": {
-    "node": "< 12"
+    "esbuild": "^0.8.52",
+    "http-server": "^0.12.3",
+    "puppeteer": "^1.9.0"
   }
 }
