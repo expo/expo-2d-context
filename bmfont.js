@@ -1,7 +1,7 @@
-import { getEnvironment } from './environment';
 import { Asset } from './utilityObjects';
+import { getEnvironment } from './environment';
 
-var fntParseASCII = require('parse-bmfont-ascii')
+import fntParseASCII from 'parse-bmfont-ascii';
 
 // Web-only loader code:
 async function getWebAsset(name, url) {

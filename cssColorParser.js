@@ -1,4 +1,4 @@
-var convert = require('color-convert');
+import convert from 'color-convert';
 
 var x11ColorTable = {
   'aliceblue': [0.941176,0.972549,1.000000,1.000000],
@@ -188,7 +188,7 @@ function parseNumberPercentageArg(arg, opts) {
     throw "Bad Color"
   }
   let value = Number(matches[1]);
-  if (value == NaN) {
+  if (isNaN(value)) {
     throw "Bad Color"
   }
   if (matches[3]) {
