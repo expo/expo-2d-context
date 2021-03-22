@@ -1,6 +1,6 @@
+import couriernew1 from './assets/fonts/couriernew1.png';
+import couriernew2 from './assets/fonts/couriernew2.png';
 import { BMFont } from './bmfont';
-import couriernew1 from "./assets/fonts/couriernew1.png";
-import couriernew2 from "./assets/fonts/couriernew2.png";
 
 export const couriernew = new BMFont(
   `
@@ -547,12 +547,11 @@ char id=8359    x=97   y=102  width=53   height=51   xoffset=-6   yoffset=14   x
 char id=8363    x=708  y=102  width=40   height=47   xoffset=2    yoffset=10   xadvance=51   page=1    chnl=0 
 kernings count=0
  `,
-  {"couriernew1.png": couriernew1,
-   "couriernew2.png": couriernew2},
+  { 'couriernew1.png': couriernew1, 'couriernew2.png': couriernew2 },
   {
-    "normal" : 0.7,
-    "bold" : 0.4,
-    "bolder" : 0.25,
-    "lighter" : 0.9,
+    normal: 0.7,
+    bold: 0.4,
+    bolder: 0.25,
+    lighter: 0.9,
   }
-)
+);

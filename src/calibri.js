@@ -1,6 +1,6 @@
+import calibri1 from './assets/fonts/calibri1.png';
+import calibri2 from './assets/fonts/calibri2.png';
 import { BMFont } from './bmfont';
-import calibri1 from "./assets/fonts/calibri1.png";
-import calibri2 from "./assets/fonts/calibri2.png";
 
 export const calibri = new BMFont(
   `
@@ -10189,12 +10189,11 @@ kerning first=1077 second=1083 amount=-1
 kerning first=260 second=368 amount=-1
 kerning first=377 second=334 amount=-1
   `,
-  {"calibri1.png":calibri1,
-   "calibri2.png":calibri2},
+  { 'calibri1.png': calibri1, 'calibri2.png': calibri2 },
   {
-    "normal" : 0.5,
-    "bold" : 0.2,
-    "bolder" : 0.05,
-    "lighter" : 0.9,
+    normal: 0.5,
+    bold: 0.2,
+    bolder: 0.05,
+    lighter: 0.9,
   }
-)
+);
