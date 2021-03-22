@@ -67,9 +67,10 @@ const textFragShaderTxt = `
 
 export const flatShaderTxt = {
   vert:
-      shaderVersion +
-      shaderCommonHeaderTxt +
-      textVertShaderTxt + `
+    shaderVersion +
+    shaderCommonHeaderTxt +
+    textVertShaderTxt +
+    `
       in vec2 aVertexPosition;
 
       uniform bool uSkipMVTransform;
@@ -87,11 +88,11 @@ export const flatShaderTxt = {
       }
     `,
   frag:
-      shaderVersion +
-      shaderCommonHeaderTxt +
-      textFragShaderTxt + 
-      shaderFragHeaderTxt + 
-      `
+    shaderVersion +
+    shaderCommonHeaderTxt +
+    textFragShaderTxt +
+    shaderFragHeaderTxt +
+    `
 
       uniform vec4 uColor;
 
@@ -133,9 +134,10 @@ const gradMapperFragShaderTxt = `
 
 export const linearGradShaderTxt = {
   vert:
-      shaderVersion +
-      shaderCommonHeaderTxt +
-      textVertShaderTxt + `
+    shaderVersion +
+    shaderCommonHeaderTxt +
+    textVertShaderTxt +
+    `
 
       in vec2 aVertexPosition;
 
@@ -163,7 +165,7 @@ export const linearGradShaderTxt = {
     shaderVersion +
     shaderCommonHeaderTxt +
     textFragShaderTxt +
-    shaderFragHeaderTxt + 
+    shaderFragHeaderTxt +
     gradMapperFragShaderTxt +
     `
     
@@ -195,7 +197,8 @@ export const radialGradShaderTxt = {
   vert:
     shaderVersion +
     shaderCommonHeaderTxt +
-    textVertShaderTxt + `
+    textVertShaderTxt +
+    `
 
     in vec2 aVertexPosition;
 
@@ -223,7 +226,7 @@ export const radialGradShaderTxt = {
     shaderVersion +
     shaderCommonHeaderTxt +
     textFragShaderTxt +
-    shaderFragHeaderTxt + 
+    shaderFragHeaderTxt +
     gradMapperFragShaderTxt +
     `
 
@@ -300,7 +303,8 @@ export const disjointRadialGradShaderTxt = {
   vert:
     shaderVersion +
     shaderCommonHeaderTxt +
-    textVertShaderTxt + `
+    textVertShaderTxt +
+    `
 
     in vec2 aVertexPosition;
 
@@ -328,7 +332,7 @@ export const disjointRadialGradShaderTxt = {
     shaderVersion +
     shaderCommonHeaderTxt +
     textFragShaderTxt +
-    shaderFragHeaderTxt + 
+    shaderFragHeaderTxt +
     gradMapperFragShaderTxt +
     `
 
@@ -484,16 +488,17 @@ export const patternShaderRepeatValues = {
   'no-repeat': 0,
   'repeat-x': 1,
   'repeat-y': 2,
-  'repeat': 3,
+  repeat: 3,
   'src-rect': 4, // Only used for drawImage() and putImageData()
 };
 
 export const patternShaderTxt = {
-  vert: 
+  vert:
     shaderVersion +
     shaderCommonHeaderTxt +
     textVertShaderTxt +
-    stringFormat(`
+    stringFormat(
+      `
 
       in vec2 aVertexPosition;
       in vec2 aTexCoord;
@@ -525,14 +530,15 @@ export const patternShaderTxt = {
         runTextVertShader();
       }
     `,
-    patternShaderRepeatValues
-  ),
+      patternShaderRepeatValues
+    ),
   frag:
     shaderVersion +
     shaderCommonHeaderTxt +
     textFragShaderTxt +
-    shaderFragHeaderTxt +  
-    stringFormat(`
+    shaderFragHeaderTxt +
+    stringFormat(
+      `
 
       uniform int uRepeatMode;
       uniform sampler2D uTexture;
@@ -559,31 +565,29 @@ export const patternShaderTxt = {
         fragShaderPostprocess();
       }
     `,
-    patternShaderRepeatValues
-  ),
+      patternShaderRepeatValues
+    ),
 };
 
 export class ShaderProgram {
   constructor(gl, vertShaderTxt, fragShaderTxt) {
     this.gl = gl;
 
-    var vertShader = gl.createShader(gl.VERTEX_SHADER);
+    const vertShader = gl.createShader(gl.VERTEX_SHADER);
     gl.shaderSource(vertShader, vertShaderTxt);
     gl.compileShader(vertShader);
 
     if (!gl.getShaderParameter(vertShader, gl.COMPILE_STATUS)) {
-      console.log(gl.getShaderInfoLog(vertShader))
-      throw new SyntaxError(
-        'Error compiling vertex shader: \n' + gl.getShaderInfoLog(vertShader)
-      );
+      console.log(gl.getShaderInfoLog(vertShader));
+      throw new SyntaxError('Error compiling vertex shader: \n' + gl.getShaderInfoLog(vertShader));
     }
 
-    var fragShader = gl.createShader(gl.FRAGMENT_SHADER);
+    const fragShader = gl.createShader(gl.FRAGMENT_SHADER);
     gl.shaderSource(fragShader, fragShaderTxt);
     gl.compileShader(fragShader);
 
     if (!gl.getShaderParameter(fragShader, gl.COMPILE_STATUS)) {
-      console.log(gl.getShaderInfoLog(fragShader))
+      console.log(gl.getShaderInfoLog(fragShader));
       throw new SyntaxError(
         'Error compiling fragment shader: \n' + gl.getShaderInfoLog(fragShader)
       );
@@ -595,7 +599,7 @@ export class ShaderProgram {
     gl.linkProgram(this.programHandle);
 
     if (!gl.getProgramParameter(this.programHandle, gl.LINK_STATUS)) {
-      console.log(gl.getProgramInfoLog(this.programHandle))
+      console.log(gl.getProgramInfoLog(this.programHandle));
       throw new SyntaxError(
         'Error linking shader program: \n' + gl.getProgramInfoLog(this.programHandle)
       );
@@ -607,35 +611,27 @@ export class ShaderProgram {
     gl.bindVertexArray(this.vertexArray);
 
     this.attributes = {};
-    let nAttributes = gl.getProgramParameter(this.programHandle, gl.ACTIVE_ATTRIBUTES);
+    const nAttributes = gl.getProgramParameter(this.programHandle, gl.ACTIVE_ATTRIBUTES);
     let names = [];
     for (let i = 0; i < nAttributes; i++) {
-      let attr = gl.getActiveAttrib(this.programHandle, i);
+      const attr = gl.getActiveAttrib(this.programHandle, i);
       names.push(attr.name);
-      this.attributes[attr.name] = gl.getAttribLocation(
-        this.programHandle,
-        attr.name
-      );
+      this.attributes[attr.name] = gl.getAttribLocation(this.programHandle, attr.name);
       gl.enableVertexAttribArray(this.attributes[attr.name]);
     }
 
     this.uniforms = {};
-    let nUniforms = gl.getProgramParameter(this.programHandle, gl.ACTIVE_UNIFORMS);
+    const nUniforms = gl.getProgramParameter(this.programHandle, gl.ACTIVE_UNIFORMS);
     names = [];
     for (let i = 0; i < nUniforms; i++) {
-      let uniform = gl.getActiveUniform(this.programHandle, i);
+      const uniform = gl.getActiveUniform(this.programHandle, i);
       names.push(uniform.name);
-      this.uniforms[uniform.name] = gl.getUniformLocation(
-        this.programHandle,
-        uniform.name
-      );
+      this.uniforms[uniform.name] = gl.getUniformLocation(this.programHandle, uniform.name);
     }
-
   }
 
   bind() {
     this.gl.useProgram(this.programHandle);
     this.gl.bindVertexArray(this.vertexArray);
-
   }
 }
