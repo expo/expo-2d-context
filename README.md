@@ -2,14 +2,18 @@
 A pure-JS implementation of the W3C's Canvas-2D Context API that can be run on top of either Expo Graphics or a browser WebGL context.
 
 ## Intention
+
 This implementation is currently much slower than native 2D context implementations, and if you're interested in performance it's a better idea to create an Expo WebView and put a canvas in it.
 
 Its primary utility is when you want to use the 2D Context API in a situation where there is no DOM and it would not be a good idea to scrounge one together.
 
 Hopefully, it may also serve as a learning tool and alternative implementation to an API that exists mostly only in large rendering engine codebases.
 
-
 ## Usage
+
+```
+expo install expo-gl expo-2d-context
+```
 
 Install the node module, create a GL context by whatever mechanism your environment provides, and then pass it to a new instance of the  Expo2DContext class. After that, use said instance as you would a normal 2D context.
 
@@ -17,51 +21,48 @@ Install the node module, create a GL context by whatever mechanism your environm
 
 Unlike normal 2D context implementations, this one assumes it's drawing within a buffered environment, and thus you need to call the context's `flush()` method when you want to actually update the screen.
 
-### Expo
+### Example
 
-Create a GLView and pass it in as the constructor
+Create a GLView and pass it in as the constructor:
 
 ```javascript
-import { GLView } from 'expo';
-import React from 'react';
-import Expo2DContext from 'expo-2d-context';
+import { GLView } from "expo-gl";
+import React from "react";
+import Expo2DContext from "expo-2d-context";
 
 export default class App extends React.Component {
-    render() {
-        return (
-          <GLView
-            style={{ flex: 1 }}
-            onContextCreate={this._onGLContextCreate}
-          />
-        );
-    }
-    _onGLContextCreate = (gl) => {
-        var ctx = new Expo2DContext(gl);
-        ctx.translate(50,200)
-        ctx.scale(4,4)
-        ctx.fillStyle = "grey";
-        ctx.fillRect(20, 40, 100, 100);
-        ctx.fillStyle = "white";
-        ctx.fillRect(30, 100, 20, 30);
-        ctx.fillRect(60, 100, 20, 30);
-        ctx.fillRect(90, 100, 20, 30);
-        ctx.beginPath();
-        ctx.arc(50,70,18,0,2*Math.PI);
-        ctx.arc(90,70,18,0,2*Math.PI);
-        ctx.fill();
-        ctx.fillStyle = "grey";
-        ctx.beginPath();
-        ctx.arc(50,70,8,0,2*Math.PI);
-        ctx.arc(90,70,8,0,2*Math.PI);
-        ctx.fill();
-        ctx.strokeStyle = "black";
-        ctx.beginPath();
-        ctx.moveTo(70,40);
-        ctx.lineTo(70,30);
-        ctx.arc(70,20,10,0.5*Math.PI,2.5*Math.PI);
-        ctx.stroke();
-        ctx.flush();
-    }
+  render() {
+    return (
+      <GLView style={{ flex: 1 }} onContextCreate={this._onGLContextCreate} />
+    );
+  }
+  _onGLContextCreate = (gl) => {
+    var ctx = new Expo2DContext(gl);
+    ctx.translate(50, 200);
+    ctx.scale(4, 4);
+    ctx.fillStyle = "grey";
+    ctx.fillRect(20, 40, 100, 100);
+    ctx.fillStyle = "white";
+    ctx.fillRect(30, 100, 20, 30);
+    ctx.fillRect(60, 100, 20, 30);
+    ctx.fillRect(90, 100, 20, 30);
+    ctx.beginPath();
+    ctx.arc(50, 70, 18, 0, 2 * Math.PI);
+    ctx.arc(90, 70, 18, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.fillStyle = "grey";
+    ctx.beginPath();
+    ctx.arc(50, 70, 8, 0, 2 * Math.PI);
+    ctx.arc(90, 70, 8, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.strokeStyle = "black";
+    ctx.beginPath();
+    ctx.moveTo(70, 40);
+    ctx.lineTo(70, 30);
+    ctx.arc(70, 20, 10, 0.5 * Math.PI, 2.5 * Math.PI);
+    ctx.stroke();
+    ctx.flush();
+  };
 }
 ```
 
@@ -182,6 +183,3 @@ Run `test/build_html.sh`, start an HTTP server in `test/collateral/html`, and th
 ### Running tests in Expo
 
 Run `test/build_expo.sh` and start the expo CLI in the resulting `test/collateral/expo` directory. This should spin up an app that runs all relevant conformance tests.
-
-
-
