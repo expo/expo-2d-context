@@ -2,8 +2,10 @@
 
 import React from 'react';
 import { Dimensions, Linking, NativeModules, ScrollView, Text, View } from 'react-native';
-import Expo from 'expo';
 import Expo2DContext from 'expo-2d-context';
+import { GLView } from 'expo-gl';
+import { registerRootComponent } from 'expo';
+import Constants from 'expo-constants';
 import jasmineModule from 'jasmine-core/lib/jasmine-core/jasmine';
 import Immutable from 'immutable';
 
@@ -335,7 +337,7 @@ class App extends React.Component {
       this._scrollViewRef.scrollTo({
         y:
           Math.max(0, contentHeight - Dimensions.get('window').height) +
-          Expo.Constants.statusBarHeight,
+          Constants.statusBarHeight,
       });
     }
   };
@@ -376,7 +378,7 @@ class App extends React.Component {
       };
       for(let i=0; i < nContexts; i++) {
           glViews.push(
-            <Expo.GLView key={i}
+            <GLView key={i}
               style={{ height: 300, width: 300 }}
               onContextCreate={_onGLContextCreate}/>
           )
@@ -389,7 +391,7 @@ class App extends React.Component {
         <View
           style={{
             flex: 1,
-            marginTop: Expo.Constants.statusBarHeight || 18,
+            marginTop: Constants.statusBarHeight || 18,
             alignItems: 'center',
             justifyContent: 'center',
           }}>
@@ -402,7 +404,7 @@ class App extends React.Component {
       <View
         style={{
           flex: 1,
-          marginTop: Expo.Constants.statusBarHeight || 18,
+          marginTop: Constants.statusBarHeight || 18,
           alignItems: 'stretch',
           justifyContent: 'center',
         }}
@@ -459,4 +461,4 @@ async function testPad(glContexts) {
 //
 /////////////////////////////////////////////////////////////////////
 
-Expo.registerRootComponent(App);
+registerRootComponent(App);
