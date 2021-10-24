@@ -55,8 +55,7 @@ class App extends React.Component {
 
   componentDidMount() {
     if (!useTestPad) {
-      this._runTests(this.props.exp.initialUri);
-      Linking.addEventListener('url', ({ url }) => url && this._runTests(url));
+      Linking.getInitialURL().then(url => url && this._runTests(url));
     }
   }
 
@@ -83,7 +82,7 @@ class App extends React.Component {
     // Load tests, confining to the ones named in the uri
     let modules = getTestModules();
     if (uri && uri.indexOf('+') > -1) {
-      const deepLink = uri.substring(uri.indexOf('+') + 1);
+      const deepLink = decodeURI(uri.substring(uri.indexOf('+') + 1));
       const filterJSON = JSON.parse(deepLink);
       if (filterJSON.includeModules) {
         console.log('Only testing these modules: ' + JSON.stringify(filterJSON.includeModules));
