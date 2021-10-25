@@ -2,11 +2,10 @@ spec: |
   //////////////////////////////////////////////////////////
   'use strict';
 
-  import Expo from 'expo';
   import React from 'react';
   import {View} from 'react-native';
+  import { GLView } from 'expo-gl';
   import Expo2DContext from 'expo-2d-context';
-  import * as window from 'expo-2d-context';
 
   ////////////////////////////////////////////////
   //// Put expected DOM-sourced prototypes here
@@ -71,7 +70,7 @@ test: |
 
           for(let i=0; i < totalContexts; i++) {
               glViews.push(
-                <Expo.GLView key={i}
+                <GLView key={i}
                   style={{ height: %height%, width: %width% }}
                   onContextCreate={_onGLContextCreate}/>
               )
@@ -95,7 +94,7 @@ asset_definition: |
 assets: |
   //////////////////////////////////////////////////////////
   
-  import Expo from 'expo';
+  import { Asset } from 'expo-asset';
 
   export const rawImageAssets = {
     %assetlist%
@@ -107,7 +106,7 @@ assets: |
     if (expoAssets.hasOwnProperty(name)) {
       return expoAssets[name]
     }
-    let asset = Expo.Asset.fromModule(rawImageAssets[name]);
+    let asset = Asset.fromModule(rawImageAssets[name]);
     if (!asset.localUri) {
         await asset.downloadAsync();
     }

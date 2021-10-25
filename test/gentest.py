@@ -1,4 +1,4 @@
-#!/usr/bin/python 
+#!/usr/bin/env python3
 #
 # Lovingly butchered out of the Web Platform Test Suite at:
 # https://github.com/w3c/web-platform-tests/
@@ -13,11 +13,8 @@
 from __future__ import print_function
 
 import re
-import codecs
-import time
 import os
 import shutil
-import sys
 import argparse
 import shutil
 import fnmatch
@@ -93,26 +90,26 @@ def genTestUtils(SPECFILE, DISABLEDFILE, TEMPLATESFILE, TESTSFILES, TESTOUTPUTDI
 
     templates = {}
     with open(TEMPLATESFILE, "r") as f:
-        templates = yaml.load(f.read())
+        templates = yaml.safe_load(f.read())
     for k,v in templates.items():
         templates[k] = v.replace("{","{{").replace("}","}}")
         templates[k] = re.sub(r"%([A-Za-z0-9\-_]+)%", r"{\g<1>}", templates[k])
 
     spec_assertions = []
-    for s in yaml.load(open(SPECFILE, "r").read())['assertions']:
+    for s in yaml.safe_load(open(SPECFILE, "r").read())['assertions']:
         if 'meta' in s:
             eval(compile(s['meta'], '<meta spec assertion>', 'exec'), {}, {'assertions':spec_assertions})
         else:
             spec_assertions.append(s)
 
     disabled_tests = {}
-    for t in yaml.load(open(DISABLEDFILE, "r").read())['DISABLED']:
-        test_name = t.keys()[0]
+    for t in yaml.safe_load(open(DISABLEDFILE, "r").read())['DISABLED']:
+        test_name = list(t.keys())[0]
         disable_reason = t[test_name][0]
         disabled_tests[test_name] = disable_reason
 
     tests = []
-    for t in sum([ yaml.load(open(f, "r").read()) for f in TESTSFILES], []):
+    for t in sum([ yaml.safe_load(open(f, "r").read()) for f in TESTSFILES], []):
         if 'DISABLED' in t:
             continue
         if 'meta' in t:
@@ -380,7 +377,7 @@ def genTestUtils(SPECFILE, DISABLEDFILE, TEMPLATESFILE, TESTSFILES, TESTOUTPUTDI
 
             spec = templates["spec"].format(**{
                 "name": "2d." + category,
-                "tests": tests_concat 
+                "tests": tests_concat
             })
 
             f.write(spec);
@@ -421,7 +418,7 @@ def genTestUtils(SPECFILE, DISABLEDFILE, TEMPLATESFILE, TESTSFILES, TESTOUTPUTDI
     for libfile in os.listdir(LIBDIR):
         if libfile == "assets":
             continue
-        shutil.copyfile(os.path.join(LIBDIR, libfile), os.path.join(TESTOUTPUTDIR, libfile))        
+        shutil.copyfile(os.path.join(LIBDIR, libfile), os.path.join(TESTOUTPUTDIR, libfile))
 
 
 

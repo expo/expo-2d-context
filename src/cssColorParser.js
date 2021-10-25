@@ -218,7 +218,7 @@ function parseComponentFunctionArgs(args) {
   return [parsedArgs[1], parsedArgs[2], parsedArgs[3], parsedArgs[5]];
 }
 
-module.exports = function cssToGlColor(cssStr) {
+export default function cssToGlColor(cssStr) {
   if (cssStr === '' || cssStr === undefined) {
     throw new Error('Bad Color');
   }
@@ -350,4 +350,4 @@ module.exports = function cssToGlColor(cssStr) {
       }
     }
   }
-};
+}

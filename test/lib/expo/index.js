@@ -2,8 +2,10 @@
 
 import React from 'react';
 import { Dimensions, Linking, NativeModules, ScrollView, Text, View } from 'react-native';
-import Expo from 'expo';
 import Expo2DContext from 'expo-2d-context';
+import { GLView } from 'expo-gl';
+import { registerRootComponent } from 'expo';
+import Constants from 'expo-constants';
 import jasmineModule from 'jasmine-core/lib/jasmine-core/jasmine';
 import Immutable from 'immutable';
 
@@ -53,8 +55,7 @@ class App extends React.Component {
 
   componentDidMount() {
     if (!useTestPad) {
-      this._runTests(this.props.exp.initialUri);
-      Linking.addEventListener('url', ({ url }) => url && this._runTests(url));
+      Linking.getInitialURL().then(url => url && this._runTests(url));
     }
   }
 
@@ -81,7 +82,7 @@ class App extends React.Component {
     // Load tests, confining to the ones named in the uri
     let modules = getTestModules();
     if (uri && uri.indexOf('+') > -1) {
-      const deepLink = uri.substring(uri.indexOf('+') + 1);
+      const deepLink = decodeURI(uri.substring(uri.indexOf('+') + 1));
       const filterJSON = JSON.parse(deepLink);
       if (filterJSON.includeModules) {
         console.log('Only testing these modules: ' + JSON.stringify(filterJSON.includeModules));
@@ -335,7 +336,7 @@ class App extends React.Component {
       this._scrollViewRef.scrollTo({
         y:
           Math.max(0, contentHeight - Dimensions.get('window').height) +
-          Expo.Constants.statusBarHeight,
+          Constants.statusBarHeight,
       });
     }
   };
@@ -376,7 +377,7 @@ class App extends React.Component {
       };
       for(let i=0; i < nContexts; i++) {
           glViews.push(
-            <Expo.GLView key={i}
+            <GLView key={i}
               style={{ height: 300, width: 300 }}
               onContextCreate={_onGLContextCreate}/>
           )
@@ -389,7 +390,7 @@ class App extends React.Component {
         <View
           style={{
             flex: 1,
-            marginTop: Expo.Constants.statusBarHeight || 18,
+            marginTop: Constants.statusBarHeight || 18,
             alignItems: 'center',
             justifyContent: 'center',
           }}>
@@ -402,7 +403,7 @@ class App extends React.Component {
       <View
         style={{
           flex: 1,
-          marginTop: Expo.Constants.statusBarHeight || 18,
+          marginTop: Constants.statusBarHeight || 18,
           alignItems: 'stretch',
           justifyContent: 'center',
         }}
@@ -429,7 +430,7 @@ class App extends React.Component {
 // just set this var to true and put your test code in testPad():
 var useTestPad = false;
 var nContexts = 2;
-import { getExpoAsset } from './assets';
+
 function _getPixel(ctx, x,y)
 {
     var imgdata = ctx.getImageData(x, y, 1, 1);
@@ -443,7 +444,7 @@ async function testPad(glContexts) {
     ctx2.fillStyle = '#0f0';
     ctx2.fillRect(0, 0, 100, 50);
     ctx2.flush()
-      
+
 
       let assetWidth = ctx2.gl.drawingBufferWidth;
       let assetHeight = ctx2.gl.drawingBufferHeight;
@@ -459,4 +460,4 @@ async function testPad(glContexts) {
 //
 /////////////////////////////////////////////////////////////////////
 
-Expo.registerRootComponent(App);
+registerRootComponent(App);
