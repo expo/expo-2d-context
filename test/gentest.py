@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 #
 # Lovingly butchered out of the Web Platform Test Suite at:
 # https://github.com/w3c/web-platform-tests/
@@ -377,7 +377,7 @@ def genTestUtils(SPECFILE, DISABLEDFILE, TEMPLATESFILE, TESTSFILES, TESTOUTPUTDI
 
             spec = templates["spec"].format(**{
                 "name": "2d." + category,
-                "tests": tests_concat 
+                "tests": tests_concat
             })
 
             f.write(spec);
@@ -418,7 +418,7 @@ def genTestUtils(SPECFILE, DISABLEDFILE, TEMPLATESFILE, TESTSFILES, TESTOUTPUTDI
     for libfile in os.listdir(LIBDIR):
         if libfile == "assets":
             continue
-        shutil.copyfile(os.path.join(LIBDIR, libfile), os.path.join(TESTOUTPUTDIR, libfile))        
+        shutil.copyfile(os.path.join(LIBDIR, libfile), os.path.join(TESTOUTPUTDIR, libfile))
 
 
 

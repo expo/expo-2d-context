@@ -430,7 +430,7 @@ class App extends React.Component {
 // just set this var to true and put your test code in testPad():
 var useTestPad = false;
 var nContexts = 2;
-import { getExpoAsset } from './assets';
+
 function _getPixel(ctx, x,y)
 {
     var imgdata = ctx.getImageData(x, y, 1, 1);
@@ -444,7 +444,7 @@ async function testPad(glContexts) {
     ctx2.fillStyle = '#0f0';
     ctx2.fillRect(0, 0, 100, 50);
     ctx2.flush()
-      
+
 
       let assetWidth = ctx2.gl.drawingBufferWidth;
       let assetHeight = ctx2.gl.drawingBufferHeight;
