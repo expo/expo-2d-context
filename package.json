@@ -9,6 +9,7 @@
     "type": "git",
     "url": "https://github.com/expo/expo-2d-context.git"
   },
+  "license": "MIT",
   "scripts": {
     "build": "esbuild src/exports.js --bundle --outfile=dist/bundle.js --loader:.png=dataurl",
     "lint": "eslint src",
