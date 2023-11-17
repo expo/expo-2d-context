@@ -1,6 +1,6 @@
 {
   "name": "expo-2d-context",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "A pure-JS implementation of the W3C's Canvas-2D Context API that can run on top of either Expo Graphics or a browser WebGL context.",
   "author": "Naomi Alterman",
   "main": "src/Expo2DContext.js",
